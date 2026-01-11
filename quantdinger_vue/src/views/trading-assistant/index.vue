@@ -2396,8 +2396,8 @@ export default {
       })
     },
     getDropdownContainer (triggerNode) {
-      // 移动端将下拉菜单挂载到body，避免被父容器裁剪
-      return this.isMobile ? document.body : triggerNode.parentNode
+      // 始终将下拉菜单挂载到body，避免被父容器裁剪
+      return document.body
     }
   }
 }
