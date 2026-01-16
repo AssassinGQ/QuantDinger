@@ -274,7 +274,7 @@ def _insert_strategy(
                 json.dumps(indicator_config, ensure_ascii=False),
                 json.dumps(trading_config, ensure_ascii=False),
                 json.dumps({}, ensure_ascii=False),
-                3000,
+                300,
                 now,
                 now,
             ),
