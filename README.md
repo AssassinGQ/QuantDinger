@@ -8,16 +8,16 @@
   <div align="center">
     <a href="README.md">🇺🇸 English</a> |
     <a href="README_CN.md">🇨🇳 简体中文</a> |
-    <a href="README_TW.md">🇹🇼 繁體中文</a> |
+    <a href="README_TW.md">繁體中文</a> |
     <a href="README_JA.md">🇯🇵 日本語</a> |
     <a href="README_KO.md">🇰🇷 한국어</a>
   </div>
   <br/>
-
+ 
   <h3 align="center">
     Next-Gen AI Quantitative Trading Platform
   </h3>
-
+  
   <p align="center">
     <strong>🤖 AI-Native · 🐍 Visual Python · 🌍 Multi-Market · 🔒 Privacy-First</strong>
   </p>
