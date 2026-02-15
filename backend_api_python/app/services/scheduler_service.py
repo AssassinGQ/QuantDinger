@@ -44,6 +44,24 @@ def _is_scheduler_running() -> bool:
     return bool(sched.get_job(SCHEDULER_JOB_ID))
 
 
+def get_job_status() -> Dict[str, Any]:
+    """返回定时任务是否存在及下次运行时间，不依赖日志。"""
+    try:
+        sched = get_scheduler()
+        job = sched.get_job(SCHEDULER_JOB_ID)
+        if job is None:
+            return {"job_id": SCHEDULER_JOB_ID, "exists": False, "next_run_time": None}
+        next_run = job.next_run_time
+        return {
+            "job_id": SCHEDULER_JOB_ID,
+            "exists": True,
+            "next_run_time": next_run.isoformat() if next_run else None,
+        }
+    except Exception as e:
+        logger.exception("get_job_status: %s", e)
+        return {"job_id": SCHEDULER_JOB_ID, "exists": False, "next_run_time": None, "error": str(e)}
+
+
 # 与 qd_market_symbols 种子一致的市场及 task_type 后缀；无 DB 时的回退列表
 _DEFAULT_MARKETS = [
     ("Crypto", "kline_1m_sync_crypto", ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT", "ADA/USDT", "DOGE/USDT", "DOT/USDT", "MATIC/USDT", "AVAX/USDT"]),

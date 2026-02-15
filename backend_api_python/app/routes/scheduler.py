@@ -8,6 +8,7 @@ from app.services.scheduler_service import (
     list_task_types,
     start_task,
     stop_task,
+    get_job_status,
 )
 from app.utils.logger import get_logger
 
@@ -75,6 +76,17 @@ def start_task_route():
         return jsonify({"code": 1, "msg": "started", "data": {}})
     except Exception as e:
         logger.exception("start task: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
+@scheduler_bp.route("/status", methods=["GET"])
+def get_status():
+    """查看定时任务是否存在及下次运行时间，不依赖日志。"""
+    try:
+        data = get_job_status()
+        return jsonify({"code": 1, "msg": "success", "data": data})
+    except Exception as e:
+        logger.exception("scheduler status: %s", e)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
