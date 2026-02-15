@@ -49,9 +49,17 @@ psql -f backend_api_python/migrations/002_qd_kline_cache.sql
 
 ```bash
 docker exec -it quantdinger-db psql -U quantdinger -d quantdinger -c "\dt qd_kline_cache"
+# 003 数据点表
+docker exec -it quantdinger-db psql -U quantdinger -d quantdinger -c "\dt qd_kline_points"
 ```
 
-应看到表 `qd_kline_cache`。
+应看到表 `qd_kline_cache`、`qd_kline_points`。
+
+### 003：K 线数据点表（可选，用于 1m 单粒度存储与读时聚合）
+
+```bash
+docker exec -i quantdinger-db psql -U quantdinger -d quantdinger < backend_api_python/migrations/003_qd_kline_points.sql
+```
 
 ## 首次部署（全新库）
 
@@ -60,4 +68,5 @@ Postgres 容器首次启动时会自动执行 `docker-entrypoint-initdb.d/01-ini
 ## 迁移文件约定
 
 - `init.sql`：全量建表，仅用于新库初始化。
-- `002_*.sql`：增量迁移，可对已有库重复执行（脚本内使用 IF NOT EXISTS）。
+- `002_*.sql`：K 线缓存表（按周期）。
+- `003_*.sql`：K 线数据点表（仅 1m，供聚合复用）；可对已有库重复执行。

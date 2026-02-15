@@ -26,6 +26,76 @@ def _row_to_kline(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _aggregate_bars(
+    bars_1m: List[Dict[str, Any]],
+    interval_sec: int,
+) -> List[Dict[str, Any]]:
+    """将 1m 数据点聚合成指定周期 K 线。按 time//interval_sec 分组，OHLCV 规则：O=首根O, H=max(H), L=min(L), C=末根C, V=sum(V)。"""
+    if not bars_1m or interval_sec <= 60:
+        return bars_1m if (interval_sec <= 60) else []
+    from collections import defaultdict
+    buckets = defaultdict(list)
+    for b in bars_1m:
+        t = b['time']
+        bucket = (t // interval_sec) * interval_sec
+        buckets[bucket].append(b)
+    out = []
+    for bucket in sorted(buckets.keys()):
+        group = sorted(buckets[bucket], key=lambda x: x['time'])
+        o = group[0]['open']
+        h = max(x['high'] for x in group)
+        l = min(x['low'] for x in group)
+        c = group[-1]['close']
+        v = sum(x['volume'] for x in group)
+        out.append({'time': bucket, 'open': o, 'high': h, 'low': l, 'close': c, 'volume': v})
+    return out
+
+
+def _read_points_range_from_db(
+    market: str,
+    symbol: str,
+    start_ts: int,
+    end_ts: int,
+) -> List[Dict[str, Any]]:
+    """从 qd_kline_points（1m 数据点）读取 [start_ts, end_ts] 范围。"""
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """SELECT time_sec, open_price, high_price, low_price, close_price, volume
+                   FROM qd_kline_points
+                   WHERE market = ? AND symbol = ?
+                   AND time_sec >= ? AND time_sec <= ?
+                   ORDER BY time_sec ASC""",
+                (market, symbol, start_ts, end_ts),
+            )
+            rows = cur.fetchall()
+            cur.close()
+        return [_row_to_kline(r) for r in rows]
+    except Exception as e:
+        logger.debug("Points DB range read skipped: %s", e)
+        return []
+
+
+def _read_points_max_time(market: str, symbol: str) -> Optional[int]:
+    """查询 qd_kline_points 中该标的当前最大 time_sec，用于延迟数据的时间段判断。"""
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT max(time_sec) AS max_ts FROM qd_kline_points WHERE market = ? AND symbol = ?",
+                (market, symbol),
+            )
+            row = cur.fetchone()
+            cur.close()
+        if row and row.get('max_ts') is not None:
+            return int(row['max_ts'])
+        return None
+    except Exception as e:
+        logger.debug("Points max time read skipped: %s", e)
+        return None
+
+
 def _read_kline_range_from_db(
     market: str,
     symbol: str,
@@ -150,6 +220,52 @@ def _write_kline_to_db(
         logger.warning("Kline DB write failed: %s", e)
 
 
+def _write_points_to_db(
+    market: str,
+    symbol: str,
+    klines_1m: List[Dict[str, Any]],
+) -> None:
+    """将 1m 数据点写入 qd_kline_points，冲突时覆盖。"""
+    if not klines_1m:
+        return
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            for k in klines_1m:
+                t = k.get('time')
+                if t is None:
+                    continue
+                cur.execute(
+                    """INSERT INTO qd_kline_points
+                       (market, symbol, time_sec, open_price, high_price, low_price, close_price, volume)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT (market, symbol, time_sec)
+                       DO UPDATE SET
+                         open_price = EXCLUDED.open_price,
+                         high_price = EXCLUDED.high_price,
+                         low_price = EXCLUDED.low_price,
+                         close_price = EXCLUDED.close_price,
+                         volume = EXCLUDED.volume,
+                         created_at = NOW()
+                       RETURNING time_sec""",
+                    (
+                        market,
+                        symbol,
+                        int(t),
+                        float(k.get('open', 0)),
+                        float(k.get('high', 0)),
+                        float(k.get('low', 0)),
+                        float(k.get('close', 0)),
+                        float(k.get('volume', 0)),
+                    ),
+                )
+            db.commit()
+            cur.close()
+        logger.info("Kline points write: %s %s count=%d", market, symbol, len(klines_1m))
+    except Exception as e:
+        logger.warning("Kline points write failed: %s", e)
+
+
 class KlineService:
     """K线数据服务：优先数据库历史缓存，缺则网络并回写。"""
 
@@ -184,22 +300,84 @@ class KlineService:
             need_end_ts = now_sec
             need_start_ts = now_sec - limit * interval_sec
 
-        from_db = _read_kline_range_from_db(
-            market, symbol, timeframe, need_start_ts, need_end_ts
-        )
-        if len(from_db) >= limit:
-            merged = sorted(from_db, key=lambda x: x['time'])
-            if before_time is not None:
-                result = [b for b in merged if b['time'] < before_time][-limit:]
-            else:
-                result = merged[-limit:] if len(merged) > limit else merged
-            if len(result) >= limit:
-                logger.info("Kline from DB cache: %s %s %s count=%d", market, symbol, timeframe, len(result))
-                if not before_time:
-                    if result and (now_sec - result[-1]['time']) <= interval_sec * 2:
+        if timeframe == '1m':
+            from_points = _read_points_range_from_db(market, symbol, need_start_ts, need_end_ts)
+            if len(from_points) < limit and before_time is None:
+                max_ts = _read_points_max_time(market, symbol)
+                if max_ts is not None and max_ts < need_end_ts:
+                    tail_start = max_ts - (limit * interval_sec)
+                    from_points = _read_points_range_from_db(
+                        market, symbol, tail_start, max_ts
+                    )
+            if len(from_points) >= limit:
+                merged = sorted(from_points, key=lambda x: x['time'])
+                if before_time is not None:
+                    result = [b for b in merged if b['time'] < before_time][-limit:]
+                else:
+                    result = merged[-limit:] if len(merged) > limit else merged
+                if len(result) >= limit:
+                    logger.info("Kline from points: %s %s 1m count=%d", market, symbol, len(result))
+                    if not before_time:
                         ttl = self.cache_ttl.get(timeframe, 300)
                         self.cache.set(cache_key, result, ttl)
-                return result
+                    return result
+            from_db = from_points
+            if (
+                timeframe == '1m'
+                and before_time is None
+                and 0 < len(from_db) < limit
+            ):
+                max_ts_db = max(b['time'] for b in from_db)
+                tail_bars = (need_end_ts - max_ts_db) // interval_sec
+                if tail_bars > 0:
+                    fetch_limit = min(tail_bars + 20, limit)
+                    fetched_tail = DataSourceFactory.get_kline(
+                        market, symbol, '1m', fetch_limit,
+                        before_time=need_end_ts + interval_sec,
+                    )
+                    if fetched_tail:
+                        by_time = {b['time']: b for b in from_db}
+                        for b in fetched_tail:
+                            if b['time'] not in by_time:
+                                by_time[b['time']] = b
+                        merged = sorted(by_time.values(), key=lambda x: x['time'])
+                        result = merged[-limit:] if len(merged) > limit else merged
+                        _write_points_to_db(market, symbol, fetched_tail)
+                        ttl = self.cache_ttl.get(timeframe, 300)
+                        self.cache.set(cache_key, result, ttl)
+                        logger.info("Kline points incremental: %s %s fetched=%d total=%d", market, symbol, len(fetched_tail), len(result))
+                        return result
+        else:
+            from_points = _read_points_range_from_db(market, symbol, need_start_ts, need_end_ts)
+            agg = _aggregate_bars(from_points, interval_sec)
+            if len(agg) >= limit:
+                merged = sorted(agg, key=lambda x: x['time'])
+                if before_time is not None:
+                    result = [b for b in merged if b['time'] < before_time][-limit:]
+                else:
+                    result = merged[-limit:] if len(merged) > limit else merged
+                if len(result) >= limit:
+                    logger.info("Kline from points (agg): %s %s %s count=%d", market, symbol, timeframe, len(result))
+                    if not before_time and result and (now_sec - result[-1]['time']) <= interval_sec * 2:
+                        ttl = self.cache_ttl.get(timeframe, 300)
+                        self.cache.set(cache_key, result, ttl)
+                    return result
+            from_db = _read_kline_range_from_db(
+                market, symbol, timeframe, need_start_ts, need_end_ts
+            )
+            if len(from_db) >= limit:
+                merged = sorted(from_db, key=lambda x: x['time'])
+                if before_time is not None:
+                    result = [b for b in merged if b['time'] < before_time][-limit:]
+                else:
+                    result = merged[-limit:] if len(merged) > limit else merged
+                if len(result) >= limit:
+                    logger.info("Kline from DB cache: %s %s %s count=%d", market, symbol, timeframe, len(result))
+                    if not before_time:
+                        if result and (now_sec - result[-1]['time']) <= interval_sec * 2:
+                            ttl = self.cache_ttl.get(timeframe, 300)
+                            self.cache.set(cache_key, result, ttl)
+                    return result
 
         existing_times = {b['time'] for b in from_db}
         needed_times = [
@@ -236,8 +414,11 @@ class KlineService:
             if part:
                 fetched.extend(part)
         if not fetched:
+            fetch_before = before_time
+            if fetch_before is None:
+                fetch_before = need_end_ts + interval_sec
             fetched = DataSourceFactory.get_kline(
-                market, symbol, timeframe, limit, before_time=before_time
+                market, symbol, timeframe, limit, before_time=fetch_before
             )
 
         by_time = {b['time']: b for b in from_db}
@@ -251,7 +432,10 @@ class KlineService:
             result = merged[-limit:] if len(merged) > limit else merged
 
         if fetched:
-            _write_kline_to_db(market, symbol, timeframe, fetched)
+            if timeframe == '1m':
+                _write_points_to_db(market, symbol, fetched)
+            else:
+                _write_kline_to_db(market, symbol, timeframe, fetched)
         if not before_time and result:
             ttl = self.cache_ttl.get(timeframe, 300)
             self.cache.set(cache_key, result, ttl)
