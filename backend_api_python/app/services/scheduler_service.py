@@ -10,10 +10,12 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# 单次拉取 1m 根数；历史靠「每次与库中已有合并写回」在 get_kline 里累积
-KLINE_1M_SYNC_BARS = 500
+# 定时任务目标 1m 根数；get_kline 内部分页拉取、防限流
+KLINE_1M_SYNC_BARS = 5000
 # 品类之间延时（秒），减轻限流
 DELAY_BETWEEN_CATEGORIES_SECONDS = 5
+# 同品类内每标的间隔（秒），防限流
+DELAY_BETWEEN_SYMBOLS_SECONDS = 1
 
 # 单一定时任务 job id
 SCHEDULER_JOB_ID = "scheduler_kline_sync"
@@ -135,18 +137,20 @@ def _run_kline_1m_sync(task_type: str) -> None:
     logger.info("Scheduler %s: run started market=%s symbols=%s", task_type, market, symbols)
     from app.services.kline_fetcher import get_kline as fetch_kline, _write_points_to_db
     from app.data_sources import DataSourceFactory
-    for symbol in symbols:
+    for i, symbol in enumerate(symbols):
         try:
             klines_1m = fetch_kline(market, symbol, "1m", limit=KLINE_1M_SYNC_BARS)
             if klines_1m and len(klines_1m) >= 10:
                 logger.info("Scheduler %s: %s %s synced 1m %d bars", task_type, market, symbol, len(klines_1m))
-                continue
-            klines_5m = DataSourceFactory.get_kline(market, symbol, "5m", limit=min(200, KLINE_1M_SYNC_BARS // 5))
-            if klines_5m:
-                _write_points_to_db(market, symbol, klines_5m, interval_sec=300)
-                logger.info("Scheduler %s: %s %s fallback 5m %d bars (1m unavailable)", task_type, market, symbol, len(klines_5m))
             else:
-                logger.warning("Scheduler %s: %s %s no data (1m and 5m)", task_type, market, symbol)
+                klines_5m = DataSourceFactory.get_kline(market, symbol, "5m", limit=min(200, KLINE_1M_SYNC_BARS // 5))
+                if klines_5m:
+                    _write_points_to_db(market, symbol, klines_5m, interval_sec=300)
+                    logger.info("Scheduler %s: %s %s fallback 5m %d bars (1m unavailable)", task_type, market, symbol, len(klines_5m))
+                else:
+                    logger.warning("Scheduler %s: %s %s no data (1m and 5m)", task_type, market, symbol)
+            if i < len(symbols) - 1:
+                time.sleep(DELAY_BETWEEN_SYMBOLS_SECONDS)
         except Exception as e:
             logger.exception("Scheduler %s: %s %s failed: %s", task_type, market, symbol, e)
 

@@ -23,14 +23,14 @@ def get_kline():
         market: 市场类型 (Crypto, USStock, AShare, HShare, Forex, Futures)
         symbol: 交易对/股票代码
         timeframe: 时间周期 (1m, 5m, 15m, 30m, 1H, 4H, 1D, 1W)
-        limit: 数据条数 (默认300)
+        limit: 数据条数 (默认1000)
         before_time: 获取此时间之前的数据 (可选，Unix时间戳)
     """
     try:
         market = request.args.get('market', 'USStock')
         symbol = request.args.get('symbol', '')
         timeframe = request.args.get('timeframe', '1D')
-        limit = int(request.args.get('limit', 300))
+        limit = int(request.args.get('limit', 1000))
         before_time = request.args.get('before_time') or request.args.get('beforeTime')
 
         if before_time:

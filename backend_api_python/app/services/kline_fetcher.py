@@ -208,6 +208,12 @@ def _write_points_to_db(
         logger.warning("Kline points write failed: %s", e)
 
 
+# 分页拉取单页大小与轮间延时（防限流）
+PAGINATE_CHUNK = 1000
+PAGINATE_DELAY_SEC = 1.0
+PAGINATE_MAX_ROUNDS = 15
+
+
 def _fetch_1m_or_fallback_5m(
     market: str,
     symbol: str,
@@ -226,11 +232,44 @@ def _fetch_1m_or_fallback_5m(
     return (data or []), "1m"
 
 
+def _fetch_1m_paginated(
+    market: str,
+    symbol: str,
+    need_start_ts: int,
+    need_end_ts: int,
+    max_bars: int,
+    delay_sec: float = PAGINATE_DELAY_SEC,
+) -> tuple:
+    """分页拉 1m（或回退 5m），每次最多 PAGINATE_CHUNK 根，轮间延时防限流。返回 (merged_klines, '1m'|'5m')。"""
+    by_time: Dict[int, Dict] = {}
+    next_before = need_end_ts + 60
+    eff_tf = "1m"
+    for r in range(PAGINATE_MAX_ROUNDS):
+        chunk_limit = min(PAGINATE_CHUNK, max_bars - len(by_time))
+        if chunk_limit <= 0:
+            break
+        fetched, eff_tf = _fetch_1m_or_fallback_5m(
+            market, symbol, chunk_limit, before_time=next_before
+        )
+        if not fetched:
+            break
+        for b in fetched:
+            by_time[b["time"]] = b
+        min_ts = min(b["time"] for b in fetched)
+        if min_ts <= need_start_ts:
+            break
+        next_before = min_ts
+        if r < PAGINATE_MAX_ROUNDS - 1:
+            time.sleep(delay_sec)
+    merged = sorted(by_time.values(), key=lambda x: x["time"])
+    return merged, eff_tf
+
+
 def get_kline(
     market: str,
     symbol: str,
     timeframe: str,
-    limit: int = 300,
+    limit: int = 1000,
     before_time: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -276,9 +315,14 @@ def get_kline(
             tail_bars = (need_end_ts - max_ts_db) // interval_sec
             if tail_bars > 0:
                 fetch_limit = min(tail_bars + 20, max(limit * 2, 50000))
-                fetched_tail, eff_tf = _fetch_1m_or_fallback_5m(
-                    market, symbol, fetch_limit, before_time=need_end_ts + interval_sec
-                )
+                if fetch_limit > PAGINATE_CHUNK:
+                    fetched_tail, eff_tf = _fetch_1m_paginated(
+                        market, symbol, need_start_ts, need_end_ts, fetch_limit
+                    )
+                else:
+                    fetched_tail, eff_tf = _fetch_1m_or_fallback_5m(
+                        market, symbol, fetch_limit, before_time=need_end_ts + interval_sec
+                    )
                 if fetched_tail:
                     if eff_tf == "1m":
                         by_time = {b["time"]: b for b in from_db}
@@ -325,10 +369,24 @@ def get_kline(
                 logger.info("Kline from lower layer: %s %s %s from %s count=%d", market, symbol, timeframe, lower_tf, len(result))
                 return result
 
-        # 3) 拉网并缓存当前周期
-        fetched = DataSourceFactory.get_kline(
-            market, symbol, timeframe, limit, before_time=need_end_ts + interval_sec
-        )
+        # 3) 拉网并缓存当前周期（需要多时则分页，轮间延时防限流）
+        fetched: List[Dict[str, Any]] = []
+        next_bt = need_end_ts + interval_sec
+        request_limit = min(limit, PAGINATE_CHUNK)
+        for _ in range(PAGINATE_MAX_ROUNDS):
+            part = DataSourceFactory.get_kline(
+                market, symbol, timeframe, request_limit, before_time=next_bt
+            )
+            if not part:
+                break
+            fetched.extend(part)
+            if len(part) < request_limit:
+                break
+            min_ts = min(b["time"] for b in part)
+            if min_ts <= need_start_ts:
+                break
+            next_bt = min_ts
+            time.sleep(PAGINATE_DELAY_SEC)
         if fetched:
             _write_points_to_db(market, symbol, fetched, interval_sec=interval_sec)
             logger.info("Kline fetched and cached: %s %s %s count=%d", market, symbol, timeframe, len(fetched))
@@ -374,7 +432,12 @@ def get_kline(
     if not fetched:
         fetch_before = before_time if before_time is not None else need_end_ts + interval_sec
         if timeframe == "1m":
-            fetched, eff_tf = _fetch_1m_or_fallback_5m(market, symbol, limit, before_time=fetch_before)
+            if limit > PAGINATE_CHUNK:
+                fetched, eff_tf = _fetch_1m_paginated(
+                    market, symbol, need_start_ts, need_end_ts, limit
+                )
+            else:
+                fetched, eff_tf = _fetch_1m_or_fallback_5m(market, symbol, limit, before_time=fetch_before)
         else:
             fetched = DataSourceFactory.get_kline(market, symbol, timeframe, limit, before_time=fetch_before)
 
