@@ -24,7 +24,8 @@ def register_routes(app: Flask):
     from app.routes.global_market import global_market_bp
     from app.routes.community import community_bp
     from app.routes.fast_analysis import fast_analysis_bp
-    
+    from app.routes.scheduler import scheduler_bp
+
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp, url_prefix='/api/auth')   # Auth routes
     app.register_blueprint(user_bp, url_prefix='/api/users')  # User management
@@ -43,3 +44,4 @@ def register_routes(app: Flask):
     app.register_blueprint(global_market_bp, url_prefix='/api/global-market')
     app.register_blueprint(community_bp, url_prefix='/api/community')
     app.register_blueprint(fast_analysis_bp, url_prefix='/api/fast-analysis')
+    app.register_blueprint(scheduler_bp, url_prefix='/api/scheduler')

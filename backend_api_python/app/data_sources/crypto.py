@@ -140,7 +140,7 @@ class CryptoDataSource(BaseDataSource):
                 
                 # 分页获取数据，直到覆盖完整时间范围
                 all_ohlcv = []
-                batch_limit = 300  # Coinbase limit is often 300, safer than 1000
+                batch_limit = 1000  # Binance 单次最多 1000；Coinbase 等会由交易所截断
                 current_since = since
                 
                 while current_since < end_ms:
@@ -172,7 +172,30 @@ class CryptoDataSource(BaseDataSource):
                 
                 ohlcv = all_ohlcv
             else:
-                ohlcv = self.exchange.fetch_ohlcv(symbol_pair, ccxt_timeframe, limit=limit)
+                # 无 before_time 且 limit 很大时，交易所单次只返回最多约 1000 根，需分页拉「最近 limit 根」
+                batch_limit = 1000
+                if limit <= batch_limit:
+                    ohlcv = self.exchange.fetch_ohlcv(symbol_pair, ccxt_timeframe, limit=limit)
+                else:
+                    total_seconds = self.calculate_time_range(timeframe, limit)
+                    end_time = datetime.now()
+                    start_time = end_time - timedelta(seconds=total_seconds)
+                    end_ms = int(end_time.timestamp() * 1000)
+                    since = int(start_time.timestamp() * 1000)
+                    all_ohlcv = []
+                    current_since = since
+                    while current_since < end_ms and len(all_ohlcv) < limit:
+                        batch = self.exchange.fetch_ohlcv(
+                            symbol_pair, ccxt_timeframe, since=current_since, limit=batch_limit
+                        )
+                        if not batch:
+                            break
+                        all_ohlcv.extend(batch)
+                        if batch[-1][0] >= end_ms:
+                            break
+                        timeframe_ms = TIMEFRAME_SECONDS.get(timeframe, 86400) * 1000
+                        current_since = batch[-1][0] + timeframe_ms
+                    ohlcv = all_ohlcv[-limit:] if len(all_ohlcv) > limit else all_ohlcv
             
             # logger.info(f"CCXT 返回 {len(ohlcv) if ohlcv else 0} 条数据")
             return ohlcv
