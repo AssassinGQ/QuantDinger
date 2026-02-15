@@ -381,21 +381,23 @@ CREATE TABLE IF NOT EXISTS qd_kline_cache (
 CREATE INDEX IF NOT EXISTS idx_kline_cache_lookup ON qd_kline_cache(market, symbol, timeframe, time_sec DESC);
 
 -- =============================================================================
--- 10.6. K-line Points (1m 数据点，读时聚合为任意周期)
+-- 10.6. K-line Points (1m/5m 数据点，读时聚合为 1H/4H/1D/1W；5m 为 1m 不可用时的回退)
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS qd_kline_points (
     market VARCHAR(50) NOT NULL,
     symbol VARCHAR(50) NOT NULL,
     time_sec BIGINT NOT NULL,
+    interval_sec INTEGER NOT NULL DEFAULT 60,
     open_price DECIMAL(20,8) NOT NULL,
     high_price DECIMAL(20,8) NOT NULL,
     low_price DECIMAL(20,8) NOT NULL,
     close_price DECIMAL(20,8) NOT NULL,
     volume DECIMAL(20,8) NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
-    PRIMARY KEY (market, symbol, time_sec)
+    PRIMARY KEY (market, symbol, time_sec, interval_sec)
 );
 CREATE INDEX IF NOT EXISTS idx_kline_points_lookup ON qd_kline_points(market, symbol, time_sec DESC);
+CREATE INDEX IF NOT EXISTS idx_kline_points_interval_lookup ON qd_kline_points(market, symbol, interval_sec, time_sec DESC);
 
 -- =============================================================================
 -- 11. Analysis Tasks

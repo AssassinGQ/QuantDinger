@@ -61,6 +61,14 @@ docker exec -it quantdinger-db psql -U quantdinger -d quantdinger -c "\dt qd_kli
 docker exec -i quantdinger-db psql -U quantdinger -d quantdinger < backend_api_python/migrations/003_qd_kline_points.sql
 ```
 
+### 004：qd_kline_points 支持 5m 回退（interval_sec，1m=60/5m=300，可聚合成 1H/4H/1D/1W）
+
+已有 003 的库执行：
+
+```bash
+docker exec -i quantdinger-db psql -U quantdinger -d quantdinger < backend_api_python/migrations/004_qd_kline_points_interval_sec.sql
+```
+
 ## 首次部署（全新库）
 
 Postgres 容器首次启动时会自动执行 `docker-entrypoint-initdb.d/01-init.sql`（即 `init.sql`），无需手动跑增量脚本。
@@ -69,4 +77,5 @@ Postgres 容器首次启动时会自动执行 `docker-entrypoint-initdb.d/01-ini
 
 - `init.sql`：全量建表，仅用于新库初始化。
 - `002_*.sql`：K 线缓存表（按周期）。
-- `003_*.sql`：K 线数据点表（仅 1m，供聚合复用）；可对已有库重复执行。
+- `003_*.sql`：K 线数据点表（1m，供聚合复用）。
+- `004_*.sql`：qd_kline_points 增加 interval_sec，支持 5m 回退并参与 1H/4H/1D/1W 聚合。

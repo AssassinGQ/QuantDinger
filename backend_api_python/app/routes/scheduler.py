@@ -42,12 +42,15 @@ def post_task_type():
         interval_minutes = int(data.get("interval_minutes", 400))
         if not task_type:
             return jsonify({"code": 0, "msg": "Missing task_type", "data": None}), 400
-        if task_type != "kline_1m_sync":
-            return jsonify({"code": 0, "msg": "Only task_type kline_1m_sync is supported", "data": None}), 400
+        if not task_type.startswith("kline_1m_sync"):
+            return jsonify({"code": 0, "msg": "task_type must start with kline_1m_sync", "data": None}), 400
         if not isinstance(symbols, list):
             symbols = []
         symbols = [str(s).strip() for s in symbols if str(s).strip()]
-        add_task_type(task_type, market, symbols, interval_minutes)
+        try:
+            add_task_type(task_type, market, symbols, interval_minutes)
+        except ValueError as e:
+            return jsonify({"code": 0, "msg": str(e), "data": None}), 400
         logger.info("Scheduler API add task-type: task_type=%s market=%s symbols=%s", task_type, market, symbols)
         return jsonify({
             "code": 1,
@@ -61,17 +64,15 @@ def post_task_type():
 
 @scheduler_bp.route("/start", methods=["POST"])
 def start_task_route():
-    """启动定时任务。Body: { "task_type": "kline_1m_sync" }"""
+    """启动唯一的定时任务（执行所有已注册品类）。Body 可选: { "task_type": "kline_1m_sync_crypto" }"""
     try:
         data = request.get_json() or {}
-        task_type = (data.get("task_type") or "").strip()
-        if not task_type:
-            return jsonify({"code": 0, "msg": "Missing task_type", "data": None}), 400
+        task_type = (data.get("task_type") or "").strip() or None
         ok = start_task(task_type)
         if not ok:
-            return jsonify({"code": 0, "msg": "Task type not found or not supported", "data": None}), 404
-        logger.info("Scheduler API start task: task_type=%s", task_type)
-        return jsonify({"code": 1, "msg": "started", "data": {"task_type": task_type}})
+            return jsonify({"code": 0, "msg": "No task categories registered", "data": None}), 404
+        logger.info("Scheduler API start: categories will run on interval")
+        return jsonify({"code": 1, "msg": "started", "data": {}})
     except Exception as e:
         logger.exception("start task: %s", e)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
@@ -79,15 +80,13 @@ def start_task_route():
 
 @scheduler_bp.route("/stop", methods=["POST"])
 def stop_task_route():
-    """停止定时任务。Body: { "task_type": "kline_1m_sync" }"""
+    """停止唯一的定时任务。Body 可选: { "task_type": "..." }"""
     try:
         data = request.get_json() or {}
-        task_type = (data.get("task_type") or "").strip()
-        if not task_type:
-            return jsonify({"code": 0, "msg": "Missing task_type", "data": None}), 400
+        task_type = (data.get("task_type") or "").strip() or None
         stop_task(task_type)
-        logger.info("Scheduler API stop task: task_type=%s", task_type)
-        return jsonify({"code": 1, "msg": "stopped", "data": {"task_type": task_type}})
+        logger.info("Scheduler API stop")
+        return jsonify({"code": 1, "msg": "stopped", "data": {}})
     except Exception as e:
         logger.exception("stop task: %s", e)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
