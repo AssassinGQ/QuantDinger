@@ -27,31 +27,30 @@ def get_kline():
         before_time: 获取此时间之前的数据 (可选，Unix时间戳)
     """
     try:
-        # 强制 GET, 使用 request.args
         market = request.args.get('market', 'USStock')
         symbol = request.args.get('symbol', '')
         timeframe = request.args.get('timeframe', '1D')
         limit = int(request.args.get('limit', 300))
         before_time = request.args.get('before_time') or request.args.get('beforeTime')
-        
+
         if before_time:
             before_time = int(before_time)
-        
+
         if not symbol:
             return jsonify({
                 'code': 0,
                 'msg': 'Missing symbol parameter',
                 'data': None
             }), 400
-        
-        logger.info(f"Requesting K-lines: {market}:{symbol}, timeframe={timeframe}, limit={limit}")
-        
+
+        logger.info("Requesting K-lines: %s:%s timeframe=%s limit=%d", market, symbol, timeframe, limit)
+
         klines = kline_service.get_kline(
             market=market,
             symbol=symbol,
             timeframe=timeframe,
             limit=limit,
-            before_time=before_time
+            before_time=before_time,
         )
         
         if not klines:
