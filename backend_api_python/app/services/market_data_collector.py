@@ -220,9 +220,9 @@ class MarketDataCollector:
         except Exception as e:
             logger.warning(f"Price fetch failed for {market}:{symbol}: {e}")
         
-        # 如果 kline_service 失败，尝试从 K 线最后一根获取价格
+        # 如果 kline_service 失败，尝试从 K 线最后一根获取价格（经 KlineService 走库缓存）
         try:
-            klines = DataSourceFactory.get_kline(market, symbol, "1D", 2)
+            klines = self.kline_service.get_kline(market, symbol, "1D", 2)
             if klines and len(klines) > 0:
                 latest = klines[-1]
                 price = float(latest.get('close', 0))
@@ -250,11 +250,9 @@ class MarketDataCollector:
     def _get_kline(
         self, market: str, symbol: str, timeframe: str, limit: int = 60
     ) -> Optional[List[Dict[str, Any]]]:
-        """
-        获取K线数据 - 使用 DataSourceFactory (与K线模块一致)
-        """
+        """获取K线数据：经 KlineService（先库后网、回写缓存）"""
         try:
-            klines = DataSourceFactory.get_kline(market, symbol, timeframe, limit)
+            klines = self.kline_service.get_kline(market, symbol, timeframe, limit)
             if klines and len(klines) > 0:
                 return klines
         except Exception as e:

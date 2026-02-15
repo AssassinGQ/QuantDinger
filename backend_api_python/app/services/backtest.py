@@ -12,6 +12,7 @@ import numpy as np
 from app.data_sources import DataSourceFactory
 from app.utils.logger import get_logger
 from app.services.indicator_params import IndicatorParamsParser, IndicatorCaller
+from app.services.kline import KlineService
 
 logger = get_logger(__name__)
 
@@ -1047,8 +1048,8 @@ class BacktestService:
         before_time = int((end_date + timedelta(days=1)).timestamp())
         
         
-        # Fetch data
-        kline_data = DataSourceFactory.get_kline(
+        # Fetch data（经 KlineService：先库后网、回写缓存）
+        kline_data = KlineService().get_kline(
             market=market,
             symbol=symbol,
             timeframe=timeframe,

@@ -363,6 +363,24 @@ CREATE TABLE IF NOT EXISTS qd_watchlist (
 CREATE INDEX IF NOT EXISTS idx_watchlist_user_id ON qd_watchlist(user_id);
 
 -- =============================================================================
+-- 10.5. K-line History Cache (历史K线缓存，优先读库、缺则补网)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_kline_cache (
+    market VARCHAR(50) NOT NULL,
+    symbol VARCHAR(50) NOT NULL,
+    timeframe VARCHAR(10) NOT NULL,
+    time_sec BIGINT NOT NULL,
+    open_price DECIMAL(20,8) NOT NULL,
+    high_price DECIMAL(20,8) NOT NULL,
+    low_price DECIMAL(20,8) NOT NULL,
+    close_price DECIMAL(20,8) NOT NULL,
+    volume DECIMAL(20,8) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (market, symbol, timeframe, time_sec)
+);
+CREATE INDEX IF NOT EXISTS idx_kline_cache_lookup ON qd_kline_cache(market, symbol, timeframe, time_sec DESC);
+
+-- =============================================================================
 -- 11. Analysis Tasks
 -- =============================================================================
 
