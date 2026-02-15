@@ -1,6 +1,6 @@
 """
 LLM service.
-Supports multiple providers: OpenRouter, OpenAI, Google Gemini, DeepSeek, Grok.
+Supports multiple providers: OpenRouter, OpenAI, Google Gemini, DeepSeek, Grok, MiniMax.
 Kept separate from AnalysisService to avoid circular imports.
 """
 import json
@@ -23,6 +23,7 @@ class LLMProvider(Enum):
     GOOGLE = "google"
     DEEPSEEK = "deepseek"
     GROK = "grok"
+    MINIMAX = "minimax"
 
 
 # Provider configurations
@@ -52,6 +53,11 @@ PROVIDER_CONFIGS = {
         "default_model": "grok-beta",
         "fallback_model": "grok-beta",
     },
+    LLMProvider.MINIMAX: {
+        "base_url": "https://api.minimaxi.com/v1",
+        "default_model": "MiniMax-M2.1",
+        "fallback_model": "MiniMax-M2.1-lightning",
+    },
 }
 
 
@@ -63,7 +69,7 @@ class LLMService:
         Initialize LLM service.
         
         Args:
-            provider: Override the default provider (openrouter, openai, google, deepseek, grok)
+            provider: Override the default provider (openrouter, openai, google, deepseek, grok, minimax)
         """
         self._provider_override = provider
 
@@ -91,10 +97,11 @@ class LLMService:
                 pass
         
         # Auto-detect: find any provider with a configured API key
-        # Priority: DeepSeek > Grok > OpenAI > Google > OpenRouter
+        # Priority: DeepSeek > Grok > MiniMax > OpenAI > Google > OpenRouter
         priority_order = [
             LLMProvider.DEEPSEEK,
             LLMProvider.GROK,
+            LLMProvider.MINIMAX,
             LLMProvider.OPENAI,
             LLMProvider.GOOGLE,
             LLMProvider.OPENROUTER,
@@ -118,6 +125,7 @@ class LLMService:
             LLMProvider.GOOGLE: APIKeys.GOOGLE_API_KEY,
             LLMProvider.DEEPSEEK: APIKeys.DEEPSEEK_API_KEY,
             LLMProvider.GROK: APIKeys.GROK_API_KEY,
+            LLMProvider.MINIMAX: APIKeys.MINIMAX_API_KEY,
         }
         return key_map.get(p, "") or ""
 
@@ -273,6 +281,7 @@ class LLMService:
                 'deepseek': LLMProvider.DEEPSEEK,
                 'x-ai': LLMProvider.GROK,
                 'xai': LLMProvider.GROK,
+                'minimax': LLMProvider.MINIMAX,
             }
             
             # If the model prefix matches the current provider, use the extracted model name
@@ -304,6 +313,7 @@ class LLMService:
             'deepseek': LLMProvider.DEEPSEEK,
             'x-ai': LLMProvider.GROK,
             'xai': LLMProvider.GROK,
+            'minimax': LLMProvider.MINIMAX,
             'anthropic': LLMProvider.OPENROUTER,  # Anthropic only via OpenRouter
             'meta': LLMProvider.OPENROUTER,  # Meta/Llama only via OpenRouter
             'mistral': LLMProvider.OPENROUTER,  # Mistral only via OpenRouter
