@@ -42,25 +42,41 @@ def _is_scheduler_running() -> bool:
     return bool(sched.get_job(SCHEDULER_JOB_ID))
 
 
+# 与 qd_market_symbols 种子一致的市场及 task_type 后缀；无 DB 时的回退列表
+_DEFAULT_MARKETS = [
+    ("Crypto", "kline_1m_sync_crypto", ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT", "ADA/USDT", "DOGE/USDT", "DOT/USDT", "MATIC/USDT", "AVAX/USDT"]),
+    ("Forex", "kline_1m_sync_forex", ["XAUUSD", "XAGUSD", "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF", "EURJPY"]),
+    ("USStock", "kline_1m_sync_us", ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "JPM", "V", "JNJ"]),
+    ("AShare", "kline_1m_sync_ashare", ["000001", "000002", "600000", "600036", "600519", "000858", "002415", "300059", "000725", "002594"]),
+    ("HShare", "kline_1m_sync_hshare", ["00700", "09988", "03690", "01810", "02318", "01398", "00939", "01299", "02020", "01024"]),
+    ("Futures", "kline_1m_sync_futures", ["CL", "GC", "SI", "NG", "HG", "ZC", "ZS", "ZW", "ES", "NQ"]),
+]
+
+
 def ensure_default_task_types() -> None:
-    """若尚未注册任何品类，则注册常见品类（Crypto、Forex、USStock、AShare、HShare）。"""
+    """若尚未注册任何品类，则从 qd_market_symbols 读取 init 种子标的并注册（含 Crypto/Forex/US/AShare/HShare/Futures）。"""
     with _task_lock:
         if _task_types:
             return
-        defaults = [
-            ("kline_1m_sync_crypto", "Crypto", ["BTCUSDT", "ETHUSDT"], 400),
-            ("kline_1m_sync_forex", "Forex", ["XAUUSD", "EURUSD"], 400),
-            ("kline_1m_sync_us", "USStock", ["AAPL", "MSFT"], 400),
-            ("kline_1m_sync_ashare", "AShare", ["600519", "000001"], 400),
-            ("kline_1m_sync_hshare", "HShare", ["00700"], 400),
-        ]
-        for task_type, market, symbols, interval in defaults:
-            _task_types[task_type] = {
-                "market": market,
-                "symbols": list(symbols),
-                "interval_minutes": interval,
-            }
-        logger.info("Scheduler default task-types registered: %d categories", len(defaults))
+        try:
+            from app.data.market_symbols_seed import get_all_symbols
+            for market, task_type, fallback_symbols in _DEFAULT_MARKETS:
+                rows = get_all_symbols(market)
+                symbols = [r["symbol"] for r in rows] if rows else fallback_symbols
+                _task_types[task_type] = {
+                    "market": market,
+                    "symbols": list(symbols),
+                    "interval_minutes": 400,
+                }
+        except Exception as e:
+            logger.warning("Scheduler load symbols from qd_market_symbols failed: %s, use fallback", e)
+            for market, task_type, fallback_symbols in _DEFAULT_MARKETS:
+                _task_types[task_type] = {
+                    "market": market,
+                    "symbols": list(fallback_symbols),
+                    "interval_minutes": 400,
+                }
+        logger.info("Scheduler default task-types registered: %d categories", len(_task_types))
 
 
 def add_task_type(

@@ -530,13 +530,14 @@ class KlineService:
             result = merged[-limit:] if len(merged) > limit else merged
 
         if fetched:
+            # 写合并后的结果，缓存才能积累、下次请求命中（暂不设上限）
             if timeframe == "1m" and eff_tf == "1m":
-                _write_points_to_db(market, symbol, fetched, interval_sec=60)
+                _write_points_to_db(market, symbol, merged, interval_sec=60)
             elif timeframe == "1m" and eff_tf == "5m":
-                _write_points_to_db(market, symbol, fetched, interval_sec=300)
-                _write_kline_to_db(market, symbol, "5m", fetched)
+                _write_points_to_db(market, symbol, merged, interval_sec=300)
+                _write_kline_to_db(market, symbol, "5m", merged)
             else:
-                _write_kline_to_db(market, symbol, timeframe, fetched)
+                _write_kline_to_db(market, symbol, timeframe, merged)
         if not before_time and result:
             ttl = self.cache_ttl.get(timeframe, 300)
             self.cache.set(cache_key, result, ttl)
