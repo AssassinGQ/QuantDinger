@@ -12,6 +12,108 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# 市场容差：各市场最大合法无数据间隔（秒）
+# 用于缓存范围命中判断：stored_min <= need_start + gap 且 stored_max >= need_end - gap
+# ---------------------------------------------------------------------------
+MAX_GAP: Dict[tuple, int] = {
+    ("Crypto", 60): 300,
+    ("Forex", 60): 3 * 86400,
+    ("Futures", 60): 3 * 86400,
+    ("USStock", 60): 18 * 3600,
+    ("HShare", 60): 18 * 3600,
+    ("AShare", 60): 19 * 3600,
+    ("Crypto", 86400): 2 * 86400,
+    ("Forex", 86400): 4 * 86400,
+    ("Futures", 86400): 4 * 86400,
+    ("USStock", 86400): 5 * 86400,
+    ("HShare", 86400): 6 * 86400,
+    ("AShare", 86400): 10 * 86400,
+}
+
+
+def _get_max_gap(market: str, interval_sec: int) -> int:
+    gap = MAX_GAP.get((market, interval_sec))
+    if gap is not None:
+        return gap
+    if interval_sec <= 300:
+        return MAX_GAP.get((market, 60), 3 * 86400)
+    if interval_sec >= 86400:
+        return MAX_GAP.get((market, 86400), 10 * 86400)
+    return MAX_GAP.get((market, 60), 3 * 86400)
+
+
+# ---------------------------------------------------------------------------
+# qd_kline_ranges: 记录已存储数据的实际 min/max 时间
+# ---------------------------------------------------------------------------
+_RANGE_TABLE_ENSURED = False
+
+
+def _ensure_range_table() -> None:
+    global _RANGE_TABLE_ENSURED
+    if _RANGE_TABLE_ENSURED:
+        return
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS qd_kline_ranges (
+                    market VARCHAR(50) NOT NULL,
+                    symbol VARCHAR(50) NOT NULL,
+                    interval_sec INTEGER NOT NULL,
+                    min_ts BIGINT NOT NULL,
+                    max_ts BIGINT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (market, symbol, interval_sec)
+                )
+            """)
+            db.commit()
+            cur.close()
+        _RANGE_TABLE_ENSURED = True
+    except Exception as e:
+        logger.debug("Range table ensure skipped: %s", e)
+
+
+def _get_range(market: str, symbol: str, interval_sec: int) -> Optional[tuple]:
+    _ensure_range_table()
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT min_ts, max_ts FROM qd_kline_ranges WHERE market = ? AND symbol = ? AND interval_sec = ?",
+                (market, symbol, interval_sec),
+            )
+            row = cur.fetchone()
+            cur.close()
+        if row and row.get("min_ts") is not None:
+            return (int(row["min_ts"]), int(row["max_ts"]))
+        return None
+    except Exception as e:
+        logger.debug("Range read skipped: %s", e)
+        return None
+
+
+def _update_range(market: str, symbol: str, interval_sec: int, data_min_ts: int, data_max_ts: int) -> None:
+    _ensure_range_table()
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """INSERT INTO qd_kline_ranges (market, symbol, interval_sec, min_ts, max_ts, updated_at)
+                   VALUES (?, ?, ?, ?, ?, NOW())
+                   ON CONFLICT (market, symbol, interval_sec)
+                   DO UPDATE SET
+                     min_ts = LEAST(qd_kline_ranges.min_ts, EXCLUDED.min_ts),
+                     max_ts = GREATEST(qd_kline_ranges.max_ts, EXCLUDED.max_ts),
+                     updated_at = NOW()""",
+                (market, symbol, interval_sec, int(data_min_ts), int(data_max_ts)),
+            )
+            db.commit()
+            cur.close()
+    except Exception as e:
+        logger.debug("Range update skipped: %s", e)
+
+
 # 各周期可用的低层级（用于换算），从粗到细
 LOWER_LEVELS: Dict[str, List[str]] = {
     "1W": ["1D", "4H", "1H", "5m", "1m"],
@@ -175,6 +277,7 @@ def _write_points_to_db(
             db.commit()
             cur.close()
         logger.info("Kline points write: %s %s interval_sec=%d count=%d", market, symbol, interval_sec, len(klines))
+        _auto_update_range(market, symbol, klines, interval_sec)
     except Exception as e:
         if interval_sec == 60:
             try:
@@ -202,10 +305,17 @@ def _write_points_to_db(
                     db.commit()
                     cur.close()
                 logger.info("Kline points write (legacy): %s %s count=%d", market, symbol, len(klines))
+                _auto_update_range(market, symbol, klines, interval_sec)
                 return
             except Exception:
                 pass
         logger.warning("Kline points write failed: %s", e)
+
+
+def _auto_update_range(market: str, symbol: str, klines: List[Dict[str, Any]], interval_sec: int) -> None:
+    ts_list = [int(k["time"]) for k in klines if k.get("time") is not None]
+    if ts_list:
+        _update_range(market, symbol, interval_sec, min(ts_list), max(ts_list))
 
 
 # 分页拉取单页大小与轮间延时（防限流）
@@ -285,7 +395,44 @@ def get_kline(
         need_start_ts = now_sec - limit * interval_sec
 
     if timeframe == '1m':
-        # 1m：优先 1m 点
+        # 1m: 0) 范围命中 1) 条数命中 2) 增量尾巴 3) fallback
+
+        def _slice_1m(pts: List[Dict], lim: int, bt: Optional[int]) -> List[Dict]:
+            pts = sorted(pts, key=lambda x: x['time'])
+            if bt is not None:
+                return [b for b in pts if b['time'] < bt][-lim:]
+            return pts[-lim:] if len(pts) > lim else pts
+
+        # 0) 范围命中检查
+        stored_1m = _get_range(market, symbol, 60)
+        gap_1m = _get_max_gap(market, 60)
+        if stored_1m:
+            sr_min, sr_max = stored_1m
+            if sr_min <= need_start_ts + gap_1m and sr_max >= need_end_ts - gap_1m:
+                from_points = _read_points_range_from_db(market, symbol, need_start_ts, need_end_ts, interval_sec=60)
+                if from_points:
+                    # 实时场景：范围命中但数据可能不够新，检查是否需要拉增量尾巴
+                    if before_time is None and from_points:
+                        max_ts_db = max(b['time'] for b in from_points)
+                        if (now_sec - max_ts_db) > 600:
+                            tail_limit = min((now_sec - max_ts_db) // interval_sec + 20, 2000)
+                            fetched_tail, eff_tf = _fetch_1m_or_fallback_5m(
+                                market, symbol, tail_limit, before_time=now_sec + interval_sec
+                            )
+                            if fetched_tail and eff_tf == "1m":
+                                by_time = {b["time"]: b for b in from_points}
+                                for b in fetched_tail:
+                                    by_time[b["time"]] = b
+                                merged = sorted(by_time.values(), key=lambda x: x["time"])
+                                _write_points_to_db(market, symbol, fetched_tail, interval_sec=60)
+                                logger.info("Kline range hit + tail: %s %s 1m count=%d", market, symbol, len(merged))
+                                return _slice_1m(merged, limit, before_time)
+                    result = _slice_1m(from_points, limit, before_time)
+                    logger.info("Kline range hit 1m: %s %s count=%d", market, symbol, len(result))
+                    return result
+                return []
+
+        # 1) 条数命中（兼容旧数据无 range 记录）
         from_points = _read_points_range_from_db(market, symbol, need_start_ts, need_end_ts, interval_sec=60)
         if len(from_points) < limit and before_time is None:
             max_ts = _read_points_max_time(market, symbol)
@@ -304,6 +451,8 @@ def get_kline(
             if len(result) >= limit and (before_time is not None or last_bar_fresh):
                 logger.info("Kline from points 1m: %s %s count=%d", market, symbol, len(result))
                 return result
+
+        # 2) 增量尾巴
         from_db = from_points
         need_tail = (
             before_time is None
@@ -338,15 +487,34 @@ def get_kline(
                     result = fetched_tail[-limit:] if len(fetched_tail) > limit else fetched_tail
                     logger.info("Kline 1m fallback 5m: %s %s count=%d", market, symbol, len(result))
                     return result
+                # 3) 拉网失败但有本地数据 -> fallback
+                if from_db:
+                    logger.warning("Kline 1m tail fetch failed, fallback to local: %s %s count=%d", market, symbol, len(from_db))
+                    return _slice_1m(from_db, limit, before_time)
     else:
-        # 非 1m：1) 同周期 2) 低层级换算 3) 拉网并缓存当前周期
+        # 非 1m：1) 范围命中 2) 同周期条数 3) 低层级换算 4) 拉网 5) fallback
         def _slice(merged: List[Dict], lim: int, before_ts: Optional[int]) -> List[Dict]:
             merged = sorted(merged, key=lambda x: x["time"])
             if before_ts is not None:
                 return [b for b in merged if b["time"] < before_ts][-lim:]
             return merged[-lim:] if len(merged) > lim else merged
 
-        # 1) 同周期
+        # 1) 范围命中检查
+        stored = _get_range(market, symbol, interval_sec)
+        gap = _get_max_gap(market, interval_sec)
+        if stored:
+            sr_min, sr_max = stored
+            if sr_min <= need_start_ts + gap and sr_max >= need_end_ts - gap:
+                from_same = _read_points_range_from_db(
+                    market, symbol, need_start_ts, need_end_ts, interval_sec=interval_sec
+                )
+                if from_same:
+                    result = _slice(from_same, limit, before_time)
+                    logger.info("Kline range hit: %s %s %s count=%d", market, symbol, timeframe, len(result))
+                    return result
+                return []
+
+        # 2) 同周期条数（兼容旧数据尚无 range 记录的情况）
         from_same = _read_points_range_from_db(
             market, symbol, need_start_ts, need_end_ts, interval_sec=interval_sec
         )
@@ -355,7 +523,7 @@ def get_kline(
             logger.info("Kline from same layer: %s %s %s count=%d", market, symbol, timeframe, len(result))
             return result
 
-        # 2) 低层级换算
+        # 3) 低层级换算
         for lower_tf in LOWER_LEVELS.get(timeframe, []):
             lower_sec = TIMEFRAME_SECONDS.get(lower_tf, 60)
             from_lower = _read_points_range_from_db(
@@ -369,7 +537,7 @@ def get_kline(
                 logger.info("Kline from lower layer: %s %s %s from %s count=%d", market, symbol, timeframe, lower_tf, len(result))
                 return result
 
-        # 3) 拉网并缓存当前周期（需要多时则分页，轮间延时防限流）
+        # 4) 拉网并缓存当前周期
         fetched: List[Dict[str, Any]] = []
         next_bt = need_end_ts + interval_sec
         request_limit = min(limit, PAGINATE_CHUNK)
@@ -395,6 +563,13 @@ def get_kline(
             if b["time"] not in by_time:
                 by_time[b["time"]] = b
         merged = sorted(by_time.values(), key=lambda x: x["time"])
+
+        # 5) fallback: 拉网失败且无合并结果，返回库里已有数据
+        if not merged:
+            fallback = _read_points_range_from_db(market, symbol, need_start_ts, need_end_ts, interval_sec)
+            if fallback:
+                logger.warning("Network failed, fallback to local: %s %s %s count=%d", market, symbol, timeframe, len(fallback))
+                return _slice(fallback, limit, before_time)
         return _slice(merged, limit, before_time)
 
     # 1m 拉网补缺或首次（仅 1m 会走到这里）
@@ -456,4 +631,9 @@ def get_kline(
             _write_points_to_db(market, symbol, merged, interval_sec=60)
         else:
             _write_points_to_db(market, symbol, merged, interval_sec=300)
+
+    # fallback: 拉网失败但有本地数据
+    if not result and from_db:
+        logger.warning("Kline 1m gap-fill failed, fallback to local: %s %s count=%d", market, symbol, len(from_db))
+        return _slice_1m(from_db, limit, before_time)
     return result
