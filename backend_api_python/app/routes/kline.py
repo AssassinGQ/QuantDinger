@@ -6,6 +6,7 @@ from datetime import datetime
 import traceback
 
 from app.services.kline import KlineService
+from app.data_sources.base import RateLimitError
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -73,6 +74,14 @@ def get_kline():
             'data': klines
         })
         
+    except RateLimitError as rle:
+        logger.warning("K-line rate limited: %s:%s %s → %s", market, symbol, timeframe, rle)
+        return jsonify({
+            'code': 0,
+            'msg': f'Data source rate limited ({rle.source}), retry after {int(rle.retry_after)}s',
+            'data': [],
+        }), 429
+
     except Exception as e:
         logger.error(f"Failed to fetch K-lines: {str(e)}")
         logger.error(traceback.format_exc())
@@ -112,6 +121,14 @@ def get_price():
             'data': price_data
         })
         
+    except RateLimitError as rle:
+        logger.warning("Price rate limited: %s:%s → %s", market, symbol, rle)
+        return jsonify({
+            'code': 0,
+            'msg': f'Data source rate limited ({rle.source}), retry later',
+            'data': None,
+        }), 429
+
     except Exception as e:
         logger.error(f"Failed to fetch price: {str(e)}")
         return jsonify({

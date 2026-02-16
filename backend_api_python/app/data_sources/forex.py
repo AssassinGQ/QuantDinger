@@ -19,6 +19,26 @@ _forex_cache: Dict[str, Dict[str, Any]] = {}
 _forex_cache_lock = threading.Lock()
 _FOREX_CACHE_TTL = 60  # 外汇价格缓存 60 秒 (Tiingo 免费 API 限制严格)
 
+# 源端限流缓存：记录 Tiingo 限流截止时间（Unix timestamp）
+# 一旦触发 429，后续请求在冷却期内直接 fail-fast，不再撞 API
+_tiingo_rate_limit_until: float = 0.0
+_TIINGO_RATE_LIMIT_COOLDOWN = 30  # 冷却秒数
+
+
+def _check_tiingo_rate_limit() -> None:
+    """若处于冷却期，立即抛 RateLimitError，跳过网络请求。"""
+    global _tiingo_rate_limit_until
+    remaining = _tiingo_rate_limit_until - time.time()
+    if remaining > 0:
+        raise RateLimitError(source="Tiingo(cached)", retry_after=remaining)
+
+
+def _mark_tiingo_rate_limited() -> None:
+    """标记 Tiingo 进入限流冷却。"""
+    global _tiingo_rate_limit_until
+    _tiingo_rate_limit_until = time.time() + _TIINGO_RATE_LIMIT_COOLDOWN
+    logger.warning("Tiingo rate-limited, cooldown until +%ds", _TIINGO_RATE_LIMIT_COOLDOWN)
+
 
 class ForexDataSource(BaseDataSource):
     """外汇数据源 (Tiingo)"""
@@ -93,36 +113,37 @@ class ForexDataSource(BaseDataSource):
                     return cached
         
         try:
+            _check_tiingo_rate_limit()
+
             # 解析 symbol
             tiingo_symbol = self.SYMBOL_MAP.get(symbol)
             if not tiingo_symbol:
                 tiingo_symbol = symbol.lower()
             
             # Tiingo FX Top-of-Book API
-            # https://api.tiingo.com/tiingo/fx/top?tickers=eurusd&token=...
             url = f"{self.base_url}/fx/top"
             params = {
                 'tickers': tiingo_symbol,
                 'token': api_key
             }
             
-            # 重试逻辑：处理 429 速率限制
-            for attempt in range(3):
-                response = requests.get(url, params=params, timeout=TiingoConfig.TIMEOUT)
+            # 重试：最多 2 次，短等待
+            for attempt in range(2):
+                response = requests.get(url, params=params, timeout=min(TiingoConfig.TIMEOUT, 8))
                 if response.status_code == 429:
-                    wait_time = 2 * (attempt + 1)
-                    logger.warning(f"Tiingo rate limit (429), waiting {wait_time}s before retry ({attempt+1}/3)")
+                    wait_time = 1 * (attempt + 1)
+                    logger.warning(f"Tiingo rate limit (429), waiting {wait_time}s before retry ({attempt+1}/2)")
                     time.sleep(wait_time)
                     continue
                 break
             
             if response.status_code == 429:
-                logger.warning("Tiingo rate limit exceeded for ticker request")
+                _mark_tiingo_rate_limited()
                 with _forex_cache_lock:
                     if cache_key in _forex_cache:
                         logger.info(f"Returning stale cache for {symbol} due to rate limit")
                         return _forex_cache[cache_key]
-                raise RateLimitError(source="Tiingo", retry_after=30)
+                raise RateLimitError(source="Tiingo", retry_after=_TIINGO_RATE_LIMIT_COOLDOWN)
             
             response.raise_for_status()
             data = response.json()
@@ -215,6 +236,8 @@ class ForexDataSource(BaseDataSource):
             return []
             
         try:
+            _check_tiingo_rate_limit()
+
             # 1. 解析 Symbol
             tiingo_symbol = self.SYMBOL_MAP.get(symbol)
             if not tiingo_symbol:
@@ -287,23 +310,22 @@ class ForexDataSource(BaseDataSource):
             
             # logger.info(f"Tiingo Request: {url} params={params}")
             
-            # 重试逻辑：处理 429 速率限制
-            max_retries = 3
-            retry_delay = 2  # 秒
+            # 重试逻辑：处理 429 速率限制（最多 2 次，短等待）
+            max_retries = 2
+            retry_delay = 1  # 秒
             response = None
             
             for attempt in range(max_retries):
                 try:
-                    response = requests.get(url, params=params, timeout=TiingoConfig.TIMEOUT)
+                    response = requests.get(url, params=params, timeout=min(TiingoConfig.TIMEOUT, 8))
                     
                     if response.status_code == 429:
-                        # 速率限制，等待后重试
                         wait_time = retry_delay * (attempt + 1)
                         logger.warning(f"Tiingo rate limit (429), waiting {wait_time}s before retry ({attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
                     
-                    break  # 成功或其他错误，退出重试循环
+                    break
                     
                 except requests.exceptions.Timeout:
                     if attempt < max_retries - 1:
@@ -317,8 +339,8 @@ class ForexDataSource(BaseDataSource):
                 return []
             
             if response.status_code == 429:
-                logger.error("Tiingo API rate limit exceeded after all retries.")
-                raise RateLimitError(source="Tiingo", retry_after=30)
+                _mark_tiingo_rate_limited()
+                raise RateLimitError(source="Tiingo", retry_after=_TIINGO_RATE_LIMIT_COOLDOWN)
             
             if response.status_code == 403:
                 logger.error("Tiingo API permission error (403): check whether your API key is valid and has access to this dataset.")
