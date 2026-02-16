@@ -32,13 +32,14 @@ class USStockDataSource(BaseDataSource):
     }
     
     # 不同周期获取数据的天数范围
+    # 美股每天交易 ~6.5h，按 ~5 根 1H K线/交易日、~5/7 交易日/日历日计算
     DAYS_MAP = {
         '1m': lambda limit: min(7, max(1, (limit // 390) + 2)),
         '5m': lambda limit: min(60, max(1, (limit // 78) + 2)),
         '15m': lambda limit: min(60, max(1, (limit // 26) + 2)),
         '30m': lambda limit: min(60, max(1, (limit // 13) + 2)),
-        '1H': lambda limit: min(730, max(1, (limit // 24) + 2)),
-        '4H': lambda limit: min(730, max(1, (limit // 6) + 2)),
+        '1H': lambda limit: min(730, max(1, (limit // 5) + 5)),
+        '4H': lambda limit: min(730, max(1, limit + 2)),
         '1D': lambda limit: min(3650, limit + 1),
         '1W': lambda limit: min(3650, (limit * 7) + 7)
     }

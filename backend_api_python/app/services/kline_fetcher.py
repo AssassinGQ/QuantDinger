@@ -549,10 +549,10 @@ def get_kline(
             if not part:
                 break
             fetched.extend(part)
-            if len(part) < request_limit:
-                break
             min_ts = min(b["time"] for b in part)
             if min_ts <= need_start_ts:
+                break
+            if min_ts >= next_bt:
                 break
             next_bt = min_ts
             time.sleep(PAGINATE_DELAY_SEC)
