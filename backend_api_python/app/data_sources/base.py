@@ -11,6 +11,14 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+class RateLimitError(Exception):
+    """数据源限流异常，调用方可据此执行退避/熔断。"""
+    def __init__(self, source: str = "", retry_after: float = 0):
+        self.source = source
+        self.retry_after = retry_after
+        super().__init__(f"Rate limited by {source}" + (f", retry after {retry_after}s" if retry_after else ""))
+
+
 # K线周期映射（秒数）
 TIMEFRAME_SECONDS = {
     '1m': 60,

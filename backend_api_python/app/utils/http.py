@@ -9,7 +9,7 @@ from urllib3.util.retry import Retry
 def get_retry_session(
     retries: int = 3,
     backoff_factor: float = 0.5,
-    status_forcelist: tuple = (500, 502, 503, 504)
+    status_forcelist: tuple = (429, 500, 502, 503, 504)
 ) -> requests.Session:
     """
     获取带重试机制的 HTTP Session

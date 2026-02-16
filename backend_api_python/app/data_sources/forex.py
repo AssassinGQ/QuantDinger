@@ -8,7 +8,7 @@ import time
 import requests
 import threading
 
-from app.data_sources.base import BaseDataSource, TIMEFRAME_SECONDS
+from app.data_sources.base import BaseDataSource, TIMEFRAME_SECONDS, RateLimitError
 from app.utils.logger import get_logger
 from app.config import TiingoConfig, APIKeys
 
@@ -118,13 +118,11 @@ class ForexDataSource(BaseDataSource):
             
             if response.status_code == 429:
                 logger.warning("Tiingo rate limit exceeded for ticker request")
-                logger.info("Note: Tiingo 1-minute forex data requires a paid subscription")
-                # 返回缓存数据（如果有的话，即使已过期）
                 with _forex_cache_lock:
                     if cache_key in _forex_cache:
                         logger.info(f"Returning stale cache for {symbol} due to rate limit")
                         return _forex_cache[cache_key]
-                return {'last': 0, 'symbol': symbol}
+                raise RateLimitError(source="Tiingo", retry_after=30)
             
             response.raise_for_status()
             data = response.json()
@@ -319,8 +317,8 @@ class ForexDataSource(BaseDataSource):
                 return []
             
             if response.status_code == 429:
-                logger.error("Tiingo API rate limit exceeded. Please wait a moment before retrying.")
-                return []
+                logger.error("Tiingo API rate limit exceeded after all retries.")
+                raise RateLimitError(source="Tiingo", retry_after=30)
             
             if response.status_code == 403:
                 logger.error("Tiingo API permission error (403): check whether your API key is valid and has access to this dataset.")

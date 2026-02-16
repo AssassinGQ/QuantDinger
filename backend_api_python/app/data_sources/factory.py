@@ -4,7 +4,7 @@
 """
 from typing import Dict, List, Any, Optional
 
-from app.data_sources.base import BaseDataSource
+from app.data_sources.base import BaseDataSource, RateLimitError
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -100,6 +100,8 @@ class DataSourceFactory:
             klines.sort(key=lambda x: x['time'])
             
             return klines
+        except RateLimitError:
+            raise
         except Exception as e:
             logger.error(f"Failed to fetch K-lines {market}:{symbol} - {str(e)}")
             return []
@@ -124,6 +126,8 @@ class DataSourceFactory:
         try:
             source = cls.get_source(market)
             return source.get_ticker(symbol)
+        except RateLimitError:
+            raise
         except NotImplementedError:
             logger.warning(f"get_ticker not implemented for market: {market}")
             return {'last': 0, 'symbol': symbol}
