@@ -105,7 +105,8 @@ def _update_range(market: str, symbol: str, interval_sec: int, data_min_ts: int,
                    DO UPDATE SET
                      min_ts = LEAST(qd_kline_ranges.min_ts, EXCLUDED.min_ts),
                      max_ts = GREATEST(qd_kline_ranges.max_ts, EXCLUDED.max_ts),
-                     updated_at = NOW()""",
+                     updated_at = NOW()
+                   RETURNING market""",
                 (market, symbol, interval_sec, int(data_min_ts), int(data_max_ts)),
             )
             db.commit()
