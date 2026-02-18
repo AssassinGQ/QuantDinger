@@ -168,6 +168,10 @@ def run_backtest():
         enable_mtf = data.get('enableMtf', True)
         if isinstance(enable_mtf, str):
             enable_mtf = enable_mtf.lower() in ['true', '1', 'yes']
+        # 宏观数据注入开关（注入 VIX/DXY/Fear&Greed 到 df）
+        include_macro = data.get('includeMacro', False)
+        if isinstance(include_macro, str):
+            include_macro = include_macro.lower() in ['true', '1', 'yes']
         
         # (Debug) log received params if needed
         
@@ -255,7 +259,8 @@ def run_backtest():
                 slippage=slippage,
                 leverage=leverage,
                 trade_direction=trade_direction,
-                strategy_config=strategy_config
+                strategy_config=strategy_config,
+                include_macro=include_macro
             )
             # 添加标准回测的精度信息
             result['precision_info'] = {

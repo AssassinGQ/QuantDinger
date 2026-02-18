@@ -22,6 +22,7 @@ from app.utils.db import get_db_connection
 from app.data_sources import DataSourceFactory
 from app.services.kline import KlineService
 from app.services.indicator_params import IndicatorParamsParser, IndicatorCaller
+from app.services.macro_data_service import MacroDataService
 
 logger = get_logger(__name__)
 
@@ -641,6 +642,16 @@ class TradingExecutor:
                 logger.error(f"Strategy {strategy_id} K-lines are empty after normalization")
                 return
 
+            # 按需注入宏观数据 (VIX/DXY/Fear&Greed)
+            # 仅当 trading_config.include_macro=true 时才拉取，避免影响不需要的策略
+            include_macro = trading_config.get('include_macro', False)
+            if include_macro:
+                try:
+                    df = MacroDataService.enrich_dataframe_realtime(df)
+                    logger.info(f"Strategy {strategy_id} macro data injected (vix/dxy/fear_greed)")
+                except Exception as e:
+                    logger.warning(f"Strategy {strategy_id} macro data injection failed (continuing without): {e}")
+
             # ============================================
             # 启动时：完全依赖本地数据库的持仓状态（虚拟持仓）
             # ============================================
@@ -749,6 +760,11 @@ class TradingExecutor:
                         klines = self._fetch_latest_kline(symbol, timeframe, limit=history_limit, market_category=market_category)
                         if klines and len(klines) >= 2:
                             df = self._klines_to_dataframe(klines)
+                            if include_macro:
+                                try:
+                                    df = MacroDataService.enrich_dataframe_realtime(df)
+                                except Exception:
+                                    pass
                             if len(df) > 0:
                                 current_pos_list = self._get_current_positions(strategy_id, symbol)
                                 initial_highest = 0.0
@@ -1786,8 +1802,9 @@ class TradingExecutor:
                     else:
                         df[col] = df[col].astype('float64')
             
-            # 删除包含 NaN 的行
-            df = df.dropna()
+            # 删除 OHLCV 核心列中含 NaN 的行（保留宏观列中可能的 NaN）
+            ohlcv_cols = [c for c in ['open', 'high', 'low', 'close', 'volume'] if c in df.columns]
+            df = df.dropna(subset=ohlcv_cols)
             
             if len(df) == 0:
                 logger.warning("DataFrame is empty; cannot execute indicator script")
@@ -1842,6 +1859,10 @@ class TradingExecutor:
                 'initial_position_count': int(initial_position_count),
                 'initial_last_add_price': float(initial_last_add_price)
             }
+            # Expose macro columns as top-level variables if present
+            for macro_col in MacroDataService.MACRO_COLUMNS:
+                if macro_col in df.columns:
+                    local_vars[macro_col] = df[macro_col]
             
             import builtins
             def safe_import(name, *args, **kwargs):
@@ -2785,6 +2806,11 @@ class TradingExecutor:
                     klines = self._fetch_latest_kline(symbol, timeframe, limit=200, market_category=market_category)
                     if klines and len(klines) >= 2:
                         df = self._klines_to_dataframe(klines)
+                        if trading_config.get('include_macro', False):
+                            try:
+                                df = MacroDataService.enrich_dataframe_realtime(df)
+                            except Exception:
+                                pass
                         if len(df) > 0:
                             all_data[symbol] = df
                 except Exception as e:

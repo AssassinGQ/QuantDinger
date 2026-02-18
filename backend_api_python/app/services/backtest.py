@@ -13,6 +13,7 @@ from app.data_sources import DataSourceFactory
 from app.utils.logger import get_logger
 from app.services.indicator_params import IndicatorParamsParser, IndicatorCaller
 from app.services.kline import KlineService
+from app.services.macro_data_service import MacroDataService
 
 logger = get_logger(__name__)
 
@@ -984,7 +985,8 @@ class BacktestService:
         slippage: float = 0.0,  # Ideal backtest environment, no slippage
         leverage: int = 1,
         trade_direction: str = 'long',
-        strategy_config: Optional[Dict[str, Any]] = None
+        strategy_config: Optional[Dict[str, Any]] = None,
+        include_macro: bool = False
     ) -> Dict[str, Any]:
         """
         Run backtest.
@@ -999,6 +1001,7 @@ class BacktestService:
             initial_capital: Initial capital
             commission: Commission rate
             slippage: Slippage
+            include_macro: Inject VIX/DXY/Fear&Greed columns into df
             
         Returns:
             Backtest result
@@ -1008,6 +1011,15 @@ class BacktestService:
         df = self._fetch_kline_data(market, symbol, timeframe, start_date, end_date)
         if df.empty:
             raise ValueError("No candle data available in the backtest date range")
+        
+        # 1.5 Inject macro data (VIX/DXY/Fear&Greed) if requested
+        if include_macro:
+            try:
+                df = MacroDataService.enrich_dataframe(df, start_date, end_date)
+                macro_cols = [c for c in MacroDataService.MACRO_COLUMNS if c in df.columns and df[c].notna().any()]
+                logger.info(f"Macro data injected: {macro_cols}, rows={len(df)}")
+            except Exception as e:
+                logger.warning(f"Macro data injection failed (backtest continues without): {e}")
         
         
         # 2. Execute indicator code to get signals (pass backtest params)
@@ -1096,17 +1108,22 @@ class BacktestService:
         
         try:
             # Prepare execution environment
+            df_copy = df.copy()
             local_vars = {
-                'df': df.copy(),
-                'open': df['open'],
-                'high': df['high'],
-                'low': df['low'],
-                'close': df['close'],
-                'volume': df['volume'],
+                'df': df_copy,
+                'open': df_copy['open'],
+                'high': df_copy['high'],
+                'low': df_copy['low'],
+                'close': df_copy['close'],
+                'volume': df_copy['volume'],
                 'signals': signals,
                 'np': np,
                 'pd': pd,
             }
+            # Expose macro columns as top-level variables if present
+            for macro_col in MacroDataService.MACRO_COLUMNS:
+                if macro_col in df_copy.columns:
+                    local_vars[macro_col] = df_copy[macro_col]
             
             # Add backtest params to execution environment (if provided)
             if backtest_params:
