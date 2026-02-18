@@ -50,9 +50,34 @@ class MacroDataService:
 
     _mem_cache: dict = {}
     _mem_lock = threading.Lock()
+    _db_ready = False
     MEM_TTL = int(os.getenv("MACRO_CACHE_TTL", 3600))
 
     MACRO_COLUMNS = ["vix", "dxy", "fear_greed"]
+
+    @classmethod
+    def _ensure_table(cls):
+        """首次使用时自动建表（和 kline_fetcher 同模式）"""
+        if cls._db_ready:
+            return
+        try:
+            with _get_db() as db:
+                cur = db.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS qd_macro_data (
+                        indicator VARCHAR(30) NOT NULL,
+                        date_val DATE NOT NULL,
+                        value DECIMAL(20,6) NOT NULL,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        PRIMARY KEY (indicator, date_val)
+                    )
+                """)
+                db.commit()
+                cur.close()
+            cls._db_ready = True
+            logger.info("qd_macro_data table ensured")
+        except Exception as e:
+            logger.warning(f"Failed to ensure qd_macro_data table: {e}")
 
     # ── 公开接口 ──────────────────────────────────────────────────────
 
@@ -169,6 +194,7 @@ class MacroDataService:
 
     @classmethod
     def _read_db(cls, indicator: str, start_date: date, end_date: date) -> Optional[pd.DataFrame]:
+        cls._ensure_table()
         try:
             with _get_db() as db:
                 cur = db.cursor()
@@ -194,6 +220,7 @@ class MacroDataService:
         """将网络拉取的数据回写 DB（UPSERT）"""
         if data.empty:
             return
+        cls._ensure_table()
         col = data.columns[0] if len(data.columns) == 1 else indicator
         try:
             with _get_db() as db:
