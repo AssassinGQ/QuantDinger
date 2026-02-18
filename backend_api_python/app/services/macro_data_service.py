@@ -225,22 +225,22 @@ class MacroDataService:
         try:
             with _get_db() as db:
                 cur = db.cursor()
-                batch = []
+                count = 0
                 for ts, row in data.iterrows():
                     dt = ts.date() if hasattr(ts, 'date') else ts
                     val = float(row[col]) if col in row.index else float(row.iloc[0])
                     if pd.notna(val):
-                        batch.append((indicator, dt.isoformat(), val))
-                if batch:
-                    cur.executemany(
-                        "INSERT INTO qd_macro_data (indicator, date_val, value) "
-                        "VALUES (?, ?, ?) "
-                        "ON CONFLICT(indicator, date_val) DO UPDATE SET value=excluded.value",
-                        batch
-                    )
-                    db.commit()
+                        cur.execute(
+                            "INSERT INTO qd_macro_data (indicator, date_val, value) "
+                            "VALUES (?, ?, ?) "
+                            "ON CONFLICT(indicator, date_val) DO UPDATE SET value=EXCLUDED.value "
+                            "RETURNING date_val",
+                            (indicator, dt.isoformat(), val)
+                        )
+                        count += 1
+                db.commit()
                 cur.close()
-                logger.info(f"Wrote {len(batch)} rows for {indicator} to DB")
+                logger.info(f"Wrote {count} rows for {indicator} to DB")
         except Exception as e:
             logger.warning(f"DB write for {indicator} failed: {e}")
 
