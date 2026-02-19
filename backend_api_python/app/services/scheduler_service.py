@@ -358,3 +358,66 @@ def stop_task(task_type: Optional[str] = None) -> bool:
         pass
     logger.info("Scheduler stopped")
     return True
+
+
+# ---------------------------------------------------------------------------
+# 插件式定时任务通用接口
+# ---------------------------------------------------------------------------
+
+def register_scheduled_job(job_id: str, func, interval_minutes: int,
+                           max_instances: int = 1, replace: bool = True) -> bool:
+    """注册一个独立的 interval 定时任务到 APScheduler。
+
+    Args:
+        job_id: 唯一 job 标识
+        func: 无参可调用对象
+        interval_minutes: 执行间隔（分钟）
+        max_instances: 最大并发实例数
+        replace: 若已存在是否替换
+    """
+    sched = get_scheduler()
+    existing = sched.get_job(job_id)
+    if existing and not replace:
+        logger.info("Job %s already registered, skip", job_id)
+        return False
+    sched.add_job(
+        func,
+        "interval",
+        minutes=interval_minutes,
+        id=job_id,
+        max_instances=max_instances,
+        replace_existing=replace,
+    )
+    logger.info("Registered scheduled job: %s, interval=%d min", job_id, interval_minutes)
+    return True
+
+
+def unregister_scheduled_job(job_id: str) -> bool:
+    """移除一个已注册的定时任务。"""
+    sched = get_scheduler()
+    if not sched.get_job(job_id):
+        logger.info("Job %s not found, nothing to remove", job_id)
+        return False
+    try:
+        sched.remove_job(job_id)
+    except Exception:
+        pass
+    logger.info("Unregistered scheduled job: %s", job_id)
+    return True
+
+
+def get_all_jobs_status() -> List[Dict[str, Any]]:
+    """返回所有已注册 job 的状态（含 kline 和插件 job）。"""
+    sched = get_scheduler()
+    result = []
+    for job in sched.get_jobs():
+        result.append({
+            "job_id": job.id,
+            "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+        })
+    return result
+
+
+def run_kline_sync_once() -> None:
+    """手动触发一次完整 K 线同步（供插件或测试调用）。"""
+    _run_all_kline_sync()

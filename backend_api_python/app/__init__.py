@@ -232,6 +232,13 @@ def create_app(config_name='default'):
         start_pending_order_worker()
         start_portfolio_monitor()
         restore_running_strategies()
+
+        # Register plugin-style scheduled tasks (regime_switch, etc.)
+        try:
+            from app.tasks import register_all_tasks
+            register_all_tasks()
+        except Exception as e:
+            logger.warning(f"Failed to register plugin tasks: {e}")
     
     return app
 

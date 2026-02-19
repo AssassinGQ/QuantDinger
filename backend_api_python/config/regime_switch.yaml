@@ -1,0 +1,44 @@
+# Regime 自动策略切换配置
+# 环境变量 ENABLE_REGIME_SWITCH=true 时生效
+# 可通过 REGIME_SWITCH_CONFIG_PATH 覆盖本文件路径
+
+# ── Regime 判定规则 ─────────────────────────────
+regime_rules:
+  # VIX 阈值（与 top-max MarketContext 一致）
+  vix_panic: 30       # VIX > 30 → panic
+  vix_high_vol: 25    # VIX > 25 → high_vol
+  vix_low_vol: 15     # VIX < 15 → low_vol
+  # 可选：Fear & Greed 强化（后续版本启用）
+  # fg_extreme_fear: 20  # F&G < 20 → 强化为 panic
+
+# ── Regime → 启用策略 style ──────────────────────
+# 每个 regime 下启用哪些 style 的策略
+regime_to_style:
+  panic:
+    - conservative
+  high_vol:
+    - conservative
+    - balanced
+  normal:
+    - balanced
+  low_vol:
+    - balanced
+    - aggressive
+
+# ── 品种 → 策略分组 ──────────────────────────────
+# 每个品种部署 2-3 个策略后，把 strategy_id 填入对应 style
+# 格式: symbol → { style: [strategy_id, ...] }
+symbol_strategies:
+  # 示例（部署后替换为实际 strategy_id）：
+  # XAUUSD:
+  #   conservative: [101]
+  #   balanced: [102]
+  #   aggressive: [103]
+  # NVDA:
+  #   conservative: [201]
+  #   balanced: [202]
+  #   aggressive: [203]
+
+# ── 执行参数 ─────────────────────────────────────
+user_id: 1              # 执行启停操作的 user_id（null = 不校验归属）
+interval_minutes: 15    # regime_switch 定时检查间隔（分钟）
