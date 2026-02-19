@@ -6,6 +6,9 @@ regime_switch 插件 — 监控 VIX/Fear&Greed → 自动启停策略。
   2. 根据 VIX 阈值计算当前 regime
   3. 对比配置中「regime→style→strategy_id」与实际运行状态
   4. 调 StrategyService + TradingExecutor 做启停（两层配合）
+
+P1 扩展：当 multi_strategy.enabled=true 时，通过 PortfolioAllocator
+进行加权分配而非二元启停。
 """
 
 import os
@@ -86,11 +89,38 @@ def compute_regime(vix: float, fear_greed: Optional[float] = None,
 
 # ── 目标策略集合 ────────────────────────────────────────────────────────
 
-def compute_target_strategy_ids(regime: str, config: Optional[Dict] = None) -> Set[int]:
-    """根据当前 regime 和配置，计算应该运行的 strategy_id 集合。"""
+def _get_symbol_strategies_from_db(user_id: Optional[int] = 1) -> Dict[str, Dict[str, List[int]]]:
+    """从数据库策略的 trading_config.regime_style 与 symbol 构建 symbol_strategies 结构。
+    仅包含 regime_style 为 conservative/balanced/aggressive 且 symbol 存在的策略。
+    """
+    from app.services.strategy import StrategyService
+    service = StrategyService()
+    strategies = service.list_strategies(user_id=user_id)
+    result: Dict[str, Dict[str, List[int]]] = {}
+    valid_styles = {"conservative", "balanced", "aggressive"}
+    for s in strategies:
+        tc = (s.get("trading_config") or {}) if isinstance(s.get("trading_config"), dict) else {}
+        symbol = tc.get("symbol")
+        style = (tc.get("regime_style") or "").strip().lower()
+        if not symbol or style not in valid_styles:
+            continue
+        sid = s.get("id")
+        if sid is None:
+            continue
+        if symbol not in result:
+            result[symbol] = {}
+        if style not in result[symbol]:
+            result[symbol][style] = []
+        result[symbol][style].append(int(sid))
+    return result
+
+
+def compute_target_strategy_ids(regime: str, config: Optional[Dict] = None,
+                                symbol_strategies_override: Optional[Dict] = None) -> Set[int]:
+    """根据当前 regime 和配置，计算应该运行的 strategy_id 集合（P0 二元模式）。"""
     cfg = config or _load_config()
     regime_to_style = cfg.get("regime_to_style", {})
-    symbol_strategies = cfg.get("symbol_strategies", {})
+    symbol_strategies = symbol_strategies_override if symbol_strategies_override is not None else cfg.get("symbol_strategies", {})
 
     active_styles = regime_to_style.get(regime, ["balanced"])
     target_ids: Set[int] = set()
@@ -134,10 +164,12 @@ def _get_currently_running_ids() -> Set[int]:
 
 # ── 获取所有已配置的策略 ID ──────────────────────────────────────────────
 
-def _get_all_managed_ids(config: Optional[Dict] = None) -> Set[int]:
+def _get_all_managed_ids(config: Optional[Dict] = None,
+                         symbol_strategies_override: Optional[Dict] = None) -> Set[int]:
     """返回配置中所有品种、所有 style 的 strategy_id 集合（被本模块管理的范围）。"""
     cfg = config or _load_config()
-    symbol_strategies = cfg.get("symbol_strategies", {})
+    symbol_strategies = (symbol_strategies_override if symbol_strategies_override is not None
+                         else cfg.get("symbol_strategies", {}))
     all_ids: Set[int] = set()
     for _symbol, style_map in (symbol_strategies or {}).items():
         if not isinstance(style_map, dict):
@@ -200,30 +232,73 @@ def run() -> None:
         _run_lock.release()
 
 
+def _is_multi_strategy_enabled(config: Dict) -> bool:
+    """检查是否启用 P1 多策略权重分配模式。"""
+    return bool(config.get("multi_strategy", {}).get("enabled", False))
+
+
 def _run_inner() -> None:
     config = _load_config()
     symbol_strategies = config.get("symbol_strategies") or {}
-    if not symbol_strategies:
-        logger.debug("[regime_switch] no symbol_strategies configured, noop")
-        return
-
     user_id_raw = config.get("user_id")
     user_id = int(user_id_raw) if user_id_raw is not None else None
 
-    # 1) 拉宏观
+    if not symbol_strategies:
+        symbol_strategies = _get_symbol_strategies_from_db(user_id=user_id)
+    if not symbol_strategies:
+        logger.debug("[regime_switch] no symbol_strategies (config or DB with regime_style), noop")
+        return
+
     macro = _fetch_macro_snapshot()
     vix = macro["vix"]
     fg = macro["fear_greed"]
-
-    # 2) 算 regime
     regime = compute_regime(vix, fear_greed=fg, config=config)
 
-    # 3) 算目标
-    target_ids = compute_target_strategy_ids(regime, config=config)
-    managed_ids = _get_all_managed_ids(config)
+    if _is_multi_strategy_enabled(config):
+        _run_multi_strategy(regime, config, symbol_strategies, macro, user_id)
+    else:
+        _run_legacy(regime, config, symbol_strategies, macro, user_id)
+
+
+def _run_multi_strategy(
+    regime: str, config: Dict, symbol_strategies: Dict,
+    macro: Dict[str, float], user_id: Optional[int],
+) -> None:
+    """P1 多策略权重分配模式。"""
+    from app.services.portfolio_allocator import get_portfolio_allocator
+
+    allocator = get_portfolio_allocator()
+    result = allocator.update_regime(regime, config, symbol_strategies)
+
+    ids_to_stop = result.get("stopped", [])
+    ids_to_start = result.get("started", [])
+    weight_changed = result.get("weight_changed", [])
+
+    if ids_to_stop:
+        _stop_strategies(ids_to_stop, user_id=user_id)
+    if ids_to_start:
+        _start_strategies(ids_to_start, user_id=user_id)
+
+    logger.info(
+        "[regime_switch] MULTI regime=%s (VIX=%.1f F&G=%.0f) | weights=%s | stop=%s start=%s weight_changed=%s",
+        regime, macro["vix"], macro["fear_greed"],
+        allocator.effective_weights,
+        ids_to_stop, ids_to_start, weight_changed,
+    )
+
+
+def _run_legacy(
+    regime: str, config: Dict, symbol_strategies: Dict,
+    macro: Dict[str, float], user_id: Optional[int],
+) -> None:
+    """P0 二元启停模式（向后兼容）。"""
+    vix = macro["vix"]
+    fg = macro["fear_greed"]
+
+    target_ids = compute_target_strategy_ids(regime, config=config, symbol_strategies_override=symbol_strategies)
+    managed_ids = _get_all_managed_ids(config, symbol_strategies_override=symbol_strategies)
     running_ids = _get_currently_running_ids()
 
-    # 只操作本模块管理范围内的策略
     managed_running = running_ids & managed_ids
 
     ids_to_start = sorted(target_ids - managed_running)
@@ -241,7 +316,6 @@ def _run_inner() -> None:
         regime, vix, fg, ids_to_stop, ids_to_start,
     )
 
-    # 4) 先停后启
     _stop_strategies(ids_to_stop, user_id=user_id)
     _start_strategies(ids_to_start, user_id=user_id)
 

@@ -2609,7 +2609,15 @@ class TradingExecutor:
         pass
 
     def _get_available_capital(self, strategy_id: int, initial_capital: float) -> float:
-        """获取可用资金"""
+        """获取可用资金：优先从 PortfolioAllocator 获取动态分配，fallback 到 initial_capital。"""
+        try:
+            from app.services.portfolio_allocator import get_portfolio_allocator
+            allocator = get_portfolio_allocator()
+            allocated = allocator.get_allocated_capital(strategy_id)
+            if allocated is not None:
+                return allocated
+        except Exception:
+            pass
         return initial_capital
 
     def _calculate_current_equity(self, strategy_id: int, initial_capital: float) -> float:

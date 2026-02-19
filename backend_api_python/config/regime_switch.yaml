@@ -11,8 +11,8 @@ regime_rules:
   # 可选：Fear & Greed 强化（后续版本启用）
   # fg_extreme_fear: 20  # F&G < 20 → 强化为 panic
 
-# ── Regime → 启用策略 style ──────────────────────
-# 每个 regime 下启用哪些 style 的策略
+# ── Regime → 启用策略 style（P0 二元模式） ────────
+# 当 multi_strategy.enabled = false 或缺失时使用
 regime_to_style:
   panic:
     - conservative
@@ -24,6 +24,52 @@ regime_to_style:
   low_vol:
     - balanced
     - aggressive
+
+# ── P1 多策略动态组合（权重分配模式） ─────────────
+multi_strategy:
+  enabled: false       # true 启用权重分配，false 退化为 P0 二元启停
+
+  # Regime → 各 style 权重（权重之和应为 1.0）
+  regime_to_weights:
+    panic:
+      conservative: 0.80
+      balanced: 0.20
+      aggressive: 0.00
+    high_vol:
+      conservative: 0.50
+      balanced: 0.40
+      aggressive: 0.10
+    normal:
+      conservative: 0.20
+      balanced: 0.60
+      aggressive: 0.20
+    low_vol:
+      conservative: 0.10
+      balanced: 0.30
+      aggressive: 0.60
+
+  # 品种资金池（可选，不配置则取各策略 initial_capital 推算）
+  symbol_capital_pool:
+    # XAUUSD: 30000
+    # NVDA: 50000
+
+  # 最小权重阈值：低于此值视为 0（停止策略），避免极小仓位
+  min_weight_threshold: 0.05
+
+  # 分配上限：allocated 不超过 initial_capital × 此倍数
+  max_allocation_ratio: 2.0
+
+  # 权重过渡方式（P1b 实现）
+  transition:
+    mode: immediate      # gradual（渐进）| immediate（立即）
+    max_step_per_tick: 0.20
+
+  # 回撤熔断（P1c 实现）
+  circuit_breaker:
+    enabled: false
+    max_drawdown_pct: 15.0
+    recovery_threshold_pct: 10.0
+    cooldown_minutes: 60
 
 # ── 品种 → 策略分组 ──────────────────────────────
 # 每个品种部署 2-3 个策略后，把 strategy_id 填入对应 style
