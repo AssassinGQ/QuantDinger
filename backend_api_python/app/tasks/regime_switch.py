@@ -13,7 +13,6 @@ P1 扩展：当 multi_strategy.enabled=true 时，通过 PortfolioAllocator
 
 import os
 import threading
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from app.utils.logger import get_logger
@@ -22,7 +21,8 @@ logger = get_logger(__name__)
 
 JOB_ID = "task_regime_switch"
 INTERVAL_MINUTES = 15
-ENABLED = os.getenv("ENABLE_REGIME_SWITCH", "false").lower() == "true"
+# 默认启用；YAML 中 symbol_strategies 为空则 run() 不操作任何策略。需关闭时设 ENABLE_REGIME_SWITCH=false
+ENABLED = os.getenv("ENABLE_REGIME_SWITCH", "true").lower() == "true"
 
 _run_lock = threading.Lock()
 
@@ -38,7 +38,7 @@ def _load_config() -> Dict[str, Any]:
 
     config_path = os.getenv(
         "REGIME_SWITCH_CONFIG_PATH",
-        str(Path(__file__).resolve().parents[2] / "config" / "regime_switch.yaml"),
+        "/app/data/config/regime_switch.yaml",
     )
 
     try:

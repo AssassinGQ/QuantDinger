@@ -17,7 +17,8 @@ logger = get_logger(__name__)
 
 JOB_ID = "task_portfolio_monitor"
 INTERVAL_MINUTES = 5
-ENABLED = os.getenv("ENABLE_PORTFOLIO_MONITOR_TASK", "false").lower() == "true"
+# 默认启用；YAML 未开 multi_strategy / circuit_breaker 或无管理策略时 run() 不操作。需关闭时设 ENABLE_PORTFOLIO_MONITOR_TASK=false
+ENABLED = os.getenv("ENABLE_PORTFOLIO_MONITOR_TASK", "true").lower() == "true"
 
 _run_lock = threading.Lock()
 

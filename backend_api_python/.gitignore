@@ -39,5 +39,7 @@ wheels/
 
 # Local runtime data (do not commit)
 quantdinger.db
-/data/
+/data/*
+!/data/config/
+!/data/config/regime_switch.yaml
 /logs/

@@ -25,7 +25,7 @@ def register_all_tasks() -> None:
         )
         registered.append(regime_switch.JOB_ID)
     else:
-        logger.info("regime_switch disabled (set ENABLE_REGIME_SWITCH=true to enable)")
+        logger.info("regime_switch disabled (set ENABLE_REGIME_SWITCH=false to disable)")
 
     if kline_sync.ENABLED:
         register_scheduled_job(
@@ -45,7 +45,7 @@ def register_all_tasks() -> None:
         )
         registered.append(portfolio_monitor_task.JOB_ID)
     else:
-        logger.info("portfolio_monitor_task disabled (set ENABLE_PORTFOLIO_MONITOR_TASK=true to enable)")
+        logger.info("portfolio_monitor_task disabled (set ENABLE_PORTFOLIO_MONITOR_TASK=false to disable)")
 
     if registered:
         logger.info("Plugin tasks registered: %s", ", ".join(registered))
