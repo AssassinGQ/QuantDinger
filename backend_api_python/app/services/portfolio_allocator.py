@@ -44,6 +44,8 @@ class PortfolioAllocator:
         self._current_regime: str = "normal"
         # style → effective weight (currently applied)
         self._effective_weights: Dict[str, float] = {}
+        # style → target weight (may differ from effective during gradual transition)
+        self._target_weights: Dict[str, float] = {}
         # strategy_id → allocated capital
         self._strategy_allocation: Dict[int, float] = {}
         # strategy_id → style
@@ -54,6 +56,8 @@ class PortfolioAllocator:
         self._symbol_strategies: Dict[str, Dict[str, List[int]]] = {}
         # symbol → total capital pool
         self._symbol_capital_pool: Dict[str, float] = {}
+        # strategy_id → True if frozen (no new entry allowed)
+        self._frozen_strategies: Dict[int, bool] = {}
 
     # ── 对外查询接口 ─────────────────────────────────────────────────
 
@@ -63,6 +67,16 @@ class PortfolioAllocator:
         线程安全：只读 dict 查找，O(1)。
         """
         return self._strategy_allocation.get(strategy_id)
+
+    def is_frozen(self, strategy_id: int) -> bool:
+        """TradingExecutor 调用：策略是否被冻结（不允许开新仓）。"""
+        return self._frozen_strategies.get(strategy_id, False)
+
+    def freeze_strategy(self, strategy_id: int) -> None:
+        self._frozen_strategies[strategy_id] = True
+
+    def unfreeze_strategy(self, strategy_id: int) -> None:
+        self._frozen_strategies.pop(strategy_id, None)
 
     @property
     def current_regime(self) -> str:
@@ -75,6 +89,14 @@ class PortfolioAllocator:
     @property
     def strategy_allocation(self) -> Dict[int, float]:
         return dict(self._strategy_allocation)
+
+    @property
+    def target_weights(self) -> Dict[str, float]:
+        return dict(self._target_weights)
+
+    @property
+    def frozen_strategies(self) -> Dict[int, bool]:
+        return dict(self._frozen_strategies)
 
     # ── 核心：regime 更新 → 重算权重与分配 ──────────────────────────
 
@@ -107,15 +129,23 @@ class PortfolioAllocator:
 
             self._rebuild_strategy_style_map()
 
-            target_weights = self._get_target_weights(regime, ms_cfg)
+            raw_target = self._get_target_weights(regime, ms_cfg)
             min_threshold = ms_cfg.get("min_weight_threshold", 0.05)
-            effective = _apply_threshold(target_weights, min_threshold)
-            effective = _normalize_weights(effective)
+            target_after_threshold = _apply_threshold(raw_target, min_threshold)
+            target_normalized = _normalize_weights(target_after_threshold)
+            self._target_weights = target_normalized
 
             old_weights = dict(self._effective_weights)
+            transition_cfg = ms_cfg.get("transition", {})
+            effective = _apply_gradual_transition(
+                old_weights, target_normalized, transition_cfg,
+            )
             self._effective_weights = effective
 
+            old_alloc = dict(self._strategy_allocation)
             self._compute_allocations(ms_cfg)
+
+            self._handle_over_allocation(old_alloc)
 
             ids_to_stop, ids_to_start = self._compute_start_stop_diff(config)
 
@@ -276,6 +306,24 @@ class PortfolioAllocator:
                 max_ic = max(max_ic, ic)
         return max_ic * style_count if max_ic > 0 else 0.0
 
+    def _handle_over_allocation(self, old_alloc: Dict[int, float]) -> None:
+        """当分配资金减少时，冻结超限策略阻止开新仓。资金增加时解冻。"""
+        for sid, new_cap in self._strategy_allocation.items():
+            old_cap = old_alloc.get(sid, 0.0)
+            if new_cap < old_cap and new_cap > 0:
+                self._frozen_strategies[sid] = True
+                logger.debug(
+                    "[portfolio_allocator] freeze sid=%d: allocation %.0f → %.0f",
+                    sid, old_cap, new_cap,
+                )
+            elif new_cap >= old_cap and new_cap > 0:
+                if sid in self._frozen_strategies:
+                    del self._frozen_strategies[sid]
+
+        for sid in list(self._frozen_strategies):
+            if self._strategy_allocation.get(sid, 0.0) <= 0:
+                del self._frozen_strategies[sid]
+
     def _compute_start_stop_diff(self, config: Dict) -> Tuple[List[int], List[int]]:
         """计算需要停止和启动的策略 ID。weight=0 → 停止，weight>0 且未运行 → 启动。"""
         ids_to_stop: List[int] = []
@@ -344,3 +392,36 @@ def _normalize_weights(weights: Dict[str, float]) -> Dict[str, float]:
     if total <= 0:
         return dict(weights)
     return {k: (v / total if v > 0 else 0.0) for k, v in weights.items()}
+
+
+def _apply_gradual_transition(
+    current: Dict[str, float],
+    target: Dict[str, float],
+    transition_cfg: Dict,
+) -> Dict[str, float]:
+    """渐进过渡：每 tick 每 style 最多变化 max_step_per_tick。
+
+    mode='immediate' 或 current 为空时直接跳到 target。
+    mode='gradual' 时逐步逼近。
+    """
+    mode = transition_cfg.get("mode", "immediate")
+    if mode != "gradual" or not current:
+        return dict(target)
+
+    max_step = float(transition_cfg.get("max_step_per_tick", 0.20))
+    result: Dict[str, float] = {}
+    all_keys = set(current) | set(target)
+
+    for k in all_keys:
+        cur_val = current.get(k, 0.0)
+        tgt_val = target.get(k, 0.0)
+        diff = tgt_val - cur_val
+        if abs(diff) <= max_step:
+            result[k] = tgt_val
+        elif diff > 0:
+            result[k] = cur_val + max_step
+        else:
+            result[k] = cur_val - max_step
+
+    result = _normalize_weights(result)
+    return result
