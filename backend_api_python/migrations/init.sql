@@ -400,6 +400,68 @@ CREATE INDEX IF NOT EXISTS idx_kline_points_lookup ON qd_kline_points(market, sy
 CREATE INDEX IF NOT EXISTS idx_kline_points_interval_lookup ON qd_kline_points(market, symbol, interval_sec, time_sec DESC);
 
 -- =============================================================================
+-- 10.7. K-line Ranges (005: 各品种区间记录，用于增量同步)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_kline_ranges (
+    market VARCHAR(50) NOT NULL,
+    symbol VARCHAR(50) NOT NULL,
+    interval_sec INTEGER NOT NULL,
+    min_ts BIGINT NOT NULL,
+    max_ts BIGINT NOT NULL,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (market, symbol, interval_sec)
+);
+
+-- =============================================================================
+-- 10.8. Macro Data (006: VIX/DXY/Fear&Greed 日线数据)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_macro_data (
+    indicator VARCHAR(30) NOT NULL,
+    date_val DATE NOT NULL,
+    value DECIMAL(20,6) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (indicator, date_val)
+);
+CREATE INDEX IF NOT EXISTS idx_macro_data_lookup ON qd_macro_data(indicator, date_val DESC);
+
+-- =============================================================================
+-- 10.9. Regime History (007: regime 切换历史)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_regime_history (
+    id SERIAL PRIMARY KEY,
+    from_regime VARCHAR(20),
+    to_regime VARCHAR(20) NOT NULL,
+    vix DECIMAL(10,4),
+    dxy DECIMAL(10,4),
+    fear_greed DECIMAL(10,4),
+    weights_before JSONB,
+    weights_after JSONB,
+    strategies_started INTEGER[],
+    strategies_stopped INTEGER[],
+    strategies_weight_changed INTEGER[],
+    trigger_source VARCHAR(20) DEFAULT 'auto',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_regime_history_created_at ON qd_regime_history(created_at DESC);
+
+-- =============================================================================
+-- 10.10. Regime Config (008: regime 配置持久化，独立配置页)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_regime_config (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER DEFAULT NULL,
+    symbol_strategies JSONB DEFAULT '{}',
+    regime_to_weights JSONB DEFAULT '{}',
+    regime_rules JSONB DEFAULT '{}',
+    regime_to_style JSONB DEFAULT '{}',
+    multi_strategy JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_regime_config_user_id ON qd_regime_config(user_id);
+CREATE INDEX IF NOT EXISTS idx_regime_config_updated_at ON qd_regime_config(updated_at DESC);
+
+-- =============================================================================
 -- 11. Analysis Tasks
 -- =============================================================================
 

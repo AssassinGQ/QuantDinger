@@ -44,6 +44,13 @@ export const asyncRouterMap = [
         component: () => import('@/views/trading-assistant'),
         meta: { title: 'menu.dashboard.tradingAssistant', keepAlive: true, icon: 'robot', permission: ['dashboard'] }
       },
+      // Regime 策略切换
+      {
+        path: '/regime-switch',
+        name: 'RegimeSwitch',
+        component: () => import('@/views/regime-switch'),
+        meta: { title: 'menu.dashboard.regimeSwitch', keepAlive: true, icon: 'swap', permission: ['dashboard'] }
+      },
       // 资产监测
       {
         path: '/portfolio',

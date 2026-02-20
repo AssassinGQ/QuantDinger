@@ -67,6 +67,35 @@ class TestComputeRegime:
         assert compute_regime(14.9, config=SAMPLE_CONFIG) == "low_vol"
         assert compute_regime(15.0, config=SAMPLE_CONFIG) == "normal"
 
+    def test_custom_regime_direct(self):
+        from app.tasks.regime_switch import compute_regime
+        custom_config = {
+            "regime_rules": {
+                "primary_indicator": "custom",
+                "custom_code": "regime = 'panic'",
+            },
+        }
+        assert compute_regime(18.0, config=custom_config) == "panic"
+
+    def test_custom_regime_score(self):
+        from app.tasks.regime_switch import compute_regime
+        custom_config = {
+            "regime_rules": {
+                "primary_indicator": "custom",
+                "custom_code": "regime_score = macro['fear_greed']",  # 0-100, high=panic
+                "custom_score_extreme_fear": 20,
+                "custom_score_high_fear": 35,
+                "custom_score_low_greed": 65,
+            },
+        }
+        # macro["fear_greed"] from snapshot - we patch _get_realtime_snapshot in _compute_regime_custom
+        # The code uses MacroDataService._get_realtime_snapshot() which returns real data.
+        # For deterministic test, use code that returns fixed score:
+        custom_config["regime_rules"]["custom_code"] = "regime_score = 15"  # < 20 -> panic
+        assert compute_regime(18.0, config=custom_config) == "panic"
+        custom_config["regime_rules"]["custom_code"] = "regime_score = 70"  # > 65 -> low_vol
+        assert compute_regime(18.0, config=custom_config) == "low_vol"
+
 
 # ── compute_target_strategy_ids ──────────────────────────────────────────
 

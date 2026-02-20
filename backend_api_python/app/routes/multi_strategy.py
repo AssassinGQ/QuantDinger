@@ -29,8 +29,14 @@ def _get_breaker():
 
 
 def _get_config():
+    """从 DB 读取 regime 配置（regime_switch 已改为仅读 DB）。"""
     from app.tasks.regime_switch import _load_config
     return _load_config()
+
+
+def _get_user_id():
+    """从 g.user_id 获取当前用户 ID。"""
+    return getattr(g, "user_id", None) if hasattr(g, "user_id") else None
 
 
 def _is_enabled(config=None):
@@ -261,16 +267,113 @@ def reset_circuit_breaker():
 @multi_strategy_bp.route("/config", methods=["GET"])
 @login_required
 def get_config():
-    """返回当前多策略配置（脱敏）。"""
+    """返回当前多策略配置（从 DB 读取，含 symbol_strategies、regime_to_weights）。"""
     try:
         config = _get_config()
         safe = {
+            "symbol_strategies": config.get("symbol_strategies", {}),
+            "regime_to_weights": config.get("multi_strategy", {}).get("regime_to_weights", {}),
             "multi_strategy": config.get("multi_strategy", {}),
             "regime_rules": config.get("regime_rules", {}),
+            "regime_to_style": config.get("regime_to_style", {}),
         }
         return jsonify({"code": 1, "msg": "success", "data": safe})
     except Exception as e:
         logger.exception("[multi_strategy] config error: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
+@multi_strategy_bp.route("/config", methods=["PUT"])
+@login_required
+def put_config():
+    """保存 regime 配置到 DB。"""
+    try:
+        from app.services.regime_config_service import save_regime_config
+        from app.tasks.regime_switch import reload_config
+
+        body = request.get_json(force=True, silent=True) or {}
+        symbol_strategies = body.get("symbol_strategies")
+        regime_to_weights = body.get("regime_to_weights")
+        regime_rules = body.get("regime_rules", {})
+        regime_to_style = body.get("regime_to_style", {})
+        multi_strategy = body.get("multi_strategy", {})
+
+        if symbol_strategies is None:
+            symbol_strategies = {}
+        if regime_to_weights is None:
+            regime_to_weights = multi_strategy.get("regime_to_weights") or {}
+
+        user_id = _get_user_id()
+
+        ok = save_regime_config(
+            user_id=user_id,
+            symbol_strategies=symbol_strategies,
+            regime_to_weights=regime_to_weights,
+            regime_rules=regime_rules,
+            regime_to_style=regime_to_style,
+            multi_strategy=multi_strategy,
+        )
+        if ok:
+            reload_config()
+            return jsonify({"code": 1, "msg": "config saved", "data": None})
+        return jsonify({"code": 0, "msg": "save failed", "data": None}), 500
+    except Exception as e:
+        logger.exception("[multi_strategy] put config error: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
+@multi_strategy_bp.route("/config/verify-custom-code", methods=["POST"])
+@login_required
+def verify_custom_regime_code():
+    """校验自定义 regime Python 代码，使用当前宏观快照试运行。"""
+    try:
+        from app.tasks.regime_switch import _fetch_macro_snapshot, compute_regime
+        body = request.get_json(force=True, silent=True) or {}
+        code = (body.get("custom_code") or "").strip()
+        regime_rules = body.get("regime_rules") or {}
+        if not code:
+            return jsonify({"code": 0, "msg": "custom_code is empty", "data": None}), 400
+        regime_rules = dict(regime_rules, primary_indicator="custom", custom_code=code)
+        macro = _fetch_macro_snapshot()
+        regime = compute_regime(
+            macro["vix"],
+            fear_greed=macro.get("fear_greed"),
+            config={"regime_rules": regime_rules},
+        )
+        return jsonify({
+            "code": 1,
+            "msg": "success",
+            "data": {
+                "regime": regime,
+                "macro": macro,
+            },
+        })
+    except Exception as e:
+        logger.exception("[multi_strategy] verify custom code error: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
+@multi_strategy_bp.route("/config/parse-yaml", methods=["POST"])
+@login_required
+def parse_yaml_config():
+    """解析上传的 YAML 文件，返回结构化数据供前端预览。"""
+    try:
+        import yaml
+        f = request.files.get("file")
+        if not f:
+            return jsonify({"code": 0, "msg": "no file uploaded", "data": None}), 400
+        content = f.read().decode("utf-8", errors="replace")
+        data = yaml.safe_load(content) or {}
+        parsed = {
+            "symbol_strategies": data.get("symbol_strategies", {}),
+            "regime_to_weights": (data.get("multi_strategy") or {}).get("regime_to_weights", {}),
+            "regime_rules": data.get("regime_rules", {}),
+            "regime_to_style": data.get("regime_to_style", {}),
+            "multi_strategy": data.get("multi_strategy", {}),
+        }
+        return jsonify({"code": 1, "msg": "success", "data": parsed})
+    except Exception as e:
+        logger.exception("[multi_strategy] parse yaml error: %s", e)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
