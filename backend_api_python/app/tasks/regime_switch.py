@@ -32,15 +32,23 @@ _config_cache: Optional[Dict[str, Any]] = None
 
 
 def _load_config() -> Dict[str, Any]:
+    """加载配置：优先 DB（regime_config_service），fallback 到 YAML 文件。"""
     global _config_cache
     if _config_cache is not None:
         return _config_cache
+
+    try:
+        from app.services.regime_config_service import get_regime_config_for_runtime
+        _config_cache = get_regime_config_for_runtime(user_id=None)
+        if _config_cache:
+            return _config_cache
+    except Exception as e:
+        logger.debug("[regime_switch] DB config not available: %s, fallback to YAML", e)
 
     config_path = os.getenv(
         "REGIME_SWITCH_CONFIG_PATH",
         "/app/data/config/regime_switch.yaml",
     )
-
     try:
         import yaml
         with open(config_path, "r", encoding="utf-8") as f:
@@ -72,18 +80,100 @@ REGIME_NORMAL = "normal"
 
 def compute_regime(vix: float, fear_greed: Optional[float] = None,
                    config: Optional[Dict] = None) -> str:
-    """根据 VIX（和可选 F&G）计算当前 regime。"""
+    """根据配置的主指标（VIX / Fear&Greed / 自定义 Python）计算当前 regime。"""
     cfg = (config or _load_config()).get("regime_rules", {})
-    vix_panic = cfg.get("vix_panic", 30)
-    vix_high_vol = cfg.get("vix_high_vol", 25)
-    vix_low_vol = cfg.get("vix_low_vol", 15)
+    primary = (cfg.get("primary_indicator") or "vix").strip().lower()
 
-    if vix > vix_panic:
-        return REGIME_PANIC
-    if vix > vix_high_vol:
-        return REGIME_HIGH_VOL
-    if vix < vix_low_vol:
-        return REGIME_LOW_VOL
+    if primary == "custom":
+        return _compute_regime_custom(vix, fear_greed, config)
+
+    if primary == "fear_greed":
+        # Fear&Greed: 低=恐慌, 高=贪婪。值域 0-100
+        fg = fear_greed if fear_greed is not None else 50.0
+        fg_extreme_fear = cfg.get("fg_extreme_fear", 20)
+        fg_high_fear = cfg.get("fg_high_fear", 35)
+        fg_low_greed = cfg.get("fg_low_greed", 65)
+        if fg < fg_extreme_fear:
+            return REGIME_PANIC
+        if fg < fg_high_fear:
+            return REGIME_HIGH_VOL
+        if fg > fg_low_greed:
+            return REGIME_LOW_VOL
+        return REGIME_NORMAL
+    else:
+        # 默认 VIX：高=恐慌, 低=低波动
+        vix_panic = cfg.get("vix_panic", 30)
+        vix_high_vol = cfg.get("vix_high_vol", 25)
+        vix_low_vol = cfg.get("vix_low_vol", 15)
+        if vix > vix_panic:
+            return REGIME_PANIC
+        if vix > vix_high_vol:
+            return REGIME_HIGH_VOL
+        if vix < vix_low_vol:
+            return REGIME_LOW_VOL
+        return REGIME_NORMAL
+
+
+def _compute_regime_custom(
+    vix: float, fear_greed: Optional[float], config: Optional[Dict]
+) -> str:
+    """执行自定义 Python 代码计算 regime。代码可定义 regime（直接）或 regime_score（按阈值映射）。"""
+    cfg = (config or _load_config()).get("regime_rules", {})
+    custom_code = (cfg.get("custom_code") or "").strip()
+    if not custom_code:
+        logger.warning("[regime_switch] custom indicator but no custom_code, fallback to normal")
+        return REGIME_NORMAL
+
+    from app.services.macro_data_service import MacroDataService
+    snapshot = MacroDataService._get_realtime_snapshot()
+    macro = {
+        "vix": float(snapshot.get("vix", 18.0)) if snapshot else vix,
+        "dxy": float(snapshot.get("dxy", 100.0)) if snapshot else 100.0,
+        "fear_greed": float(snapshot.get("fear_greed", 50.0)) if snapshot else (fear_greed or 50.0),
+    }
+
+    from app.utils.safe_exec import validate_code_safety, safe_exec_code
+    is_safe, err = validate_code_safety(custom_code)
+    if not is_safe:
+        logger.error("[regime_switch] custom code unsafe: %s", err)
+        return REGIME_NORMAL
+
+    exec_env = {
+        "macro": macro,
+        "vix": macro["vix"],
+        "dxy": macro["dxy"],
+        "fear_greed": macro["fear_greed"],
+        "regime": None,
+        "regime_score": None,
+        "math": __import__("math"),
+    }
+    result = safe_exec_code(code=custom_code, exec_globals=exec_env, timeout=5)
+    if not result.get("success"):
+        logger.error("[regime_switch] custom code exec failed: %s", result.get("error"))
+        return REGIME_NORMAL
+
+    regime = exec_env.get("regime")
+    if regime in (REGIME_PANIC, REGIME_HIGH_VOL, REGIME_NORMAL, REGIME_LOW_VOL):
+        return regime
+
+    score = exec_env.get("regime_score")
+    if score is not None:
+        try:
+            s = float(score)
+        except (TypeError, ValueError):
+            return REGIME_NORMAL
+        ext = cfg.get("custom_score_extreme_fear", 20)
+        high = cfg.get("custom_score_high_fear", 35)
+        low = cfg.get("custom_score_low_greed", 65)
+        if s < ext:
+            return REGIME_PANIC
+        if s < high:
+            return REGIME_HIGH_VOL
+        if s > low:
+            return REGIME_LOW_VOL
+        return REGIME_NORMAL
+
+    logger.warning("[regime_switch] custom code must define regime or regime_score")
     return REGIME_NORMAL
 
 

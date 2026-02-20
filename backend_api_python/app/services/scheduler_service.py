@@ -4,6 +4,8 @@
 支持：每市场独立延时 / 周期优先级 / RateLimitError 熔断 / 自适应退避。
 """
 import time
+import os
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from threading import Lock
 
@@ -360,12 +362,41 @@ def stop_task(task_type: Optional[str] = None) -> bool:
     return True
 
 
+def _wait_backend_ready(max_wait_sec: float = 60, poll_interval: float = 1) -> bool:
+    """轮询 DB 是否就绪，用于 run_immediately 首次执行前确认 backend 初始化完成。"""
+    try:
+        from app.utils.db import is_postgres_available
+    except Exception:
+        return False
+    deadline = time.time() + max_wait_sec
+    while time.time() < deadline:
+        if is_postgres_available():
+            return True
+        time.sleep(poll_interval)
+    return False
+
+
+def _wrap_run_immediately(func, job_id: str, max_wait_sec: float) -> callable:
+    """包装 run_immediately 任务：仅首次执行前等待 backend 就绪，后续直接执行。"""
+    first_run = [True]
+
+    def _wrapped():
+        if first_run[0]:
+            first_run[0] = False
+            if not _wait_backend_ready(max_wait_sec=max_wait_sec):
+                logger.warning("Job %s: backend not ready within %.0fs, skip", job_id, max_wait_sec)
+                return
+        func()
+    return _wrapped
+
+
 # ---------------------------------------------------------------------------
 # 插件式定时任务通用接口
 # ---------------------------------------------------------------------------
 
 def register_scheduled_job(job_id: str, func, interval_minutes: int,
-                           max_instances: int = 1, replace: bool = True) -> bool:
+                           max_instances: int = 1, replace: bool = True,
+                           run_immediately: bool = False) -> bool:
     """注册一个独立的 interval 定时任务到 APScheduler。
 
     Args:
@@ -374,21 +405,31 @@ def register_scheduled_job(job_id: str, func, interval_minutes: int,
         interval_minutes: 执行间隔（分钟）
         max_instances: 最大并发实例数
         replace: 若已存在是否替换
+        run_immediately: 注册后首次尽快执行；执行时先阻塞轮询 DB 就绪再跑任务。
     """
     sched = get_scheduler()
     existing = sched.get_job(job_id)
     if existing and not replace:
         logger.info("Job %s already registered, skip", job_id)
         return False
-    sched.add_job(
-        func,
-        "interval",
-        minutes=interval_minutes,
-        id=job_id,
-        max_instances=max_instances,
-        replace_existing=replace,
+
+    target_func = func
+    kwargs = {
+        "minutes": interval_minutes,
+        "id": job_id,
+        "max_instances": max_instances,
+        "replace_existing": replace,
+    }
+    if run_immediately:
+        max_wait = float(os.environ.get("RUN_IMMEDIATELY_BACKEND_READY_TIMEOUT_SEC", "60"))
+        target_func = _wrap_run_immediately(func, job_id, max_wait)
+        kwargs["next_run_time"] = datetime.now()
+
+    sched.add_job(target_func, "interval", **kwargs)
+    logger.info(
+        "Registered scheduled job: %s, interval=%d min%s",
+        job_id, interval_minutes, ", run_immediately" if run_immediately else "",
     )
-    logger.info("Registered scheduled job: %s, interval=%d min", job_id, interval_minutes)
     return True
 
 

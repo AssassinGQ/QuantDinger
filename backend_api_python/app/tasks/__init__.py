@@ -22,6 +22,7 @@ def register_all_tasks() -> None:
             regime_switch.JOB_ID,
             regime_switch.run,
             regime_switch.INTERVAL_MINUTES,
+            run_immediately=True,
         )
         registered.append(regime_switch.JOB_ID)
     else:
