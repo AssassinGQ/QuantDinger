@@ -57,6 +57,7 @@ def get_regime_config(user_id: Optional[int] = None) -> Dict[str, Any]:
             cur.close()
 
         if not row:
+            logger.info("[regime_config] get_regime_config: no row in qd_regime_config")
             return {}
 
         def _parse_jsonb(val):
@@ -67,16 +68,20 @@ def get_regime_config(user_id: Optional[int] = None) -> Dict[str, Any]:
             import json
             return json.loads(val) if isinstance(val, str) else {}
 
-        return {
+        ms = _parse_jsonb(row.get("multi_strategy"))
+        result = {
             "symbol_strategies": _parse_jsonb(row.get("symbol_strategies")),
             "regime_to_weights": _parse_jsonb(row.get("regime_to_weights")),
             "regime_rules": _parse_jsonb(row.get("regime_rules")),
             "regime_to_style": _parse_jsonb(row.get("regime_to_style")),
-            "multi_strategy": _parse_jsonb(row.get("multi_strategy")),
+            "multi_strategy": ms,
             "user_id": user_id,
         }
+        logger.info("[regime_config] get_regime_config: enabled=%s symbol_count=%d",
+                    ms.get("enabled"), len(result.get("symbol_strategies") or {}))
+        return result
     except Exception as e:
-        logger.error("[regime_config] get_regime_config failed: %s", e)
+        logger.error("[regime_config] get_regime_config failed: %s", e, exc_info=True)
         return {}
 
 
