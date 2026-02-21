@@ -314,21 +314,24 @@ export default {
     async loadData () {
       this.loading = true
       try {
-        const [summaryRes, allocRes, configRes, strategiesRes] = await Promise.all([
+        const results = await Promise.allSettled([
           getSummary(),
           getAllocation(),
           getConfig(),
           getStrategyList()
         ])
+        const summaryRes = results[0].status === 'fulfilled' ? results[0].value : null
+        const allocRes = results[1].status === 'fulfilled' ? results[1].value : null
+        const configRes = results[2].status === 'fulfilled' ? results[2].value : null
+        const strategiesRes = results[3].status === 'fulfilled' ? results[3].value : null
 
-        const summaryOk = summaryRes?.data?.code === 1 && summaryRes?.data?.data
-        const summaryMsg = summaryRes?.data?.msg
-        const configOk = configRes?.data?.code === 1 && configRes?.data?.data
-        const configEnabled = (configRes?.data?.data?.multi_strategy || {}).enabled === true
-        console.log('[regime] loadData summary:', { code: summaryRes?.data?.code, hasData: !!summaryRes?.data?.data, msg: summaryMsg })
-        console.log('[regime] loadData config:', { code: configRes?.data?.code, hasData: configOk, enabled: configEnabled })
+        // request 拦截器返回 response.data，故 res 即 {code, msg, data}
+        const summaryOk = summaryRes?.code === 1 && summaryRes?.data
+        const summaryMsg = summaryRes?.msg
+        const configOk = configRes?.code === 1 && configRes?.data
+        const configEnabled = (configRes?.data?.multi_strategy || {}).enabled === true
         if (summaryOk) {
-          this.summary = summaryRes.data.data
+          this.summary = summaryRes.data
           this.multiStrategyEnabled = true
         } else if (summaryMsg === 'multi-strategy not enabled') {
           this.multiStrategyEnabled = false
@@ -336,23 +339,22 @@ export default {
           this.multiStrategyEnabled = false
         }
 
-        if (allocRes?.data?.code === 1 && allocRes?.data?.data) {
-          this.allocationData = allocRes.data.data
+        if (allocRes?.code === 1 && allocRes?.data) {
+          this.allocationData = allocRes.data
         }
 
-        if (configRes?.data?.code === 1 && configRes?.data?.data) {
-          this.configData = configRes.data.data
+        if (configOk) {
+          this.configData = configRes.data
           this.expandedSymbols = Object.keys(this.configData.symbol_strategies || {})
           if (this.activeTabKey === 'config') this.loadConfigToForm()
-          // 以 config 为准：配置里已启用则以启用展示，避免后端多 worker 缓存不一致
+          // 以 config 为准：配置里已启用则以启用展示
           if ((this.configData.multi_strategy || {}).enabled === true) {
             this.multiStrategyEnabled = true
           }
         }
-        console.log('[regime] loadData final multiStrategyEnabled:', this.multiStrategyEnabled)
 
-        if (strategiesRes?.data?.code === 1 && strategiesRes?.data?.data?.strategies) {
-          this.strategies = strategiesRes.data.data.strategies
+        if (strategiesRes?.code === 1 && strategiesRes?.data?.strategies) {
+          this.strategies = strategiesRes.data.strategies
         }
       } catch (e) {
         this.multiStrategyEnabled = false
@@ -421,10 +423,10 @@ export default {
       this.configLoading = true
       parseYamlConfig(file)
         .then(res => {
-          if (res?.data?.code === 1 && res?.data?.data) {
-            this.yamlPreview = res.data.data
+          if (res?.code === 1 && res?.data) {
+            this.yamlPreview = res.data
           } else {
-            this.$message.error(res?.data?.msg || 'Parse failed')
+            this.$message.error(res?.msg || 'Parse failed')
           }
         })
         .catch(e => {
@@ -491,13 +493,13 @@ export default {
           }
         }
         const res = await putConfig(body)
-        if (res?.data?.code === 1) {
+        if (res?.code === 1) {
           this.$message.success(this.$t('regime.saveSuccess') || this.$t('save.ok'))
           this.configData = { ...this.configData, ...body }
           this.multiStrategyEnabled = this.formEnabled
           this.loadData()
         } else {
-          this.$message.error(res?.data?.msg || 'Save failed')
+          this.$message.error(res?.msg || 'Save failed')
         }
       } catch (e) {
         this.$message.error(e?.message || 'Save failed')
