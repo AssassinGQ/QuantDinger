@@ -391,3 +391,55 @@ class MacroDataService:
     def clear_cache(cls):
         with cls._mem_lock:
             cls._mem_cache.clear()
+
+    @classmethod
+    def sync_recent_to_db(cls, days: int = 30) -> dict:
+        """
+        主动同步宏观数据到 DB：拉取最近 N 天历史 + 今日实时快照。
+        供定时任务调用，确保 qd_macro_data 有新鲜数据供 regime/回测使用。
+        返回: {"vix": N, "vhsi": N, "dxy": N, "fear_greed": N}
+        """
+        now = datetime.now()
+        start = now - timedelta(days=days)
+        end = now + timedelta(days=1)
+        result: dict = {}
+
+        fetchers = [
+            ("vix", cls._fetch_vix_net),
+            ("vhsi", cls._fetch_vhsi_net),
+            ("dxy", cls._fetch_dxy_net),
+            ("fear_greed", cls._fetch_fg_net),
+        ]
+        for indicator, fetcher in fetchers:
+            try:
+                net_data = fetcher(start, end)
+                if net_data is not None and not net_data.empty:
+                    cls._write_db(indicator, net_data)
+                    result[indicator] = len(net_data)
+            except Exception as e:
+                logger.warning(f"Macro sync {indicator} failed: {e}")
+
+        # 拉取实时快照并写入今日
+        snapshot = cls._get_realtime_snapshot()
+        if snapshot:
+            today = now.date()
+            for indicator in cls.MACRO_COLUMNS:
+                if indicator in snapshot and snapshot[indicator] is not None:
+                    try:
+                        val = float(snapshot[indicator])
+                        df = pd.DataFrame(
+                            [val],
+                            index=[pd.Timestamp(today)],
+                            columns=[indicator]
+                        )
+                        df.index.name = "time"
+                        cls._write_db(indicator, df)
+                        if indicator not in result:
+                            result[indicator] = 1
+                    except Exception as e:
+                        logger.debug(f"Macro sync realtime {indicator}: {e}")
+
+        cls.clear_cache()
+        if result:
+            logger.info("Macro sync to DB: %s", result)
+        return result

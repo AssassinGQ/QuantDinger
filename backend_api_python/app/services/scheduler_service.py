@@ -311,19 +311,128 @@ def _run_kline_sync(task_type: str) -> None:
         logger.warning("Scheduler %s: market %s sync aborted (rate limited)", task_type, market)
 
 
+def _run_macro_sync() -> None:
+    """同步 VIX、VHSI、DXY、Fear&Greed 等到 qd_macro_data（基本盘）。"""
+    try:
+        from app.services.macro_data_service import MacroDataService
+        stats = MacroDataService.sync_recent_to_db(days=30)
+        if stats:
+            logger.info("Macro sync done: %s", stats)
+    except Exception as e:
+        logger.warning("Macro sync failed: %s", e)
+
+
+def _run_sentiment_sync() -> None:
+    """同步基本盘情绪数据（VIX/DXY/Fear&Greed/yield 等）到 qd_sync_cache。"""
+    try:
+        from app.routes.global_market import (
+            _fetch_vix, _fetch_dollar_index, _fetch_fear_greed_index,
+            _fetch_yield_curve, _fetch_vxn, _fetch_gvz, _fetch_put_call_ratio
+        )
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import json
+        from app.utils.db import get_db_connection
+
+        with ThreadPoolExecutor(max_workers=7) as ex:
+            futures = {
+                ex.submit(_fetch_fear_greed_index): "fear_greed",
+                ex.submit(_fetch_vix): "vix",
+                ex.submit(_fetch_dollar_index): "dxy",
+                ex.submit(_fetch_yield_curve): "yield_curve",
+                ex.submit(_fetch_vxn): "vxn",
+                ex.submit(_fetch_gvz): "gvz",
+                ex.submit(_fetch_put_call_ratio): "vix_term",
+            }
+            results = {}
+            for f in as_completed(futures):
+                k = futures[f]
+                try:
+                    results[k] = f.result()
+                except Exception:
+                    results[k] = None
+        data = {
+            "fear_greed": results.get("fear_greed") or {"value": 50, "classification": "Neutral"},
+            "vix": results.get("vix") or {"value": 0, "level": "unknown"},
+            "dxy": results.get("dxy") or {"value": 0, "level": "unknown"},
+            "yield_curve": results.get("yield_curve") or {"spread": 0, "level": "unknown"},
+            "vxn": results.get("vxn") or {"value": 0, "level": "unknown"},
+            "gvz": results.get("gvz") or {"value": 0, "level": "unknown"},
+            "vix_term": results.get("vix_term"),
+        }
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """CREATE TABLE IF NOT EXISTS qd_sync_cache (
+                    cache_key VARCHAR(64) PRIMARY KEY,
+                    value_json TEXT,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )"""
+            )
+            cur.execute(
+                """INSERT INTO qd_sync_cache (cache_key, value_json, updated_at)
+                   VALUES ('market_sentiment', %s, NOW())
+                   ON CONFLICT (cache_key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()""",
+                (json.dumps(data, ensure_ascii=False),)
+            )
+            db.commit()
+            cur.close()
+        logger.info("Sentiment sync done: vix=%s dxy=%s fg=%s",
+                    results.get("vix", {}).get("value"), results.get("dxy", {}).get("value"),
+                    results.get("fear_greed", {}).get("value"))
+    except Exception as e:
+        logger.warning("Sentiment sync failed: %s", e)
+
+
+def _run_news_sync() -> None:
+    """同步市场新闻到 qd_sync_cache（可选，依赖 Search API）。"""
+    try:
+        from app.routes.global_market import _fetch_financial_news
+        import json
+        from app.utils.db import get_db_connection
+
+        news = _fetch_financial_news(lang="all")
+        if not news or (not news.get("cn") and not news.get("en")):
+            return
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """CREATE TABLE IF NOT EXISTS qd_sync_cache (
+                    cache_key VARCHAR(64) PRIMARY KEY,
+                    value_json TEXT,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )"""
+            )
+            cur.execute(
+                """INSERT INTO qd_sync_cache (cache_key, value_json, updated_at)
+                   VALUES ('market_news', %s, NOW())
+                   ON CONFLICT (cache_key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()""",
+                (json.dumps(news, ensure_ascii=False),)
+            )
+            db.commit()
+            cur.close()
+        logger.info("News sync done: cn=%d en=%d", len(news.get("cn", [])), len(news.get("en", [])))
+    except Exception as e:
+        logger.debug("News sync skipped (search may be unconfigured): %s", e)
+
+
 def _run_all_kline_sync() -> None:
-    """单一定时任务入口：按品类顺序执行全周期同步，品类间延时。"""
+    """单一定时任务入口：按品类顺序执行 K 线 + 宏观 + 新闻同步。"""
     ensure_default_task_types()
     with _task_lock:
         types_order = list(_task_types.keys())
-    if not types_order:
-        logger.info("Scheduler run: no categories registered, skip")
-        return
-    logger.info("Scheduler run: %d categories, all timeframes", len(types_order))
-    for i, task_type in enumerate(types_order):
-        _run_kline_sync(task_type)
-        if i < len(types_order) - 1:
-            time.sleep(DELAY_BETWEEN_CATEGORIES_SECONDS)
+    if types_order:
+        logger.info("Scheduler run: %d categories, all timeframes", len(types_order))
+        for i, task_type in enumerate(types_order):
+            _run_kline_sync(task_type)
+            if i < len(types_order) - 1:
+                time.sleep(DELAY_BETWEEN_CATEGORIES_SECONDS)
+
+    time.sleep(2)
+    _run_macro_sync()
+    time.sleep(2)
+    _run_sentiment_sync()
+    time.sleep(2)
+    _run_news_sync()
 
 
 def start_task(task_type: Optional[str] = None) -> bool:

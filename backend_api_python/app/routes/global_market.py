@@ -1532,20 +1532,46 @@ def market_news():
     Get financial news from various sources.
     Query params:
         - lang: 'cn', 'en', or 'all' (default: 'all')
+    优先读取 qd_sync_cache（定时任务预热），否则现场拉取。
     """
     try:
+        import json
+        from datetime import datetime, timedelta
+
         lang = request.args.get("lang", "all")
         cache_key = f"market_news_{lang}"
-        
-        cached = _get_cached(cache_key, 180)  # 3 minutes cache for news
+
+        cached = _get_cached(cache_key, 180)  # 3 minutes 内存缓存
         if cached:
             return jsonify({"code": 1, "msg": "success", "data": cached})
-        
+
+        # 尝试从 DB 读取（定时任务预缓存，1 小时内有效）
+        try:
+            from app.utils.db import get_db_connection
+            with get_db_connection() as db:
+                cur = db.cursor()
+                cur.execute(
+                    "SELECT value_json, updated_at FROM qd_sync_cache WHERE cache_key = 'market_news'"
+                )
+                row = cur.fetchone()
+                cur.close()
+            if row and row.get("value_json"):
+                updated = row.get("updated_at")
+                cutoff = datetime.now() - timedelta(hours=1)
+                if updated and updated >= cutoff:
+                    news_data = json.loads(row["value_json"])
+                    if lang != "all":
+                        news_data = {k: v for k, v in news_data.items() if k == lang}
+                    _set_cached(cache_key, news_data, 180)
+                    return jsonify({"code": 1, "msg": "success", "data": news_data})
+        except Exception:
+            pass
+
         news = _fetch_financial_news(lang)
         _set_cached(cache_key, news, 180)
-        
+
         return jsonify({"code": 1, "msg": "success", "data": news})
-        
+
     except Exception as e:
         logger.error(f"market_news failed: {e}", exc_info=True)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
@@ -1578,15 +1604,39 @@ def market_sentiment():
     """
     Get comprehensive market sentiment indicators.
     Includes: Fear & Greed, VIX, DXY, Yield Curve, VXN, GVZ, VIX Term Structure.
+    优先读取 qd_sync_cache（定时任务预热），否则现场拉取。
     """
     try:
-        # 缓存6小时 (21600秒)，宏观数据变化缓慢，减少 API 调用
+        import json
+        from datetime import datetime, timedelta
+
+        # 缓存6小时 (21600秒)，宏观数据变化缓慢
         MACRO_CACHE_TTL = 21600  # 6 hours
         cached = _get_cached("market_sentiment", MACRO_CACHE_TTL)
         if cached:
             logger.debug("Returning cached sentiment data (6h cache)")
             return jsonify({"code": 1, "msg": "success", "data": cached})
-        
+
+        # 尝试从 DB 读取（定时任务预缓存，1 小时内有效）
+        try:
+            from app.utils.db import get_db_connection
+            with get_db_connection() as db:
+                cur = db.cursor()
+                cur.execute(
+                    "SELECT value_json, updated_at FROM qd_sync_cache WHERE cache_key = 'market_sentiment'"
+                )
+                row = cur.fetchone()
+                cur.close()
+            if row and row.get("value_json"):
+                updated = row.get("updated_at")
+                cutoff = datetime.now() - timedelta(hours=1)
+                if updated and updated >= cutoff:
+                    data = json.loads(row["value_json"])
+                    _set_cached("market_sentiment", data, MACRO_CACHE_TTL)
+                    return jsonify({"code": 1, "msg": "success", "data": data})
+        except Exception:
+            pass
+
         logger.info("Fetching fresh sentiment data (comprehensive)")
         
         # Fetch all indicators in parallel
