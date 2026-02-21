@@ -3880,9 +3880,20 @@ export default {
                 basePayload.trading_config.symbol = null
                 // 使用 createStrategy 创建单个策略
                 res = await createStrategy(basePayload)
+              } else if (this.selectedSymbols.length === 1) {
+                // 单标的单策略：用 createStrategy，不设 strategy_group_id，避免在「按策略」下被错误分组
+                const sym = this.selectedSymbols[0]
+                if (typeof sym === 'string' && sym.includes(':')) {
+                  const idx = sym.indexOf(':')
+                  basePayload.market_category = sym.slice(0, idx) || basePayload.market_category
+                  basePayload.trading_config.symbol = sym.slice(idx + 1)
+                } else {
+                  basePayload.trading_config.symbol = sym
+                }
+                res = await createStrategy(basePayload)
               } else {
-                // 单标的策略：批量创建多个策略（每个标的一个策略）
-                basePayload.symbols = this.selectedSymbols // 多币种数组
+                // 单标的多策略：批量创建，每个标的一个策略（会设 strategy_group_id，在「按策略」下分组显示）
+                basePayload.symbols = this.selectedSymbols
                 res = await batchCreateStrategies(basePayload)
               }
             }
