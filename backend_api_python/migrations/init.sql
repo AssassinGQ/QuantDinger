@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS qd_strategies_trading (
 CREATE INDEX IF NOT EXISTS idx_strategies_user_id ON qd_strategies_trading(user_id);
 CREATE INDEX IF NOT EXISTS idx_strategies_status ON qd_strategies_trading(status);
 CREATE INDEX IF NOT EXISTS idx_strategies_group_id ON qd_strategies_trading(strategy_group_id);
+CREATE INDEX IF NOT EXISTS idx_strategies_display_group ON qd_strategies_trading(display_group);
 
 -- Add last_rebalance_at column for cross-sectional strategies (if not exists)
 DO $$
@@ -321,6 +322,7 @@ CREATE TABLE IF NOT EXISTS qd_indicator_codes (
 
 CREATE INDEX IF NOT EXISTS idx_indicator_codes_user_id ON qd_indicator_codes USING btree (user_id);
 CREATE INDEX IF NOT EXISTS idx_indicator_review_status ON qd_indicator_codes USING btree (review_status);
+CREATE INDEX IF NOT EXISTS idx_indicator_codes_group ON qd_indicator_codes(indicator_group);
 
 -- =============================================================================
 -- 8. AI Decisions
@@ -400,6 +402,19 @@ CREATE TABLE IF NOT EXISTS qd_kline_points (
 );
 CREATE INDEX IF NOT EXISTS idx_kline_points_lookup ON qd_kline_points(market, symbol, time_sec DESC);
 CREATE INDEX IF NOT EXISTS idx_kline_points_interval_lookup ON qd_kline_points(market, symbol, interval_sec, time_sec DESC);
+
+-- =============================================================================
+-- 10.7. K-line Ranges (已缓存数据范围，用于增量拉取)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_kline_ranges (
+    market VARCHAR(50) NOT NULL,
+    symbol VARCHAR(50) NOT NULL,
+    interval_sec INTEGER NOT NULL,
+    min_ts BIGINT NOT NULL,
+    max_ts BIGINT NOT NULL,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (market, symbol, interval_sec)
+);
 
 -- =============================================================================
 -- 11. Analysis Tasks
@@ -629,6 +644,63 @@ INSERT INTO qd_market_symbols (market, symbol, name, exchange, currency, is_acti
 ('Futures', 'ES', 'S&P 500 E-mini', 'CME', 'USD', 1, 1, 92),
 ('Futures', 'NQ', 'NASDAQ 100 E-mini', 'CME', 'USD', 1, 1, 91)
 ON CONFLICT (market, symbol) DO NOTHING;
+
+-- =============================================================================
+-- 17.5. Macro Data (VIX/VHSI/DXY/Fear&Greed) - 宏观数据，供 regime/回测
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_macro_data (
+    indicator VARCHAR(30) NOT NULL,
+    date_val DATE NOT NULL,
+    value DECIMAL(20,6) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (indicator, date_val)
+);
+CREATE INDEX IF NOT EXISTS idx_macro_data_lookup ON qd_macro_data(indicator, date_val DESC);
+
+-- =============================================================================
+-- 17.6. Sync Cache (新闻/基本盘定时同步结果) - 供 API 读取预缓存
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_sync_cache (
+    cache_key VARCHAR(64) PRIMARY KEY,
+    value_json TEXT,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sync_cache_updated ON qd_sync_cache(updated_at DESC);
+
+-- =============================================================================
+-- 17.7. Regime Config (regime 切换配置：symbol_strategies, regime_to_weights 等)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_regime_config (
+    id SERIAL PRIMARY KEY,
+    symbol_strategies JSONB DEFAULT '{}',
+    regime_to_weights JSONB DEFAULT '{}',
+    regime_rules JSONB DEFAULT '{}',
+    regime_to_style JSONB DEFAULT '{}',
+    multi_strategy JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_regime_config_updated_at ON qd_regime_config(updated_at DESC);
+
+-- =============================================================================
+-- 17.8. Regime History (regime 切换历史记录)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS qd_regime_history (
+    id SERIAL PRIMARY KEY,
+    from_regime VARCHAR(20),
+    to_regime VARCHAR(20) NOT NULL,
+    vix DECIMAL(10,4),
+    dxy DECIMAL(10,4),
+    fear_greed DECIMAL(10,4),
+    weights_before JSONB,
+    weights_after JSONB,
+    strategies_started INTEGER[],
+    strategies_stopped INTEGER[],
+    strategies_weight_changed INTEGER[],
+    trigger_source VARCHAR(20) DEFAULT 'auto',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_regime_history_created_at ON qd_regime_history(created_at DESC);
 
 -- =============================================================================
 -- 18. Agent Memories (AI Learning System)
