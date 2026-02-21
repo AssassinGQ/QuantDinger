@@ -62,6 +62,36 @@
             </a-card>
           </div>
 
+          <!-- Per-Market 已配置但尚无数据时的提示 -->
+          <a-alert
+            v-if="isPerMarketConfigured && (!regimePerSymbol || !Object.keys(regimePerSymbol).length)"
+            type="info"
+            message="已配置按市场独立 Regime"
+            description="港股将用 VHSI、美股用 VIX。等待下次 regime 定时调度运行后，此处将显示各品种的 regime 策略。"
+            show-icon
+            style="margin-bottom: 16px"
+          />
+
+          <!-- Per-Symbol Regime 策略一览：仅在有 regime_per_symbol 时显示 -->
+          <a-card
+            v-if="regimePerSymbol && Object.keys(regimePerSymbol).length"
+            size="small"
+            class="per-symbol-regime-card"
+            :title="($t('regime.perSymbolRegimeTitle') || '各品种 Regime 策略')"
+          >
+            <a-table
+              :columns="perSymbolRegimeColumns"
+              :data-source="perSymbolRegimeTableData"
+              :pagination="false"
+              size="small"
+              bordered
+            >
+              <template slot="regime" slot-scope="text">
+                <a-tag :color="regimeTagColorFor(text)">{{ text }}</a-tag>
+              </template>
+            </a-table>
+          </a-card>
+
           <!-- 按 Symbol 分组策略与分配资金 -->
           <div class="symbol-groups">
             <a-collapse v-model="expandedSymbols">
@@ -318,6 +348,12 @@ export default {
     weightsPerSymbol () {
       return this.summary.weights_per_symbol || {}
     },
+    isPerMarketConfigured () {
+      const rr = (this.configData.regime_rules || {})
+      const indicator = (rr.primary_indicator || '').toString().toLowerCase()
+      const perMarket = rr.indicator_per_market || {}
+      return indicator === 'auto' && Object.keys(perMarket).length > 0
+    },
     regimeTagColor () {
       const m = { panic: 'red', high_vol: 'orange', normal: 'green', low_vol: 'blue' }
       return m[this.summary.regime] || 'default'
@@ -344,6 +380,23 @@ export default {
     yamlPreviewText () {
       if (!this.yamlPreview) return ''
       return JSON.stringify(this.yamlPreview, null, 2)
+    },
+    perSymbolRegimeColumns () {
+      return [
+        { title: '品种', dataIndex: 'symbol', key: 'symbol', width: 120 },
+        { title: 'Regime', dataIndex: 'regime', key: 'regime', width: 100, scopedSlots: { customRender: 'regime' } },
+        { title: '生效权重', dataIndex: 'weights', key: 'weights' }
+      ]
+    },
+    perSymbolRegimeTableData () {
+      const rps = this.regimePerSymbol || {}
+      const wps = this.weightsPerSymbol || {}
+      return Object.keys(rps).map(sym => ({
+        key: sym,
+        symbol: sym,
+        regime: rps[sym],
+        weights: this.formatWeights(wps[sym] || {})
+      }))
     }
   },
   watch: {
@@ -593,6 +646,9 @@ export default {
   padding: 24px;
 }
 .summary-section {
+  margin-bottom: 16px;
+}
+.per-symbol-regime-card {
   margin-bottom: 16px;
 }
 .summary-card .summary-row {
