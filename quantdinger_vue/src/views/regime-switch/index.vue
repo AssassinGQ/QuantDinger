@@ -321,10 +321,16 @@ export default {
           getStrategyList()
         ])
 
-        if (summaryRes?.data?.code === 1 && summaryRes?.data?.data) {
+        const summaryOk = summaryRes?.data?.code === 1 && summaryRes?.data?.data
+        const summaryMsg = summaryRes?.data?.msg
+        const configOk = configRes?.data?.code === 1 && configRes?.data?.data
+        const configEnabled = !!(configRes?.data?.data?.multi_strategy || {}).enabled
+        console.log('[regime] loadData summary:', { code: summaryRes?.data?.code, hasData: !!summaryRes?.data?.data, msg: summaryMsg })
+        console.log('[regime] loadData config:', { code: configRes?.data?.code, hasData: configOk, enabled: configEnabled })
+        if (summaryOk) {
           this.summary = summaryRes.data.data
           this.multiStrategyEnabled = true
-        } else if (summaryRes?.data?.msg === 'multi-strategy not enabled') {
+        } else if (summaryMsg === 'multi-strategy not enabled') {
           this.multiStrategyEnabled = false
         } else {
           this.multiStrategyEnabled = false
@@ -338,7 +344,12 @@ export default {
           this.configData = configRes.data.data
           this.expandedSymbols = Object.keys(this.configData.symbol_strategies || {})
           if (this.activeTabKey === 'config') this.loadConfigToForm()
+          // 以 config 为准：配置里已启用则以启用展示，避免后端多 worker 缓存不一致
+          if (!!(this.configData.multi_strategy || {}).enabled) {
+            this.multiStrategyEnabled = true
+          }
         }
+        console.log('[regime] loadData final multiStrategyEnabled:', this.multiStrategyEnabled)
 
         if (strategiesRes?.data?.code === 1 && strategiesRes?.data?.data?.strategies) {
           this.strategies = strategiesRes.data.data.strategies

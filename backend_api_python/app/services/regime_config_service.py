@@ -43,7 +43,7 @@ def get_regime_config(user_id: Optional[int] = None) -> Dict[str, Any]:
             cur = db.cursor()
             if user_id is not None:
                 cur.execute("""
-                    SELECT symbol_strategies, regime_to_weights, regime_rules,
+                    SELECT id, user_id, symbol_strategies, regime_to_weights, regime_rules,
                            regime_to_style, multi_strategy, updated_at
                     FROM qd_regime_config
                     WHERE user_id = %s
@@ -52,7 +52,7 @@ def get_regime_config(user_id: Optional[int] = None) -> Dict[str, Any]:
                 """, (user_id,))
             else:
                 cur.execute("""
-                    SELECT symbol_strategies, regime_to_weights, regime_rules,
+                    SELECT id, user_id, symbol_strategies, regime_to_weights, regime_rules,
                            regime_to_style, multi_strategy, updated_at
                     FROM qd_regime_config
                     ORDER BY (CASE WHEN symbol_strategies = '{}'::jsonb THEN 1 ELSE 0 END),
