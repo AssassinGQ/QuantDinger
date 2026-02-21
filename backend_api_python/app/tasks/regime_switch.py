@@ -28,31 +28,21 @@ _run_lock = threading.Lock()
 
 # ── 配置加载 ────────────────────────────────────────────────────────────
 
-_config_cache: Optional[Dict[str, Any]] = None
-
-
 def _load_config() -> Dict[str, Any]:
-    """加载配置：仅从 DB 读取（regime_config_service）。YAML 仅用于创建时导入，运行时不读。"""
-    global _config_cache
-    if _config_cache is not None:
-        return _config_cache
-
+    """加载配置：每次从 DB 读取，避免多 worker 下内存缓存导致不同 worker 返回过期配置。"""
     try:
         from app.services.regime_config_service import get_regime_config_for_runtime
-        _config_cache = get_regime_config_for_runtime(user_id=None) or {}
-        logger.info("[regime_switch] _load_config: cached, enabled=%s",
-                    _config_cache.get("multi_strategy", {}).get("enabled"))
+        cfg = get_regime_config_for_runtime(user_id=None) or {}
+        logger.debug("[regime_switch] _load_config: enabled=%s",
+                     cfg.get("multi_strategy", {}).get("enabled"))
+        return cfg
     except Exception as e:
         logger.debug("[regime_switch] DB config not available: %s", e)
-        _config_cache = {}
-
-    return _config_cache
+        return {}
 
 
 def reload_config() -> Dict[str, Any]:
-    """强制重载配置（用于测试或运行时热更新）。"""
-    global _config_cache
-    _config_cache = None
+    """强制重载配置（保留接口兼容，现已无缓存故直接调用 _load_config）。"""
     return _load_config()
 
 
