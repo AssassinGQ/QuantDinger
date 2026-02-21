@@ -261,9 +261,16 @@ const DEFAULT_REGIME_TO_WEIGHTS = {
 }
 const DEFAULT_REGIME_RULES = {
   primary_indicator: 'vix',
-  vix_panic: 30, vix_high_vol: 25, vix_low_vol: 15,
-  vhsi_panic: 30, vhsi_high_vol: 25, vhsi_low_vol: 15,
-  indicator_per_market: { HShare: 'vhsi', default: 'vix' }
+  vix_panic: 30,
+  vix_high_vol: 25,
+  vix_low_vol: 15,
+  vhsi_panic: 30,
+  vhsi_high_vol: 25,
+  vhsi_low_vol: 15,
+  indicator_per_market: {
+    HShare: 'vhsi',
+    default: 'vix'
+  }
 }
 
 export default {
