@@ -45,7 +45,7 @@
                 <!-- 策略组头部 -->
                 <div class="strategy-group-header" @click="toggleGroup(group.id)">
                   <div class="group-header-left">
-                    <a-icon :type="collapsedGroups[group.id] ? 'right' : 'down'" class="collapse-icon" />
+                    <a-icon :type="(collapsedGroups[group.id] !== false) ? 'right' : 'down'" class="collapse-icon" />
                     <a-icon :type="groupByMode === 'symbol' ? 'stock' : (groupByMode === 'custom' ? 'appstore' : 'folder')" class="group-icon" />
                     <span class="group-name">{{ group.baseName }}</span>
                     <a-tag size="small" color="blue">{{ group.strategies.length }} {{
@@ -78,8 +78,8 @@
                     </a-dropdown>
                   </div>
                 </div>
-                <!-- 策略组内的策略列表（可折叠） -->
-                <div v-show="!collapsedGroups[group.id]" class="strategy-group-content">
+                <!-- 策略组内的策略列表（可折叠，默认折叠） -->
+                <div v-show="collapsedGroups[group.id] === false" class="strategy-group-content">
                   <div
                     v-for="item in group.strategies"
                     :key="item.id"
@@ -2937,7 +2937,9 @@ export default {
       }
     },
     toggleGroup (groupId) {
-      this.$set(this.collapsedGroups, groupId, !this.collapsedGroups[groupId])
+      // 默认折叠：undefined/true 视为折叠，false 视为展开
+      const currentlyCollapsed = this.collapsedGroups[groupId] !== false
+      this.$set(this.collapsedGroups, groupId, !currentlyCollapsed)
     },
     async handleGroupMenuClick (key, group) {
       const strategyIds = group.strategies.map(s => s.id)

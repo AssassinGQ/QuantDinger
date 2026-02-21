@@ -831,9 +831,9 @@ export default {
     // 保存每个指标的参数值（key: indicatorId, value: { paramName: paramValue }）
     const savedIndicatorParams = ref({})
 
-    // 折叠状态
-    const customSectionCollapsed = ref(false) // 我创建的指标区域是否折叠
-    const purchasedSectionCollapsed = ref(false) // 我购买的指标区域是否折叠
+    // 折叠状态（默认折叠）
+    const customSectionCollapsed = ref(true) // 我创建的指标区域是否折叠
+    const purchasedSectionCollapsed = ref(true) // 我购买的指标区域是否折叠
     const customGroupCollapsed = ref({}) // 各分组的折叠状态 { groupId: bool }
 
     // 指标编辑器相关
@@ -1681,7 +1681,8 @@ export default {
       const prev = customGroupCollapsed.value[groupId]
       customGroupCollapsed.value = { ...customGroupCollapsed.value, [groupId]: !prev }
     }
-    const isCustomGroupCollapsed = (groupId) => !!customGroupCollapsed.value[groupId]
+    // 默认折叠：未显式设为 false 则视为折叠
+    const isCustomGroupCollapsed = (groupId) => customGroupCollapsed.value[groupId] !== false
 
     // 删除指标
     const handleDeleteIndicator = (indicator) => {
