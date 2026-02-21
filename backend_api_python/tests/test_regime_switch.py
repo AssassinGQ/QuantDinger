@@ -67,6 +67,12 @@ class TestComputeRegime:
         assert compute_regime(14.9, config=SAMPLE_CONFIG) == "low_vol"
         assert compute_regime(15.0, config=SAMPLE_CONFIG) == "normal"
 
+    def test_vhsi_primary_indicator(self):
+        from app.tasks.regime_switch import compute_regime
+        cfg = {**SAMPLE_CONFIG, "regime_rules": {**SAMPLE_CONFIG["regime_rules"], "primary_indicator": "vhsi"}}
+        assert compute_regime(35.0, config=cfg, vhsi=35.0, primary_override="vhsi") == "panic"
+        assert compute_regime(20.0, config=cfg, vhsi=12.0, primary_override="vhsi") == "low_vol"
+
 
 # ── compute_target_strategy_ids ──────────────────────────────────────────
 

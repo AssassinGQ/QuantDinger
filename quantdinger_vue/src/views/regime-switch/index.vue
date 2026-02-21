@@ -21,19 +21,36 @@
               <div class="summary-row">
                 <div class="summary-item">
                   <span class="label">{{ $t('regime.currentRegime') }}</span>
-                  <a-tag :color="regimeTagColor">{{ summary.regime || '-' }}</a-tag>
+                  <template v-if="regimePerSymbol && Object.keys(regimePerSymbol).length">
+                    <a-tag
+                      v-for="(r, sym) in regimePerSymbol"
+                      :key="sym"
+                      :color="regimeTagColorFor(r)"
+                    >
+                      {{ sym }}: {{ r }}
+                    </a-tag>
+                  </template>
+                  <a-tag v-else :color="regimeTagColor">{{ summary.regime || '-' }}</a-tag>
                 </div>
                 <div class="summary-item" v-if="summary.macro">
                   <span class="label">VIX</span>
                   <span>{{ summary.macro.vix != null ? summary.macro.vix.toFixed(2) : '-' }}</span>
                 </div>
+                <div class="summary-item" v-if="summary.macro && summary.macro.vhsi != null">
+                  <span class="label">VHSI</span>
+                  <span>{{ summary.macro.vhsi.toFixed(2) }}</span>
+                </div>
                 <div class="summary-item" v-if="summary.macro">
                   <span class="label">Fear&Greed</span>
                   <span>{{ summary.macro.fear_greed != null ? summary.macro.fear_greed : '-' }}</span>
                 </div>
-                <div class="summary-item">
+                <div class="summary-item" v-if="!regimePerSymbol || !Object.keys(regimePerSymbol).length">
                   <span class="label">{{ $t('regime.effectiveWeights') }}</span>
                   <span class="weights-text">{{ formatWeights(summary.weights?.effective) }}</span>
+                </div>
+                <div class="summary-item" v-else>
+                  <span class="label">{{ $t('regime.effectiveWeights') }}</span>
+                  <span class="weights-text">{{ $t('regime.perSymbolWeights') || '按品种独立' }}</span>
                 </div>
                 <div class="summary-item" v-if="summary.circuit_breaker?.tripped">
                   <a-tag color="red">{{ $t('regime.circuitBreakerTripped') }}</a-tag>
@@ -51,13 +68,13 @@
               <a-collapse-panel
                 v-for="(styleMap, symbol) in symbolStrategies"
                 :key="symbol"
-                :header="symbol"
+                :header="symbolHeader(symbol)"
               >
                 <template v-for="(sids, style) in styleMap">
                   <div v-if="sids && sids.length" :key="style" class="style-row">
                     <div class="style-label">
                       <a-tag size="small">{{ style }}</a-tag>
-                      <span class="weight-badge">{{ formatWeight(weightsEffective[style]) }}</span>
+                      <span class="weight-badge">{{ formatWeight(weightsForSymbol(symbol)[style]) }}</span>
                     </div>
                     <div class="strategy-list">
                       <div
@@ -154,20 +171,32 @@
                 </a-table>
               </div>
 
-              <!-- VIX 阈值 -->
+              <!-- 主指标与阈值 -->
               <div class="form-subsection">
-                <h4>{{ $t('regime.vixThresholds') }}</h4>
-                <a-form layout="inline">
-                  <a-form-item label="vix_panic">
-                    <a-input-number v-model="formRegimeRules.vix_panic" :min="0" :max="100" style="width: 80px" />
-                  </a-form-item>
-                  <a-form-item label="vix_high_vol">
-                    <a-input-number v-model="formRegimeRules.vix_high_vol" :min="0" :max="100" style="width: 80px" />
-                  </a-form-item>
-                  <a-form-item label="vix_low_vol">
-                    <a-input-number v-model="formRegimeRules.vix_low_vol" :min="0" :max="100" style="width: 80px" />
+                <h4>{{ $t('regime.primaryIndicator') || '主指标' }}</h4>
+                <a-form layout="inline" style="margin-bottom: 8px">
+                  <a-form-item :label="$t('regime.primaryIndicator') || 'primary_indicator'">
+                    <a-select v-model="formRegimeRules.primary_indicator" style="width: 140px">
+                      <a-select-option value="vix">VIX（美股）</a-select-option>
+                      <a-select-option value="vhsi">VHSI（港股）</a-select-option>
+                      <a-select-option value="fear_greed">Fear&Greed</a-select-option>
+                      <a-select-option value="auto">auto（港股用 VHSI）</a-select-option>
+                      <a-select-option value="custom">custom</a-select-option>
+                    </a-select>
                   </a-form-item>
                 </a-form>
+                <div v-if="formRegimeRules.primary_indicator === 'vix'" class="threshold-row">
+                  <span class="threshold-label">VIX:</span>
+                  <a-input-number v-model="formRegimeRules.vix_panic" :min="0" :max="100" placeholder="panic" style="width: 70px" />
+                  <a-input-number v-model="formRegimeRules.vix_high_vol" :min="0" :max="100" placeholder="high_vol" style="width: 70px" />
+                  <a-input-number v-model="formRegimeRules.vix_low_vol" :min="0" :max="100" placeholder="low_vol" style="width: 70px" />
+                </div>
+                <div v-if="formRegimeRules.primary_indicator === 'vhsi' || formRegimeRules.primary_indicator === 'auto'" class="threshold-row">
+                  <span class="threshold-label">VHSI:</span>
+                  <a-input-number v-model="formRegimeRules.vhsi_panic" :min="0" :max="100" placeholder="panic" style="width: 70px" />
+                  <a-input-number v-model="formRegimeRules.vhsi_high_vol" :min="0" :max="100" placeholder="high_vol" style="width: 70px" />
+                  <a-input-number v-model="formRegimeRules.vhsi_low_vol" :min="0" :max="100" placeholder="low_vol" style="width: 70px" />
+                </div>
               </div>
 
               <!-- Symbol 策略绑定 -->
@@ -230,7 +259,12 @@ const DEFAULT_REGIME_TO_WEIGHTS = {
   normal: { conservative: 0.20, balanced: 0.60, aggressive: 0.20 },
   low_vol: { conservative: 0.10, balanced: 0.30, aggressive: 0.60 }
 }
-const DEFAULT_REGIME_RULES = { vix_panic: 30, vix_high_vol: 25, vix_low_vol: 15 }
+const DEFAULT_REGIME_RULES = {
+  primary_indicator: 'vix',
+  vix_panic: 30, vix_high_vol: 25, vix_low_vol: 15,
+  vhsi_panic: 30, vhsi_high_vol: 25, vhsi_low_vol: 15,
+  indicator_per_market: { HShare: 'vhsi', default: 'vix' }
+}
 
 export default {
   name: 'RegimeSwitch',
@@ -270,6 +304,12 @@ export default {
     },
     weightsEffective () {
       return this.summary.weights?.effective || {}
+    },
+    regimePerSymbol () {
+      return this.summary.regime_per_symbol || {}
+    },
+    weightsPerSymbol () {
+      return this.summary.weights_per_symbol || {}
     },
     regimeTagColor () {
       const m = { panic: 'red', high_vol: 'orange', normal: 'green', low_vol: 'blue' }
@@ -365,6 +405,20 @@ export default {
       const s = this.strategies.find(x => x.id === sid || x.id === parseInt(sid))
       return s ? (s.strategy_name || s.displayInfo?.strategyName) : null
     },
+    weightsForSymbol (symbol) {
+      const per = this.weightsPerSymbol[symbol]
+      if (per && Object.keys(per).length) return per
+      return this.weightsEffective
+    },
+    regimeTagColorFor (regime) {
+      const m = { panic: 'red', high_vol: 'orange', normal: 'green', low_vol: 'blue' }
+      return m[regime] || 'default'
+    },
+    symbolHeader (symbol) {
+      const r = this.regimePerSymbol[symbol]
+      if (r) return `${symbol} (${r})`
+      return symbol
+    },
     getAllocation (sid) {
       const id = typeof sid === 'number' ? sid : parseInt(sid)
       return this.allocationData.allocation?.[id] ?? this.summary.allocation?.[id] ?? 0
@@ -410,9 +464,14 @@ export default {
         ? JSON.parse(JSON.stringify(r2w))
         : { ...DEFAULT_REGIME_TO_WEIGHTS }
       this.formRegimeRules = {
+        primary_indicator: rr.primary_indicator ?? DEFAULT_REGIME_RULES.primary_indicator,
         vix_panic: rr.vix_panic ?? DEFAULT_REGIME_RULES.vix_panic,
         vix_high_vol: rr.vix_high_vol ?? DEFAULT_REGIME_RULES.vix_high_vol,
-        vix_low_vol: rr.vix_low_vol ?? DEFAULT_REGIME_RULES.vix_low_vol
+        vix_low_vol: rr.vix_low_vol ?? DEFAULT_REGIME_RULES.vix_low_vol,
+        vhsi_panic: rr.vhsi_panic ?? DEFAULT_REGIME_RULES.vhsi_panic,
+        vhsi_high_vol: rr.vhsi_high_vol ?? DEFAULT_REGIME_RULES.vhsi_high_vol,
+        vhsi_low_vol: rr.vhsi_low_vol ?? DEFAULT_REGIME_RULES.vhsi_low_vol,
+        indicator_per_market: rr.indicator_per_market ?? DEFAULT_REGIME_RULES.indicator_per_market
       }
       const ss = cfg.symbol_strategies || {}
       this.formSymbolStrategies = JSON.parse(JSON.stringify(ss))
@@ -444,9 +503,14 @@ export default {
         : { ...DEFAULT_REGIME_TO_WEIGHTS }
       if (p.regime_rules) {
         this.formRegimeRules = {
+          primary_indicator: p.regime_rules.primary_indicator ?? DEFAULT_REGIME_RULES.primary_indicator,
           vix_panic: p.regime_rules.vix_panic ?? DEFAULT_REGIME_RULES.vix_panic,
           vix_high_vol: p.regime_rules.vix_high_vol ?? DEFAULT_REGIME_RULES.vix_high_vol,
-          vix_low_vol: p.regime_rules.vix_low_vol ?? DEFAULT_REGIME_RULES.vix_low_vol
+          vix_low_vol: p.regime_rules.vix_low_vol ?? DEFAULT_REGIME_RULES.vix_low_vol,
+          vhsi_panic: p.regime_rules.vhsi_panic ?? DEFAULT_REGIME_RULES.vhsi_panic,
+          vhsi_high_vol: p.regime_rules.vhsi_high_vol ?? DEFAULT_REGIME_RULES.vhsi_high_vol,
+          vhsi_low_vol: p.regime_rules.vhsi_low_vol ?? DEFAULT_REGIME_RULES.vhsi_low_vol,
+          indicator_per_market: p.regime_rules.indicator_per_market ?? DEFAULT_REGIME_RULES.indicator_per_market
         }
       }
       if (p.symbol_strategies && Object.keys(p.symbol_strategies).length) {
@@ -572,6 +636,13 @@ export default {
 .form-subsection {
   margin-bottom: 20px;
   h4 { margin-bottom: 12px; font-size: 14px; }
+}
+.threshold-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  .threshold-label { min-width: 50px; font-size: 13px; }
 }
 .style-strategy-row {
   margin-bottom: 12px;

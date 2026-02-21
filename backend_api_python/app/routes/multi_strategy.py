@@ -122,8 +122,14 @@ def get_summary():
         summary = allocator.get_portfolio_summary()
         cb_status = breaker.get_status(config)
 
+        regime_per_symbol = allocator.regime_per_symbol
+        weights_per_symbol = allocator.effective_weights_per_symbol
+        use_per_symbol = bool(regime_per_symbol)
+
         data = {
             "regime": allocator.current_regime,
+            "regime_per_symbol": regime_per_symbol if use_per_symbol else None,
+            "weights_per_symbol": weights_per_symbol if use_per_symbol else None,
             "macro": macro,
             "weights": {
                 "target": allocator.target_weights,
@@ -191,6 +197,7 @@ def get_regime():
         data = {
             "regime": allocator.current_regime,
             "vix": macro["vix"],
+            "vhsi": macro.get("vhsi", macro["vix"]),
             "dxy": macro["dxy"],
             "fear_greed": macro["fear_greed"],
         }

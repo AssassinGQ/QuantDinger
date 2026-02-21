@@ -63,6 +63,8 @@ class TestSummaryEndpoint:
         allocator.current_regime = "normal"
         allocator.target_weights = {"conservative": 0.2, "balanced": 0.6, "aggressive": 0.2}
         allocator.effective_weights = {"conservative": 0.2, "balanced": 0.6, "aggressive": 0.2}
+        allocator.regime_per_symbol = {}
+        allocator.effective_weights_per_symbol = {}
         allocator.get_portfolio_summary.return_value = {
             "allocation": {}, "positions": {},
             "total_equity": 100000, "total_unrealized_pnl": 500,

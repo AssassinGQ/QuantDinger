@@ -7,7 +7,8 @@
   - 进程重启 → 内存缓存丢失 → 从 DB 读取（毫秒级）→ 不再需要网络请求
 
 数据注入到 df 后，指标代码可直接使用:
-    df["vix"]         - VIX 恐慌指数
+    df["vix"]         - VIX 恐慌指数（美股）
+    df["vhsi"]        - VHSI 恒生波动率指数（港股）
     df["dxy"]         - 美元指数
     df["fear_greed"]  - Fear & Greed 指数 (0-100)
 """
@@ -53,7 +54,7 @@ class MacroDataService:
     _db_ready = False
     MEM_TTL = int(os.getenv("MACRO_CACHE_TTL", 3600))
 
-    MACRO_COLUMNS = ["vix", "dxy", "fear_greed"]
+    MACRO_COLUMNS = ["vix", "vhsi", "dxy", "fear_greed"]
 
     @classmethod
     def _ensure_table(cls):
@@ -152,6 +153,7 @@ class MacroDataService:
         dfs = []
         for indicator, fetcher in [
             ("vix", cls._fetch_vix_net),
+            ("vhsi", cls._fetch_vhsi_net),
             ("dxy", cls._fetch_dxy_net),
             ("fear_greed", cls._fetch_fg_net),
         ]:
@@ -267,6 +269,29 @@ class MacroDataService:
             return None
 
     @classmethod
+    def _fetch_vhsi_net(cls, start: datetime, end: datetime) -> Optional[pd.DataFrame]:
+        """VHSI 恒生波动率指数（港股，yfinance 格式 ^VHSI 或 ^1882.HK）"""
+        if not HAS_YFINANCE:
+            return None
+        for ticker in ("^VHSI",):
+            try:
+                data = yf.download(ticker, start=start.strftime('%Y-%m-%d'),
+                                  end=end.strftime('%Y-%m-%d'), progress=False, auto_adjust=True)
+                if data.empty:
+                    continue
+                close_col = data["Close"]
+                if isinstance(close_col, pd.DataFrame):
+                    close_col = close_col.iloc[:, 0]
+                result = pd.DataFrame({"vhsi": close_col.values}, index=close_col.index)
+                result.index = pd.to_datetime(result.index).tz_localize(None)
+                result.index.name = "time"
+                return result
+            except Exception as e:
+                logger.debug(f"VHSI fetch ({ticker}) failed: {e}")
+                continue
+        return None
+
+    @classmethod
     def _fetch_dxy_net(cls, start: datetime, end: datetime) -> Optional[pd.DataFrame]:
         if not HAS_YFINANCE:
             return None
@@ -331,6 +356,16 @@ class MacroDataService:
                 snapshot["vix"] = float(getattr(info, 'last_price', 0) or 0)
             except Exception:
                 pass
+            for vhsi_ticker in ("^VHSI",):
+                try:
+                    vhsi_t = yf.Ticker(vhsi_ticker)
+                    info = vhsi_t.fast_info
+                    val = float(getattr(info, 'last_price', 0) or 0)
+                    if val > 0:
+                        snapshot["vhsi"] = val
+                        break
+                except Exception:
+                    continue
             try:
                 dxy_t = yf.Ticker("DX-Y.NYB")
                 info = dxy_t.fast_info

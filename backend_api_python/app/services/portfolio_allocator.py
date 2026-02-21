@@ -58,6 +58,11 @@ class PortfolioAllocator:
         self._symbol_capital_pool: Dict[str, float] = {}
         # strategy_id → True if frozen (no new entry allowed)
         self._frozen_strategies: Dict[int, bool] = {}
+        # symbol → {style: weight} 当 regime_per_symbol 时使用
+        self._effective_weights_per_symbol: Dict[str, Dict[str, float]] = {}
+        self._regime_per_symbol: Dict[str, str] = {}
+        # strategy_id → symbol，由 _rebuild_strategy_style_map 构建
+        self._strategy_to_symbol: Dict[int, str] = {}
 
     # ── 对外查询接口 ─────────────────────────────────────────────────
 
@@ -98,6 +103,16 @@ class PortfolioAllocator:
     def frozen_strategies(self) -> Dict[int, bool]:
         return dict(self._frozen_strategies)
 
+    @property
+    def regime_per_symbol(self) -> Dict[str, str]:
+        """当启用 per-market 多套 regime 时，symbol → regime。"""
+        return dict(self._regime_per_symbol)
+
+    @property
+    def effective_weights_per_symbol(self) -> Dict[str, Dict[str, float]]:
+        """当启用 per-market 多套 regime 时，symbol → {style: weight}。"""
+        return {k: dict(v) for k, v in self._effective_weights_per_symbol.items()}
+
     # ── 核心：regime 更新 → 重算权重与分配 ──────────────────────────
 
     def update_regime(
@@ -106,56 +121,88 @@ class PortfolioAllocator:
         config: Dict[str, Any],
         symbol_strategies: Dict[str, Dict[str, List[int]]],
         strategy_initial_capitals: Optional[Dict[int, float]] = None,
+        regime_per_symbol: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """regime_switch 调用：更新 regime 并重新计算所有分配。
 
+        支持 regime_per_symbol 时，每个品种使用自身的 regime（港股 VHSI、美股 VIX 等）。
+
         Args:
-            regime: 当前 regime（panic/high_vol/normal/low_vol）
+            regime: 默认 regime
             config: 完整配置 dict
             symbol_strategies: {symbol: {style: [sid, ...]}}
-            strategy_initial_capitals: {sid: initial_capital} 可选，不传则使用缓存
-
-        Returns:
-            {"started": [...], "stopped": [...], "weight_changed": [...]}
+            strategy_initial_capitals: {sid: initial_capital} 可选
+            regime_per_symbol: {symbol: regime} 可选，per-market 多套 regime
         """
         with self._lock:
             ms_cfg = config.get("multi_strategy", {})
+            min_threshold = ms_cfg.get("min_weight_threshold", 0.05)
+            transition_cfg = ms_cfg.get("transition", {})
 
             self._current_regime = regime
             self._symbol_strategies = symbol_strategies
+            self._regime_per_symbol = dict(regime_per_symbol) if regime_per_symbol else {}
 
             if strategy_initial_capitals:
                 self._strategy_initial_capital.update(strategy_initial_capitals)
 
             self._rebuild_strategy_style_map()
 
+            use_per_symbol = bool(self._regime_per_symbol)
+
+            if use_per_symbol:
+                old_per_symbol = dict(self._effective_weights_per_symbol)
+                self._effective_weights_per_symbol.clear()
+                self._target_weights = {}
+                self._effective_weights = {}
+                weight_changed_ids: List[int] = []
+
+                for symbol, style_map in symbol_strategies.items():
+                    if not isinstance(style_map, dict):
+                        continue
+                    sym_regime = self._regime_per_symbol.get(symbol, regime)
+                    raw_target = self._get_target_weights(sym_regime, ms_cfg)
+                    target_after = _apply_threshold(raw_target, min_threshold)
+                    target_norm = _normalize_weights(target_after)
+                    old_weights = old_per_symbol.get(symbol, {})
+                    effective = _apply_gradual_transition(old_weights, target_norm, transition_cfg)
+                    self._effective_weights_per_symbol[symbol] = effective
+                    for sid, sty in self._strategy_style.items():
+                        if sty in effective and self._strategy_belongs_to_symbol(sid, symbol):
+                            if abs(effective.get(sty, 0) - old_weights.get(sty, 0)) > 1e-6:
+                                weight_changed_ids.append(sid)
+
+                old_alloc = dict(self._strategy_allocation)
+                self._compute_allocations(ms_cfg, use_per_symbol=True)
+                self._handle_over_allocation(old_alloc)
+
+                ids_to_stop, ids_to_start = self._compute_start_stop_diff(config)
+                return {
+                    "started": ids_to_start,
+                    "stopped": ids_to_stop,
+                    "weight_changed": sorted(set(weight_changed_ids)),
+                }
+
             raw_target = self._get_target_weights(regime, ms_cfg)
-            min_threshold = ms_cfg.get("min_weight_threshold", 0.05)
             target_after_threshold = _apply_threshold(raw_target, min_threshold)
             target_normalized = _normalize_weights(target_after_threshold)
             self._target_weights = target_normalized
 
             old_weights = dict(self._effective_weights)
-            transition_cfg = ms_cfg.get("transition", {})
-            effective = _apply_gradual_transition(
-                old_weights, target_normalized, transition_cfg,
-            )
+            effective = _apply_gradual_transition(old_weights, target_normalized, transition_cfg)
             self._effective_weights = effective
+            self._effective_weights_per_symbol.clear()
 
             old_alloc = dict(self._strategy_allocation)
-            self._compute_allocations(ms_cfg)
-
+            self._compute_allocations(ms_cfg, use_per_symbol=False)
             self._handle_over_allocation(old_alloc)
 
             ids_to_stop, ids_to_start = self._compute_start_stop_diff(config)
-
-            result: Dict[str, Any] = {
+            return {
                 "started": ids_to_start,
                 "stopped": ids_to_stop,
                 "weight_changed": self._find_weight_changed(old_weights, effective),
             }
-
-            return result
 
     # ── 组合持仓查询 ─────────────────────────────────────────────────
 
@@ -236,14 +283,20 @@ class PortfolioAllocator:
     # ── 内部方法 ─────────────────────────────────────────────────────
 
     def _rebuild_strategy_style_map(self) -> None:
-        """从 symbol_strategies 构建 strategy_id → style 映射。"""
+        """从 symbol_strategies 构建 strategy_id → style / symbol 映射。"""
         self._strategy_style.clear()
-        for _sym, style_map in self._symbol_strategies.items():
+        self._strategy_to_symbol.clear()
+        for sym, style_map in self._symbol_strategies.items():
             if not isinstance(style_map, dict):
                 continue
             for style, ids in style_map.items():
                 for sid in (ids or []):
                     self._strategy_style[int(sid)] = style
+                    self._strategy_to_symbol[int(sid)] = sym
+
+    def _strategy_belongs_to_symbol(self, strategy_id: int, symbol: str) -> bool:
+        """策略是否属于该品种。"""
+        return self._strategy_to_symbol.get(strategy_id) == symbol
 
     def _get_target_weights(self, regime: str, ms_cfg: Dict) -> Dict[str, float]:
         """从配置中读取 regime → weights 映射。"""
@@ -253,8 +306,11 @@ class PortfolioAllocator:
             weights = {"conservative": 0.2, "balanced": 0.6, "aggressive": 0.2}
         return {k: float(v) for k, v in weights.items()}
 
-    def _compute_allocations(self, ms_cfg: Dict) -> None:
-        """根据 effective_weights 计算每策略的 allocated capital。"""
+    def _compute_allocations(self, ms_cfg: Dict, use_per_symbol: bool = False) -> None:
+        """根据 effective_weights 计算每策略的 allocated capital。
+
+        当 use_per_symbol=True 时，使用 _effective_weights_per_symbol[symbol] 而非 _effective_weights。
+        """
         max_alloc_ratio = ms_cfg.get("max_allocation_ratio", 2.0)
         new_alloc: Dict[int, float] = {}
         new_pools: Dict[str, float] = {}
@@ -272,10 +328,16 @@ class PortfolioAllocator:
 
             new_pools[symbol] = pool
 
+            weights = (
+                self._effective_weights_per_symbol.get(symbol, {})
+                if use_per_symbol
+                else self._effective_weights
+            )
+
             for style, ids in style_map.items():
                 if not ids:
                     continue
-                weight = self._effective_weights.get(style, 0.0)
+                weight = weights.get(style, 0.0)
                 if weight <= 0:
                     for sid in ids:
                         new_alloc[int(sid)] = 0.0

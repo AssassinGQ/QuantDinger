@@ -54,14 +54,41 @@ REGIME_LOW_VOL = "low_vol"
 REGIME_NORMAL = "normal"
 
 
-def compute_regime(vix: float, fear_greed: Optional[float] = None,
-                   config: Optional[Dict] = None) -> str:
-    """根据配置的主指标（VIX / Fear&Greed / 自定义 Python）计算当前 regime。"""
+def _resolve_primary_indicator(symbol_strategies: Dict[str, Any], config: Optional[Dict]) -> str:
+    """根据配置与品种解析主指标：支持 indicator_per_market 实现港股自动用 VHSI。"""
     cfg = (config or _load_config()).get("regime_rules", {})
     primary = (cfg.get("primary_indicator") or "vix").strip().lower()
+    if primary != "auto":
+        return primary
+    indicator_per_market = cfg.get("indicator_per_market") or {}
+    if _has_hshare_symbols(symbol_strategies) and indicator_per_market.get("HShare") == "vhsi":
+        return "vhsi"
+    return indicator_per_market.get("default", "vix")
+
+
+def compute_regime(vix: float, fear_greed: Optional[float] = None,
+                   config: Optional[Dict] = None, vhsi: Optional[float] = None,
+                   macro: Optional[Dict[str, float]] = None,
+                   primary_override: Optional[str] = None) -> str:
+    """根据配置的主指标（VIX / VHSI / Fear&Greed / 自定义 Python）计算当前 regime。"""
+    cfg = (config or _load_config()).get("regime_rules", {})
+    primary = (primary_override or cfg.get("primary_indicator") or "vix").strip().lower()
 
     if primary == "custom":
         return _compute_regime_custom(vix, fear_greed, config)
+
+    if primary == "vhsi":
+        vol_val = vhsi if vhsi is not None else (macro or {}).get("vhsi", vix)
+        vhsi_panic = cfg.get("vhsi_panic", cfg.get("vix_panic", 30))
+        vhsi_high_vol = cfg.get("vhsi_high_vol", cfg.get("vix_high_vol", 25))
+        vhsi_low_vol = cfg.get("vhsi_low_vol", cfg.get("vix_low_vol", 15))
+        if vol_val > vhsi_panic:
+            return REGIME_PANIC
+        if vol_val > vhsi_high_vol:
+            return REGIME_HIGH_VOL
+        if vol_val < vhsi_low_vol:
+            return REGIME_LOW_VOL
+        return REGIME_NORMAL
 
     if primary == "fear_greed":
         # Fear&Greed: 低=恐慌, 高=贪婪。值域 0-100
@@ -104,6 +131,7 @@ def _compute_regime_custom(
     snapshot = MacroDataService._get_realtime_snapshot()
     macro = {
         "vix": float(snapshot.get("vix", 18.0)) if snapshot else vix,
+        "vhsi": float(snapshot.get("vhsi", 22.0)) if snapshot else vix,
         "dxy": float(snapshot.get("dxy", 100.0)) if snapshot else 100.0,
         "fear_greed": float(snapshot.get("fear_greed", 50.0)) if snapshot else (fear_greed or 50.0),
     }
@@ -117,6 +145,7 @@ def _compute_regime_custom(
     exec_env = {
         "macro": macro,
         "vix": macro["vix"],
+        "vhsi": macro["vhsi"],
         "dxy": macro["dxy"],
         "fear_greed": macro["fear_greed"],
         "regime": None,
@@ -182,18 +211,20 @@ def _get_symbol_strategies_from_db(user_id: Optional[int] = 1) -> Dict[str, Dict
 
 
 def compute_target_strategy_ids(regime: str, config: Optional[Dict] = None,
-                                symbol_strategies_override: Optional[Dict] = None) -> Set[int]:
-    """根据当前 regime 和配置，计算应该运行的 strategy_id 集合（P0 二元模式）。"""
+                                symbol_strategies_override: Optional[Dict] = None,
+                                regime_per_symbol: Optional[Dict[str, str]] = None) -> Set[int]:
+    """根据 regime 和配置，计算应该运行的 strategy_id 集合（P0 二元模式）。
+    当 regime_per_symbol 非空时，每个 symbol 使用其自身的 regime。"""
     cfg = config or _load_config()
     regime_to_style = cfg.get("regime_to_style", {})
     symbol_strategies = symbol_strategies_override if symbol_strategies_override is not None else cfg.get("symbol_strategies", {})
 
-    active_styles = regime_to_style.get(regime, ["balanced"])
     target_ids: Set[int] = set()
-
-    for _symbol, style_map in (symbol_strategies or {}).items():
+    for symbol, style_map in (symbol_strategies or {}).items():
         if not isinstance(style_map, dict):
             continue
+        sym_regime = (regime_per_symbol or {}).get(symbol) or regime
+        active_styles = regime_to_style.get(sym_regime, ["balanced"])
         for style in active_styles:
             ids = style_map.get(style, [])
             if isinstance(ids, list):
@@ -205,17 +236,109 @@ def compute_target_strategy_ids(regime: str, config: Optional[Dict] = None,
 # ── 获取宏观数据 ────────────────────────────────────────────────────────
 
 def _fetch_macro_snapshot() -> Dict[str, float]:
-    """拉取实时宏观快照（VIX / DXY / Fear&Greed）。"""
+    """拉取实时宏观快照（VIX / VHSI / DXY / Fear&Greed）。"""
     from app.services.macro_data_service import MacroDataService
     snapshot = MacroDataService._get_realtime_snapshot()
     if not snapshot:
         logger.warning("[regime_switch] macro snapshot empty, using defaults")
-        return {"vix": 18.0, "dxy": 100.0, "fear_greed": 50.0}
+        return {"vix": 18.0, "vhsi": 22.0, "dxy": 100.0, "fear_greed": 50.0}
     return {
         "vix": float(snapshot.get("vix", 18.0)),
+        "vhsi": float(snapshot.get("vhsi", snapshot.get("vix", 22.0))),
         "dxy": float(snapshot.get("dxy", 100.0)),
         "fear_greed": float(snapshot.get("fear_greed", 50.0)),
     }
+
+
+def _has_hshare_symbols(symbol_strategies: Dict[str, Any]) -> bool:
+    """检测 symbol_strategies 中是否包含港股标的。"""
+    if not symbol_strategies:
+        return False
+    symbols = [str(k).replace(".HK", "").strip() for k in symbol_strategies.keys()]
+    if not symbols:
+        return False
+    try:
+        from app.utils.db import get_db_connection
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT 1 FROM qd_market_symbols WHERE market = 'HShare' AND symbol = ANY(%s) LIMIT 1",
+                (symbols,)
+            )
+            row = cur.fetchone()
+            cur.close()
+            return row is not None
+    except Exception:
+        return any(len(s) == 5 and s.isdigit() for s in symbols)
+
+
+def _get_symbol_to_market(symbol_strategies: Dict[str, Any]) -> Dict[str, str]:
+    """symbol → market 映射。用于多套 regime（港股 VHSI、美股 VIX 等）。"""
+    if not symbol_strategies:
+        return {}
+    symbols = [str(k).replace(".HK", "").strip() for k in symbol_strategies.keys()]
+    result: Dict[str, str] = {}
+    try:
+        from app.utils.db import get_db_connection
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT symbol, market FROM qd_market_symbols WHERE symbol = ANY(%s)",
+                (symbols,)
+            )
+            for row in cur.fetchall():
+                sym = str(row.get("symbol", "")).strip()
+                market = str(row.get("market", "")).strip() or "default"
+                result[sym] = market
+                if sym + ".HK" in symbol_strategies:
+                    result[sym + ".HK"] = market
+            cur.close()
+    except Exception:
+        pass
+    for sym in symbol_strategies.keys():
+        s = str(sym).replace(".HK", "").strip()
+        if s not in result:
+            result[s] = "HShare" if (len(s) == 5 and s.isdigit()) else "default"
+    return result
+
+
+def _use_per_market_regime(config: Optional[Dict]) -> bool:
+    """是否启用 per-market 多套 regime。"""
+    cfg = (config or _load_config()).get("regime_rules", {})
+    indicator_per_market = cfg.get("indicator_per_market") or {}
+    return bool(indicator_per_market) and cfg.get("primary_indicator", "vix").strip().lower() == "auto"
+
+
+def compute_regime_per_symbol(
+    symbol_strategies: Dict[str, Any],
+    macro: Dict[str, float],
+    config: Optional[Dict],
+) -> Dict[str, str]:
+    """为每个 symbol 计算 regime，支持港股 VHSI、美股 VIX 等 per-market 差异化。"""
+    if not _use_per_market_regime(config):
+        single_regime = compute_regime(
+            macro["vix"], fear_greed=macro.get("fear_greed"),
+            config=config, vhsi=macro.get("vhsi"), macro=macro,
+            primary_override=_resolve_primary_indicator(symbol_strategies, config)
+        )
+        return {sym: single_regime for sym in symbol_strategies.keys()}
+
+    symbol_to_market = _get_symbol_to_market(symbol_strategies)
+    cfg = (config or _load_config()).get("regime_rules", {})
+    indicator_per_market = cfg.get("indicator_per_market") or {}
+    vix = macro["vix"]
+    vhsi = macro.get("vhsi", vix)
+    fg = macro.get("fear_greed", 50.0)
+
+    result: Dict[str, str] = {}
+    for sym in symbol_strategies.keys():
+        s_plain = str(sym).replace(".HK", "").strip()
+        market = symbol_to_market.get(s_plain) or symbol_to_market.get(sym) or "default"
+        indicator = indicator_per_market.get(market) or indicator_per_market.get("default", "vix")
+        primary = str(indicator).strip().lower() if indicator else "vix"
+        regime = compute_regime(vix, fear_greed=fg, config=config, vhsi=vhsi, macro=macro, primary_override=primary)
+        result[sym] = regime
+    return result
 
 
 # ── 获取当前运行中的策略 ID ──────────────────────────────────────────────
@@ -316,25 +439,28 @@ def _run_inner() -> None:
         return
 
     macro = _fetch_macro_snapshot()
-    vix = macro["vix"]
-    fg = macro["fear_greed"]
-    regime = compute_regime(vix, fear_greed=fg, config=config)
+    regime_per_symbol = compute_regime_per_symbol(symbol_strategies, macro, config)
+    regime_default = next(iter(regime_per_symbol.values()), "normal") if regime_per_symbol else "normal"
 
     if _is_multi_strategy_enabled(config):
-        _run_multi_strategy(regime, config, symbol_strategies, macro, user_id)
+        _run_multi_strategy(regime_default, config, symbol_strategies, macro, user_id,
+                           regime_per_symbol=regime_per_symbol)
     else:
-        _run_legacy(regime, config, symbol_strategies, macro, user_id)
+        _run_legacy(regime_default, config, symbol_strategies, macro, user_id,
+                    regime_per_symbol=regime_per_symbol)
 
 
 def _run_multi_strategy(
     regime: str, config: Dict, symbol_strategies: Dict,
     macro: Dict[str, float], user_id: Optional[int],
+    regime_per_symbol: Optional[Dict[str, str]] = None,
 ) -> None:
-    """P1 多策略权重分配模式。"""
+    """P1 多策略权重分配模式。支持 per-symbol regime（港股 VHSI、美股 VIX 等）。"""
     from app.services.portfolio_allocator import get_portfolio_allocator
 
     allocator = get_portfolio_allocator()
-    result = allocator.update_regime(regime, config, symbol_strategies)
+    result = allocator.update_regime(regime, config, symbol_strategies,
+                                    regime_per_symbol=regime_per_symbol)
 
     ids_to_stop = result.get("stopped", [])
     ids_to_start = result.get("started", [])
@@ -356,12 +482,15 @@ def _run_multi_strategy(
 def _run_legacy(
     regime: str, config: Dict, symbol_strategies: Dict,
     macro: Dict[str, float], user_id: Optional[int],
+    regime_per_symbol: Optional[Dict[str, str]] = None,
 ) -> None:
-    """P0 二元启停模式（向后兼容）。"""
+    """P0 二元启停模式（向后兼容）。支持 per-symbol regime。"""
     vix = macro["vix"]
     fg = macro["fear_greed"]
 
-    target_ids = compute_target_strategy_ids(regime, config=config, symbol_strategies_override=symbol_strategies)
+    target_ids = compute_target_strategy_ids(regime, config=config,
+                                            symbol_strategies_override=symbol_strategies,
+                                            regime_per_symbol=regime_per_symbol)
     managed_ids = _get_all_managed_ids(config, symbol_strategies_override=symbol_strategies)
     running_ids = _get_currently_running_ids()
 
