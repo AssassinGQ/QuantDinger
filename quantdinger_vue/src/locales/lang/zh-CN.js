@@ -2808,7 +2808,9 @@ const locale = {
 
   'regime.viewTab': '查看',
   'regime.configTab': '配置',
-  'regime.notEnabled': '多策略组合未启用，请先在配置 Tab 中启用。',
+  'regime.notEnabled': '多策略组合未启用',
+  'regime.initHint': '请先在配置 Tab 中启用并完成初始化配置。',
+  'regime.goToConfig': '前往配置',
   'regime.currentRegime': '当前 Regime',
   'regime.effectiveWeights': '生效权重',
   'regime.allocatedCapital': '分配资金',
@@ -2816,7 +2818,20 @@ const locale = {
   'regime.circuitBreakerTripped': '熔断触发',
   'regime.resetCircuitBreaker': '解除熔断',
   'regime.resetSuccess': '熔断已解除',
-  'regime.configHint': '配置功能：可在 DB 或 YAML 中维护 symbol_strategies、regime_to_weights。'
+  'regime.configHint': '配置功能：可在 DB 或 YAML 中维护 symbol_strategies、regime_to_weights。',
+  'regime.enableLabel': '启用多策略组合',
+  'regime.yamlImport': 'YAML 导入',
+  'regime.selectYaml': '选择 YAML 文件',
+  'regime.applyImport': '应用导入',
+  'regime.formConfig': '表单配置',
+  'regime.regimeWeights': 'Regime 权重',
+  'regime.vixThresholds': 'VIX 阈值',
+  'regime.symbolStrategies': '品种策略绑定',
+  'regime.addSymbolPlaceholder': '输入品种如 XAUUSD',
+  'regime.selectStrategies': '选择策略',
+  'regime.removeSymbol': '移除品种',
+  'regime.saveSuccess': '保存成功',
+  'regime.symbolExists': '该品种已存在'
 }
 
 export default {

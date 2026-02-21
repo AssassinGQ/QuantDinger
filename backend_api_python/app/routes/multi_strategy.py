@@ -261,7 +261,7 @@ def reset_circuit_breaker():
 @multi_strategy_bp.route("/config", methods=["GET"])
 @login_required
 def get_config():
-    """返回当前多策略配置（脱敏）。"""
+    """返回当前多策略配置（脱敏）。仅从 DB 读取。"""
     try:
         config = _get_config()
         safe = {
@@ -272,6 +272,70 @@ def get_config():
         return jsonify({"code": 1, "msg": "success", "data": safe})
     except Exception as e:
         logger.exception("[multi_strategy] config error: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
+@multi_strategy_bp.route("/config", methods=["PUT"])
+@login_required
+def put_config():
+    """保存 regime 配置到 DB。"""
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        symbol_strategies = body.get("symbol_strategies")
+        regime_to_weights = body.get("regime_to_weights")
+        regime_rules = body.get("regime_rules")
+        multi_strategy = body.get("multi_strategy")
+
+        if symbol_strategies is None or regime_to_weights is None:
+            return jsonify({"code": 0, "msg": "symbol_strategies and regime_to_weights required"}), 400
+
+        from app.services.regime_config_service import save_regime_config
+        from app.tasks.regime_switch import reload_config
+        user_id = getattr(g, "user_id", None)
+        ok = save_regime_config(
+            user_id=user_id,
+            symbol_strategies=symbol_strategies,
+            regime_to_weights=regime_to_weights,
+            regime_rules=regime_rules,
+            multi_strategy=multi_strategy,
+        )
+        if not ok:
+            return jsonify({"code": 0, "msg": "save failed", "data": None}), 500
+        reload_config()
+        return jsonify({"code": 1, "msg": "saved", "data": None})
+    except Exception as e:
+        logger.exception("[multi_strategy] put config error: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
+@multi_strategy_bp.route("/config/parse-yaml", methods=["POST"])
+@login_required
+def parse_yaml_config():
+    """解析上传的 YAML 文件，返回结构化数据，不写 DB。"""
+    try:
+        f = request.files.get("file")
+        if not f or not f.filename:
+            return jsonify({"code": 0, "msg": "file required"}), 400
+        import yaml
+        content = f.stream.read()
+        if isinstance(content, bytes):
+            content = content.decode("utf-8")
+        data = yaml.safe_load(content) or {}
+        result = {
+            "symbol_strategies": data.get("symbol_strategies", {}),
+            "regime_to_weights": (
+                data.get("multi_strategy", {}).get("regime_to_weights")
+                or data.get("regime_to_weights", {})
+            ),
+            "regime_rules": data.get("regime_rules", {}),
+            "multi_strategy": data.get("multi_strategy", {}),
+        }
+        return jsonify({"code": 1, "msg": "success", "data": result})
+    except yaml.YAMLError as e:
+        logger.warning("[multi_strategy] parse-yaml error: %s", e)
+        return jsonify({"code": 0, "msg": f"YAML parse error: {e}", "data": None}), 400
+    except Exception as e:
+        logger.exception("[multi_strategy] parse-yaml error: %s", e)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 

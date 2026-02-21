@@ -2999,7 +2999,9 @@ const locale = {
 
   'regime.viewTab': 'View',
   'regime.configTab': 'Config',
-  'regime.notEnabled': 'Multi-strategy not enabled. Enable it in the Config tab.',
+  'regime.notEnabled': 'Multi-strategy not enabled',
+  'regime.initHint': 'Enable and configure it in the Config tab first.',
+  'regime.goToConfig': 'Go to Config',
   'regime.currentRegime': 'Current Regime',
   'regime.effectiveWeights': 'Effective Weights',
   'regime.allocatedCapital': 'Allocated Capital',
@@ -3007,7 +3009,20 @@ const locale = {
   'regime.circuitBreakerTripped': 'Circuit Breaker Tripped',
   'regime.resetCircuitBreaker': 'Reset Circuit Breaker',
   'regime.resetSuccess': 'Circuit breaker reset successfully',
-  'regime.configHint': 'Config: Maintain symbol_strategies and regime_to_weights in DB or YAML.'
+  'regime.configHint': 'Config: Maintain symbol_strategies and regime_to_weights in DB or YAML.',
+  'regime.enableLabel': 'Enable Multi-Strategy',
+  'regime.yamlImport': 'YAML Import',
+  'regime.selectYaml': 'Select YAML File',
+  'regime.applyImport': 'Apply Import',
+  'regime.formConfig': 'Form Config',
+  'regime.regimeWeights': 'Regime Weights',
+  'regime.vixThresholds': 'VIX Thresholds',
+  'regime.symbolStrategies': 'Symbol Strategy Binding',
+  'regime.addSymbolPlaceholder': 'Enter symbol e.g. XAUUSD',
+  'regime.selectStrategies': 'Select strategies',
+  'regime.removeSymbol': 'Remove symbol',
+  'regime.saveSuccess': 'Saved successfully',
+  'regime.symbolExists': 'Symbol already exists'
 }
 
 export default {

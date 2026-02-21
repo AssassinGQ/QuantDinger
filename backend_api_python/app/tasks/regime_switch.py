@@ -32,32 +32,16 @@ _config_cache: Optional[Dict[str, Any]] = None
 
 
 def _load_config() -> Dict[str, Any]:
-    """加载配置：优先 DB（regime_config_service），fallback 到 YAML 文件。"""
+    """加载配置：仅从 DB 读取（regime_config_service）。YAML 仅用于创建时导入，运行时不读。"""
     global _config_cache
     if _config_cache is not None:
         return _config_cache
 
     try:
         from app.services.regime_config_service import get_regime_config_for_runtime
-        _config_cache = get_regime_config_for_runtime(user_id=None)
-        if _config_cache:
-            return _config_cache
+        _config_cache = get_regime_config_for_runtime(user_id=None) or {}
     except Exception as e:
-        logger.debug("[regime_switch] DB config not available: %s, fallback to YAML", e)
-
-    config_path = os.getenv(
-        "REGIME_SWITCH_CONFIG_PATH",
-        "/app/data/config/regime_switch.yaml",
-    )
-    try:
-        import yaml
-        with open(config_path, "r", encoding="utf-8") as f:
-            _config_cache = yaml.safe_load(f) or {}
-    except FileNotFoundError:
-        logger.warning("[regime_switch] config not found: %s, using defaults", config_path)
-        _config_cache = {}
-    except Exception as e:
-        logger.error("[regime_switch] failed to load config: %s", e)
+        logger.debug("[regime_switch] DB config not available: %s", e)
         _config_cache = {}
 
     return _config_cache
