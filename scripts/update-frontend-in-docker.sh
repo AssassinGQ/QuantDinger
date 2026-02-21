@@ -25,7 +25,8 @@ fi
 
 echo "Installing dependencies (if needed)..."
 cd "$VUE_DIR"
-npm install --legacy-peer-deps
+rm -rf node_modules
+npm install webpack@5.105.0 --save-dev
 
 echo "Building frontend..."
 npm run build
@@ -34,6 +35,7 @@ npm run build
 SRC="$VUE_DIR/dist"
 DST="/usr/share/nginx/html"
 echo "Syncing $SRC/ -> ${CONTAINER}:${DST}/"
+#docker cp -r "${CONTAINER}:${DST}/" "${CONTAINER}:${DST}-bakk/"
 docker cp "$SRC/." "${CONTAINER}:${DST}/"
 
 echo "Done. Frontend updated. Wait a few seconds for nginx to serve new files."
