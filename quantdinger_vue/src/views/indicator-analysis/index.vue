@@ -200,7 +200,7 @@
                       <div class="group-label" @click="toggleCustomGroup('ungrouped')">
                         <a-icon :type="isCustomGroupCollapsed('ungrouped') ? 'right' : 'down'" class="collapse-icon" />
                         <span>{{ $t('dashboard.indicator.section.ungrouped') }}</span>
-                        <a-tag size="small" color="default">{{ groupedCustomIndicators.ungrouped.length }}</a-tag>
+                        <a-tag size="small" color="blue">{{ groupedCustomIndicators.ungrouped.length }}</a-tag>
                       </div>
                       <div v-show="!isCustomGroupCollapsed('ungrouped')" class="group-indicators">
                         <div
@@ -387,7 +387,7 @@
                       <div class="group-label" @click="toggleCustomGroup('ungrouped')">
                         <a-icon :type="isCustomGroupCollapsed('ungrouped') ? 'right' : 'down'" class="collapse-icon" />
                         <span>{{ $t('dashboard.indicator.section.ungrouped') }}</span>
-                        <a-tag size="small" color="default">{{ groupedCustomIndicators.ungrouped.length }}</a-tag>
+                        <a-tag size="small" color="blue">{{ groupedCustomIndicators.ungrouped.length }}</a-tag>
                       </div>
                       <div v-show="!isCustomGroupCollapsed('ungrouped')" class="group-indicators">
                         <div
