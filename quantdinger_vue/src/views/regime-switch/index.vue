@@ -19,18 +19,20 @@
           <div class="summary-section">
             <a-card size="small" class="summary-card">
               <div class="summary-row">
-                <div class="summary-item">
+                <div class="summary-item summary-item-regime">
                   <span class="label">{{ $t('regime.currentRegime') }}</span>
-                  <template v-if="regimePerSymbol && Object.keys(regimePerSymbol).length">
-                    <a-tag
-                      v-for="(r, sym) in regimePerSymbol"
-                      :key="sym"
-                      :color="regimeTagColorFor(r)"
-                    >
-                      {{ sym }}: {{ r }}
-                    </a-tag>
-                  </template>
-                  <a-tag v-else :color="regimeTagColor">{{ summary.regime || '-' }}</a-tag>
+                  <div class="regime-tags-wrap">
+                    <template v-if="regimePerSymbol && Object.keys(regimePerSymbol).length">
+                      <a-tag
+                        v-for="(r, sym) in regimePerSymbol"
+                        :key="sym"
+                        :color="regimeTagColorFor(r)"
+                      >
+                        {{ sym }}: {{ r }}
+                      </a-tag>
+                    </template>
+                    <a-tag v-else :color="regimeTagColor">{{ summary.regime || '-' }}</a-tag>
+                  </div>
                 </div>
                 <div class="summary-item" v-if="summary.macro">
                   <span class="label">VIX</span>
@@ -79,7 +81,9 @@
             class="per-symbol-regime-card"
             :title="($t('regime.perSymbolRegimeTitle') || '各品种 Regime 策略')"
           >
+            <div class="table-desc">按市场选用指标（港股 VHSI、美股 VIX）→ 阈值判定 regime → 应用 regime_to_weights</div>
             <a-table
+              class="per-symbol-table"
               :columns="perSymbolRegimeColumns"
               :data-source="perSymbolRegimeTableData"
               :pagination="false"
@@ -383,20 +387,30 @@ export default {
     },
     perSymbolRegimeColumns () {
       return [
-        { title: '品种', dataIndex: 'symbol', key: 'symbol', width: 120 },
-        { title: 'Regime', dataIndex: 'regime', key: 'regime', width: 100, scopedSlots: { customRender: 'regime' } },
+        { title: '品种', dataIndex: 'symbol', key: 'symbol', width: 100 },
+        { title: '指标依据', dataIndex: 'indicatorBasis', key: 'indicatorBasis', width: 140 },
+        { title: 'Regime', dataIndex: 'regime', key: 'regime', width: 90, scopedSlots: { customRender: 'regime' } },
         { title: '生效权重', dataIndex: 'weights', key: 'weights' }
       ]
     },
     perSymbolRegimeTableData () {
       const rps = this.regimePerSymbol || {}
       const wps = this.weightsPerSymbol || {}
-      return Object.keys(rps).map(sym => ({
-        key: sym,
-        symbol: sym,
-        regime: rps[sym],
-        weights: this.formatWeights(wps[sym] || {})
-      }))
+      const ips = this.summary.indicator_per_symbol || {}
+      const macro = this.summary.macro || {}
+      return Object.keys(rps).map(sym => {
+        const ind = ips[sym] || 'vix'
+        const val = macro[ind] != null ? Number(macro[ind]).toFixed(1) : '-'
+        const indLabel = ind.toUpperCase()
+        const regime = rps[sym]
+        return {
+          key: sym,
+          symbol: sym,
+          indicatorBasis: `${indLabel} ${val} → ${regime}`,
+          regime,
+          weights: this.formatWeights(wps[sym] || {})
+        }
+      })
     }
   },
   watch: {
@@ -651,18 +665,37 @@ export default {
 .per-symbol-regime-card {
   margin-bottom: 16px;
 }
+.table-desc {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-bottom: 12px;
+}
 .summary-card .summary-row {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
   align-items: center;
+  max-width: 100%;
 }
 .summary-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  .label { color: #8c8c8c; font-size: 12px; }
+  flex-shrink: 0;
+  .label { color: #8c8c8c; font-size: 12px; flex-shrink: 0; }
   .weights-text { font-size: 12px; }
+}
+.summary-item-regime {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+.regime-tags-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 .symbol-groups {
   margin-top: 16px;

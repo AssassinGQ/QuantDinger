@@ -38,6 +38,22 @@ def _is_enabled(config=None):
     return cfg.get("multi_strategy", {}).get("enabled", False)
 
 
+def _get_indicator_per_symbol(config, allocator):
+    """symbol → 指标名 (vix/vhsi)，用于 per-market 时展示计算依据。"""
+    try:
+        from app.tasks.regime_switch import _get_symbol_to_market
+        symbol_strategies = getattr(allocator, "_symbol_strategies", None) or {}
+        indicator_per_market = (config.get("regime_rules") or {}).get("indicator_per_market") or {}
+        symbol_to_market = _get_symbol_to_market(symbol_strategies)
+        result = {}
+        for sym, market in symbol_to_market.items():
+            ind = indicator_per_market.get(market) or indicator_per_market.get("default") or "vix"
+            result[sym] = ind
+        return result
+    except Exception:
+        return {}
+
+
 # ── Regime history (DB persistence) ──────────────────────────────────────
 
 def _record_regime_event(event: dict) -> None:
@@ -125,11 +141,13 @@ def get_summary():
         regime_per_symbol = allocator.regime_per_symbol
         weights_per_symbol = allocator.effective_weights_per_symbol
         use_per_symbol = bool(regime_per_symbol)
+        indicator_per_symbol = _get_indicator_per_symbol(config, allocator) if use_per_symbol else None
 
         data = {
             "regime": allocator.current_regime,
             "regime_per_symbol": regime_per_symbol if use_per_symbol else None,
             "weights_per_symbol": weights_per_symbol if use_per_symbol else None,
+            "indicator_per_symbol": indicator_per_symbol,
             "macro": macro,
             "weights": {
                 "target": allocator.target_weights,
