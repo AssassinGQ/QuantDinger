@@ -36,46 +36,52 @@ def get_regime_config_for_runtime() -> Dict[str, Any]:
 
 
 def get_regime_config() -> Dict[str, Any]:
-    """从 DB 读取 regime 配置（全局单行）。"""
-    try:
-        with get_db_connection() as db:
-            cur = db.cursor()
-            cur.execute("""
-                SELECT id, symbol_strategies, regime_to_weights, regime_rules,
-                       regime_to_style, multi_strategy, updated_at
-                FROM qd_regime_config
-                ORDER BY updated_at DESC
-                LIMIT 1
-            """)
-            row = cur.fetchone()
-            cur.close()
+    """从 DB 读取 regime 配置（全局单行）。连接池满时重试 1 次。"""
+    import time
+    for attempt in range(2):
+        try:
+            with get_db_connection() as db:
+                cur = db.cursor()
+                cur.execute("""
+                    SELECT id, symbol_strategies, regime_to_weights, regime_rules,
+                           regime_to_style, multi_strategy, updated_at
+                    FROM qd_regime_config
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                """)
+                row = cur.fetchone()
+                cur.close()
 
-        if not row:
-            logger.info("[regime_config] get_regime_config: no row found")
-            return {}
-
-        def _parse_jsonb(val):
-            if val is None:
+            if not row:
+                logger.info("[regime_config] get_regime_config: no row found")
                 return {}
-            if isinstance(val, dict):
-                return val
-            import json
-            return json.loads(val) if isinstance(val, str) else {}
 
-        result = {
-            "symbol_strategies": _parse_jsonb(row.get("symbol_strategies")),
-            "regime_to_weights": _parse_jsonb(row.get("regime_to_weights")),
-            "regime_rules": _parse_jsonb(row.get("regime_rules")),
-            "regime_to_style": _parse_jsonb(row.get("regime_to_style")),
-            "multi_strategy": _parse_jsonb(row.get("multi_strategy")),
-        }
-        ms = result.get("multi_strategy") or {}
-        logger.info("[regime_config] get_regime_config: got row, multi_strategy.enabled=%s, symbol_count=%s",
-                    ms.get("enabled"), len(result.get("symbol_strategies") or {}))
-        return result
-    except Exception as e:
-        logger.error("[regime_config] get_regime_config failed: %s", e)
-        return {}
+            def _parse_jsonb(val):
+                if val is None:
+                    return {}
+                if isinstance(val, dict):
+                    return val
+                import json
+                return json.loads(val) if isinstance(val, str) else {}
+
+            result = {
+                "symbol_strategies": _parse_jsonb(row.get("symbol_strategies")),
+                "regime_to_weights": _parse_jsonb(row.get("regime_to_weights")),
+                "regime_rules": _parse_jsonb(row.get("regime_rules")),
+                "regime_to_style": _parse_jsonb(row.get("regime_to_style")),
+                "multi_strategy": _parse_jsonb(row.get("multi_strategy")),
+            }
+            ms = result.get("multi_strategy") or {}
+            logger.info("[regime_config] get_regime_config: got row, multi_strategy.enabled=%s, symbol_count=%s",
+                        ms.get("enabled"), len(result.get("symbol_strategies") or {}))
+            return result
+        except Exception as e:
+            if "pool" in str(e).lower() or "exhausted" in str(e).lower():
+                if attempt == 0:
+                    time.sleep(0.5)
+                    continue
+            logger.error("[regime_config] get_regime_config failed: %s", e)
+            return {}
 
 
 def _ensure_multi_strategy_structure(ms: Dict) -> Dict:

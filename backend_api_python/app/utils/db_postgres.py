@@ -97,9 +97,10 @@ def _get_connection_pool():
             raise RuntimeError(f"Invalid DATABASE_URL format: {db_url}")
         
         try:
+            maxconn = int(os.getenv('DB_POOL_MAXCONN', '40'))
             _connection_pool = pool.ThreadedConnectionPool(
                 minconn=2,
-                maxconn=20,
+                maxconn=maxconn,
                 host=params.get('host', 'localhost'),
                 port=params.get('port', 5432),
                 user=params.get('user', 'quantdinger'),
