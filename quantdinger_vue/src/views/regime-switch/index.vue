@@ -221,7 +221,7 @@
 </template>
 
 <script>
-import { getSummary, getAllocation, getConfig, getRegime, getWeights, putConfig, parseYamlConfig, resetCircuitBreaker } from '@/api/multiStrategy'
+import { getSummary, getAllocation, getConfig, putConfig, parseYamlConfig, resetCircuitBreaker } from '@/api/multiStrategy'
 import { getStrategyList } from '@/api/strategy'
 
 const DEFAULT_REGIME_TO_WEIGHTS = {
@@ -325,26 +325,7 @@ export default {
           this.summary = summaryRes.data.data
           this.multiStrategyEnabled = true
         } else if (summaryRes?.data?.msg === 'multi-strategy not enabled') {
-          const cfg = configRes?.data?.data
-          const msEnabled = cfg?.multi_strategy?.enabled
-          const hasSymbols = cfg?.symbol_strategies && Object.keys(cfg.symbol_strategies).length > 0
-          if (msEnabled && hasSymbols) {
-            this.multiStrategyEnabled = true
-            const [regimeRes, weightsRes] = await Promise.all([getRegime(), getWeights()])
-            const regimeData = regimeRes?.data?.code === 1 ? regimeRes.data.data : null
-            const weightsData = weightsRes?.data?.code === 1 ? weightsRes.data.data : null
-            this.summary = {
-              ...this.summary,
-              regime: regimeData?.regime || weightsData?.regime || 'normal',
-              macro: regimeData ? { vix: regimeData.vix, fear_greed: regimeData.fear_greed } : {},
-              weights: weightsData ? {
-                effective: weightsData.effective || {},
-                target: weightsData.target || {}
-              } : { effective: {}, target: {} }
-            }
-          } else {
-            this.multiStrategyEnabled = false
-          }
+          this.multiStrategyEnabled = false
         } else {
           this.multiStrategyEnabled = false
         }
