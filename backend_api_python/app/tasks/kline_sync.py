@@ -1,8 +1,7 @@
 """
 kline_sync 插件 — 委托 scheduler_service 现有 K 线同步逻辑。
 
-首版不自动注册 APScheduler job（避免与现有 /api/scheduler/start 管理的 kline job 双跑）。
-仅提供 JOB_ID / INTERVAL_MINUTES / run()，供手动测试或后续替换。
+应用启动时默认注册，按间隔执行（run_immediately=False，首次运行在 interval 后）。
 """
 
 from app.utils.logger import get_logger
@@ -11,7 +10,7 @@ logger = get_logger(__name__)
 
 JOB_ID = "task_kline_sync"
 INTERVAL_MINUTES = 400
-ENABLED = False  # 首版不自动注册
+ENABLED = True  # 默认启动，run_immediately=False
 
 
 def run() -> None:

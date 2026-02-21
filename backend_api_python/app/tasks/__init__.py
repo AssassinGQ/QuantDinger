@@ -33,6 +33,7 @@ def register_all_tasks() -> None:
             kline_sync.JOB_ID,
             kline_sync.run,
             kline_sync.INTERVAL_MINUTES,
+            run_immediately=False,
         )
         registered.append(kline_sync.JOB_ID)
     else:
