@@ -29,15 +29,47 @@ def get_strategy_service() -> StrategyService:
     return _strategy_service
 
 
+def _inject_regime_allocation(items: list) -> None:
+    """
+    When multi_strategy is enabled, inject allocated_capital (regime-weighted)
+    into each strategy that participates in regime. Strategies not in regime
+    keep initial_capital only.
+    """
+    try:
+        from app.tasks.regime_switch import _load_config
+        from app.services.portfolio_allocator import get_portfolio_allocator
+        config = _load_config()
+        if not config.get("multi_strategy", {}).get("enabled"):
+            return
+        allocator = get_portfolio_allocator()
+        allocation = allocator.strategy_allocation
+        frozen = allocator.frozen_strategies
+        for s in items:
+            sid = s.get("id")
+            if sid is not None:
+                sid = int(sid)
+            tr = s.get("trading_config") or {}
+            base_cap = tr.get("initial_capital") or s.get("initial_capital") or 1000
+            s["initial_capital"] = float(base_cap) if base_cap is not None else 1000
+            if sid is not None and sid in allocation:
+                s["allocated_capital"] = float(allocation[sid])
+                s["is_frozen"] = frozen.get(sid, False)
+    except Exception:
+        pass
+
+
 @strategy_bp.route('/strategies', methods=['GET'])
 @login_required
 def list_strategies():
     """
     List strategies for the current user.
+    When multi_strategy is enabled, injects allocated_capital (regime-weighted)
+    for strategies in regime config.
     """
     try:
         user_id = g.user_id
         items = get_strategy_service().list_strategies(user_id=user_id)
+        _inject_regime_allocation(items)
         return jsonify({'code': 1, 'msg': 'success', 'data': {'strategies': items}})
     except Exception as e:
         logger.error(f"list_strategies failed: {str(e)}")

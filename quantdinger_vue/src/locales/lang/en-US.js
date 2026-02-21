@@ -30,6 +30,7 @@ const locale = {
   'menu.dashboard.community': 'Indicator Market',
   'menu.dashboard.tradingAssistant': 'Trading Assistant',
   'menu.dashboard.portfolio': 'Portfolio',
+  'menu.dashboard.regimeSwitch': 'Regime Switch',
   'menu.dashboard.globalMarket': 'Global Market',
   'menu.settings': 'Settings',
   'menu.dashboard.aiTradingAssistant': 'AI Trading Assistant',
@@ -2994,7 +2995,19 @@ const locale = {
   'aiQuant.template.news': '📰 News Driven',
   'aiQuant.template.custom': '✏️ Custom',
   'aiQuant.hint.dataProvided': 'System auto-provides: real-time price, indicators (RSI/MACD/MA), recent news, macro data. AI analyzes these with your prompt to determine direction.',
-  'aiQuant.hint.liveWarning': 'Live mode will trade with REAL money! Make sure you have configured exchange API and understand the risks!'
+  'aiQuant.hint.liveWarning': 'Live mode will trade with REAL money! Make sure you have configured exchange API and understand the risks!',
+
+  'regime.viewTab': 'View',
+  'regime.configTab': 'Config',
+  'regime.notEnabled': 'Multi-strategy not enabled. Enable it in the Config tab.',
+  'regime.currentRegime': 'Current Regime',
+  'regime.effectiveWeights': 'Effective Weights',
+  'regime.allocatedCapital': 'Allocated Capital',
+  'regime.frozen': 'Frozen',
+  'regime.circuitBreakerTripped': 'Circuit Breaker Tripped',
+  'regime.resetCircuitBreaker': 'Reset Circuit Breaker',
+  'regime.resetSuccess': 'Circuit breaker reset successfully',
+  'regime.configHint': 'Config: Maintain symbol_strategies and regime_to_weights in DB or YAML.'
 }
 
 export default {

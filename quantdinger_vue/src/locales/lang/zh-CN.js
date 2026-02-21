@@ -30,6 +30,7 @@ const locale = {
   'menu.dashboard.aiQuant': 'AI 量化',
   'menu.dashboard.tradingAssistant': '交易助手',
   'menu.dashboard.portfolio': '资产监测',
+  'menu.dashboard.regimeSwitch': 'Regime 切换',
   'menu.dashboard.globalMarket': '全球金融',
   'menu.settings': '系统设置',
   'menu.dashboard.aiTradingAssistant': 'AI交易助手',
@@ -2803,7 +2804,19 @@ const locale = {
   'aiQuant.template.news': '📰 新闻驱动',
   'aiQuant.template.custom': '✏️ 自定义',
   'aiQuant.hint.dataProvided': '系统自动提供：实时价格、技术指标(RSI/MACD/均线)、最近新闻、宏观数据。AI将基于这些数据和您的提示词判断方向。',
-  'aiQuant.hint.liveWarning': '实盘模式将使用真实资金交易，请确保已配置交易所API并充分了解风险！'
+  'aiQuant.hint.liveWarning': '实盘模式将使用真实资金交易，请确保已配置交易所API并充分了解风险！',
+
+  'regime.viewTab': '查看',
+  'regime.configTab': '配置',
+  'regime.notEnabled': '多策略组合未启用，请先在配置 Tab 中启用。',
+  'regime.currentRegime': '当前 Regime',
+  'regime.effectiveWeights': '生效权重',
+  'regime.allocatedCapital': '分配资金',
+  'regime.frozen': '已冻结',
+  'regime.circuitBreakerTripped': '熔断触发',
+  'regime.resetCircuitBreaker': '解除熔断',
+  'regime.resetSuccess': '熔断已解除',
+  'regime.configHint': '配置功能：可在 DB 或 YAML 中维护 symbol_strategies、regime_to_weights。'
 }
 
 export default {

@@ -265,6 +265,7 @@ def get_config():
     try:
         config = _get_config()
         safe = {
+            "symbol_strategies": config.get("symbol_strategies", {}),
             "multi_strategy": config.get("multi_strategy", {}),
             "regime_rules": config.get("regime_rules", {}),
         }

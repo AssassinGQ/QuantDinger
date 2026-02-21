@@ -110,6 +110,9 @@
                               {{ item.displayInfo.indicatorName }}
                             </a-tag>
                           </template>
+                          <span v-if="getDisplayCapital(item)" class="capital-badge" :title="$t('regime.allocatedCapital')">
+                            <a-icon type="dollar" />{{ formatCapital(getDisplayCapital(item)) }}
+                          </span>
                           <span
                             class="status-label"
                             :class="[
@@ -183,6 +186,9 @@
                       <a-icon type="dollar" />
                       {{ item.trading_config.symbol }}
                     </span>
+                    <span v-if="getDisplayCapital(item)" class="capital-badge" :title="$t('regime.allocatedCapital')">
+                      <a-icon type="bank" />{{ formatCapital(getDisplayCapital(item)) }}
+                    </span>
                     <span
                       class="status-label"
                       :class="[
@@ -253,14 +259,13 @@
                 <div class="key-stats-grid">
                   <div
                     class="stat-card"
-                    v-if="selectedStrategy.initial_capital || (selectedStrategy.trading_config && selectedStrategy.trading_config.initial_capital)">
+                    v-if="getDisplayCapital(selectedStrategy)">
                     <div class="stat-icon investment">
                       <a-icon type="wallet" />
                     </div>
                     <div class="stat-content">
-                      <div class="stat-label">{{ $t('trading-assistant.detail.totalInvestment') }}</div>
-                      <div class="stat-value">${{ ((selectedStrategy.initial_capital ||
-                      selectedStrategy.trading_config?.initial_capital) || 0).toLocaleString() }}</div>
+                      <div class="stat-label">{{ selectedStrategy.allocated_capital != null ? $t('regime.allocatedCapital') : $t('trading-assistant.detail.totalInvestment') }}</div>
+                      <div class="stat-value">${{ formatCapital(getDisplayCapital(selectedStrategy), true) }}</div>
                     </div>
                   </div>
                   <div class="stat-card" v-if="currentEquity !== null">
@@ -3087,6 +3092,17 @@ export default {
     getStatusText (status) {
       return this.$t(`trading-assistant.status.${status}`) || status
     },
+    getDisplayCapital (item) {
+      if (!item) return null
+      const cap = item.allocated_capital ?? item.initial_capital ?? item.trading_config?.initial_capital
+      return cap != null && cap !== '' ? Number(cap) : null
+    },
+    formatCapital (val, fullFormat = false) {
+      if (val == null || val === '' || isNaN(Number(val))) return '-'
+      const n = Number(val)
+      if (fullFormat) return n.toLocaleString(undefined, { maximumFractionDigits: 0 })
+      return n >= 10000 ? `${(n / 10000).toFixed(1)}w` : n.toLocaleString(undefined, { maximumFractionDigits: 0 })
+    },
     getStrategyTypeText (type) {
       return this.$t(`trading-assistant.strategyType.${type}`) || type
     },
@@ -4084,6 +4100,13 @@ export default {
           }
 
           /deep/ .ant-list-item-meta-description {
+            .strategy-item-info, .strategy-name-wrapper {
+              .capital-badge {
+                font-size: 11px;
+                color: #52c41a;
+                margin-left: 6px;
+              }
+            }
             .strategy-item-info {
               display: flex !important;
               flex-direction: row;

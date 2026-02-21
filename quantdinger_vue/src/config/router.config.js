@@ -51,6 +51,13 @@ export const asyncRouterMap = [
         component: () => import('@/views/portfolio'),
         meta: { title: 'menu.dashboard.portfolio', keepAlive: true, icon: 'fund', permission: ['dashboard'] }
       },
+      // Regime 切换
+      {
+        path: '/regime-switch',
+        name: 'RegimeSwitch',
+        component: () => import('@/views/regime-switch'),
+        meta: { title: 'menu.dashboard.regimeSwitch', keepAlive: true, icon: 'swap', permission: ['dashboard'] }
+      },
       // 用户管理 (admin only)
       {
         path: '/user-manage',
