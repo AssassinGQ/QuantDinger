@@ -347,7 +347,6 @@ export default {
         } else if (summaryMsg === 'multi-strategy not enabled' && !configOk) {
           this.multiStrategyEnabled = false
         }
-        // config 已处理时，summary 的 not enabled 不覆盖 config 的启用状态
 
         if (allocRes?.code === 1 && allocRes?.data) {
           this.allocationData = allocRes.data

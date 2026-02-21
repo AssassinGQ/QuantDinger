@@ -16,17 +16,12 @@ def get_regime_config_for_runtime() -> Dict[str, Any]:
     """供 regime_switch 运行时读取的完整配置（YAML 结构兼容）。"""
     row = get_regime_config()
     if not row:
-        logger.info("[regime_config] get_regime_config_for_runtime: no row in DB")
         return {}
     ms = dict(row.get("multi_strategy") or {})
     if row.get("regime_to_weights"):
         ms["regime_to_weights"] = row["regime_to_weights"]
     if "enabled" not in ms and row.get("regime_to_weights"):
         ms["enabled"] = True
-        logger.info("[regime_config] get_regime_config_for_runtime: inferred enabled=True (had regime_to_weights, no explicit enabled)")
-    enabled_val = ms.get("enabled")
-    logger.info("[regime_config] get_regime_config_for_runtime: multi_strategy.enabled=%s, has_symbol_strategies=%s",
-                enabled_val, bool(row.get("symbol_strategies")))
     return {
         "symbol_strategies": row.get("symbol_strategies") or {},
         "regime_rules": row.get("regime_rules") or {},
@@ -53,7 +48,6 @@ def get_regime_config() -> Dict[str, Any]:
                 cur.close()
 
             if not row:
-                logger.info("[regime_config] get_regime_config: no row found")
                 return {}
 
             def _parse_jsonb(val):
@@ -71,9 +65,6 @@ def get_regime_config() -> Dict[str, Any]:
                 "regime_to_style": _parse_jsonb(row.get("regime_to_style")),
                 "multi_strategy": _parse_jsonb(row.get("multi_strategy")),
             }
-            ms = result.get("multi_strategy") or {}
-            logger.info("[regime_config] get_regime_config: got row, multi_strategy.enabled=%s, symbol_count=%s",
-                        ms.get("enabled"), len(result.get("symbol_strategies") or {}))
             return result
         except Exception as e:
             if "pool" in str(e).lower() or "exhausted" in str(e).lower():
@@ -115,9 +106,6 @@ def save_regime_config(
         multi_strategy = _ensure_multi_strategy_structure(multi_strategy)
         if regime_to_weights:
             multi_strategy["regime_to_weights"] = regime_to_weights
-
-        logger.info("[regime_config] save_regime_config: enabled=%s, symbol_count=%s",
-                    multi_strategy.get("enabled"), len(symbol_strategies))
 
         ss_json = json.dumps(symbol_strategies, ensure_ascii=False)
         rtw_json = json.dumps(regime_to_weights, ensure_ascii=False)
