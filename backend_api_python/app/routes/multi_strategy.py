@@ -110,12 +110,7 @@ def get_summary():
     """组合总览：regime、权重、各品种分配与持仓。"""
     try:
         config = _get_config()
-        enabled = _is_enabled(config)
-        logger.info("[multi_strategy] summary: config_keys=%s enabled=%s has_ms=%s",
-                    list(config.keys()) if config else [],
-                    enabled,
-                    bool(config.get("multi_strategy")))
-        if not enabled:
+        if not _is_enabled(config):
             return jsonify({"code": 1, "msg": "multi-strategy not enabled", "data": None})
 
         allocator = _get_allocator()

@@ -35,17 +35,13 @@ def _load_config() -> Dict[str, Any]:
     """加载配置：仅从 DB 读取（regime_config_service）。YAML 仅用于创建时导入，运行时不读。"""
     global _config_cache
     if _config_cache is not None:
-        logger.debug("[regime_switch] _load_config using cache, keys=%s", list(_config_cache.keys()))
         return _config_cache
 
     try:
         from app.services.regime_config_service import get_regime_config_for_runtime
         _config_cache = get_regime_config_for_runtime(user_id=None) or {}
-        logger.info("[regime_switch] _load_config from DB: keys=%s enabled=%s",
-                    list(_config_cache.keys()),
-                    _config_cache.get("multi_strategy", {}).get("enabled"))
     except Exception as e:
-        logger.warning("[regime_switch] _load_config failed: %s", e, exc_info=True)
+        logger.debug("[regime_switch] DB config not available: %s", e)
         _config_cache = {}
 
     return _config_cache
