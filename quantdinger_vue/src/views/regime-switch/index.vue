@@ -324,7 +324,7 @@ export default {
         const summaryOk = summaryRes?.data?.code === 1 && summaryRes?.data?.data
         const summaryMsg = summaryRes?.data?.msg
         const configOk = configRes?.data?.code === 1 && configRes?.data?.data
-        const configEnabled = Boolean((configRes?.data?.data?.multi_strategy || {}).enabled)
+        const configEnabled = (configRes?.data?.data?.multi_strategy || {}).enabled === true
         console.log('[regime] loadData summary:', { code: summaryRes?.data?.code, hasData: !!summaryRes?.data?.data, msg: summaryMsg })
         console.log('[regime] loadData config:', { code: configRes?.data?.code, hasData: configOk, enabled: configEnabled })
         if (summaryOk) {
@@ -345,7 +345,7 @@ export default {
           this.expandedSymbols = Object.keys(this.configData.symbol_strategies || {})
           if (this.activeTabKey === 'config') this.loadConfigToForm()
           // 以 config 为准：配置里已启用则以启用展示，避免后端多 worker 缓存不一致
-          if (Boolean((this.configData.multi_strategy || {}).enabled)) {
+          if ((this.configData.multi_strategy || {}).enabled === true) {
             this.multiStrategyEnabled = true
           }
         }
