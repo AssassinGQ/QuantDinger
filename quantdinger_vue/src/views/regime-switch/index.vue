@@ -329,27 +329,28 @@ export default {
         const summaryOk = summaryRes?.code === 1 && summaryRes?.data
         const summaryMsg = summaryRes?.msg
         const configOk = configRes?.code === 1 && configRes?.data
+        const configData = configOk ? configRes.data : null
+
+        // 以 config 为首要依据：先处理 config，enabled 状态以 config 为准
+        if (configOk && configData) {
+          this.configData = configData
+          this.expandedSymbols = Object.keys(this.configData.symbol_strategies || {})
+          if (this.activeTabKey === 'config') this.loadConfigToForm()
+          const enabled = (this.configData.multi_strategy || {}).enabled
+          this.multiStrategyEnabled = enabled === true || enabled === 'true' || enabled === 1
+        }
+
+        // summary 成功时也设为启用；summary 失败不影响已由 config 确定的启用状态
         if (summaryOk) {
           this.summary = summaryRes.data
           this.multiStrategyEnabled = true
-        } else if (summaryMsg === 'multi-strategy not enabled') {
-          this.multiStrategyEnabled = false
-        } else {
+        } else if (summaryMsg === 'multi-strategy not enabled' && !configOk) {
           this.multiStrategyEnabled = false
         }
+        // config 已处理时，summary 的 not enabled 不覆盖 config 的启用状态
 
         if (allocRes?.code === 1 && allocRes?.data) {
           this.allocationData = allocRes.data
-        }
-
-        if (configOk) {
-          this.configData = configRes.data
-          this.expandedSymbols = Object.keys(this.configData.symbol_strategies || {})
-          if (this.activeTabKey === 'config') this.loadConfigToForm()
-          // 以 config 为准：配置里已启用则以启用展示
-          if ((this.configData.multi_strategy || {}).enabled === true) {
-            this.multiStrategyEnabled = true
-          }
         }
 
         if (strategiesRes?.code === 1 && strategiesRes?.data?.strategies) {
