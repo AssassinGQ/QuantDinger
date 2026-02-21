@@ -17,6 +17,17 @@
     >
       <div class="editor-content">
         <a-row :gutter="16" class="editor-layout" :class="{ 'mobile-layout': isMobile }">
+          <!-- 名称 -->
+          <a-col :span="24" class="name-field-col">
+            <a-form-item :label="$t('dashboard.indicator.editor.name')">
+              <a-input
+                v-model="indicatorName"
+                :placeholder="$t('dashboard.indicator.editor.namePlaceholder')"
+                allow-clear
+                style="max-width: 400px;"
+              />
+            </a-form-item>
+          </a-col>
           <!-- 分组 -->
           <a-col :span="24" class="group-field-col">
             <a-form-item :label="$t('dashboard.indicator.editor.group')">
@@ -152,6 +163,7 @@ export default {
       aiGenerating: false,
       verifying: false,
       isMobile: false,
+      indicatorName: '',
       indicatorGroup: 'ungrouped'
     }
   },
@@ -511,6 +523,7 @@ export default {
     },
     // 初始化弹窗数据（编辑/新建）
     initFormData () {
+      this.indicatorName = (this.indicator && this.indicator.name) ? String(this.indicator.name).trim() : ''
       if (!this.visible) {
         return
       }
@@ -606,11 +619,12 @@ export default {
       }
 
       this.saving = true
-      // 触发保存事件：name/description 等字段已移除，后端会从代码中解析
       this.$emit('save', {
         id: this.indicator ? this.indicator.id : 0,
         code: finalCode,
         userid: this.userId,
+        name: this.indicatorName ? String(this.indicatorName).trim() : '',
+        description: (this.indicator && this.indicator.description) ? String(this.indicator.description).trim() : '',
         group: this.indicatorGroup ? String(this.indicatorGroup).trim() || 'ungrouped' : 'ungrouped'
       })
     },

@@ -1843,6 +1843,8 @@ export default {
             userid: userId.value,
             id: data.id || 0,
             code: data.code,
+            name: data.name || '',
+            description: data.description || '',
             group: data.group || 'ungrouped'
           }
         })
