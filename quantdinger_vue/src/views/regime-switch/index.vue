@@ -329,7 +329,6 @@ export default {
         const summaryOk = summaryRes?.code === 1 && summaryRes?.data
         const summaryMsg = summaryRes?.msg
         const configOk = configRes?.code === 1 && configRes?.data
-        const configEnabled = (configRes?.data?.multi_strategy || {}).enabled === true
         if (summaryOk) {
           this.summary = summaryRes.data
           this.multiStrategyEnabled = true
