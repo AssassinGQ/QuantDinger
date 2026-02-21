@@ -124,7 +124,9 @@
                   <template slot="conservative" slot-scope="text, record">
                     <a-input-number
                       :value="record.conservative"
-                      :min="0" :max="1" :step="0.1"
+                      :min="0"
+                      :max="1"
+                      :step="0.1"
                       style="width: 80px"
                       @change="v => setWeight(record.regime, 'conservative', v)"
                     />
@@ -132,7 +134,9 @@
                   <template slot="balanced" slot-scope="text, record">
                     <a-input-number
                       :value="record.balanced"
-                      :min="0" :max="1" :step="0.1"
+                      :min="0"
+                      :max="1"
+                      :step="0.1"
                       style="width: 80px"
                       @change="v => setWeight(record.regime, 'balanced', v)"
                     />
@@ -140,7 +144,9 @@
                   <template slot="aggressive" slot-scope="text, record">
                     <a-input-number
                       :value="record.aggressive"
-                      :min="0" :max="1" :step="0.1"
+                      :min="0"
+                      :max="1"
+                      :step="0.1"
                       style="width: 80px"
                       @change="v => setWeight(record.regime, 'aggressive', v)"
                     />
