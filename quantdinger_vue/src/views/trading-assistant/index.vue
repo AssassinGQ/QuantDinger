@@ -1723,7 +1723,7 @@ export default {
       }
       return this.groupedByStrategy
     },
-    // 按策略分组（原有逻辑）
+    // 按策略分组（原有逻辑）：仅 strategy_group_id 非空的策略进组，其余进 ungrouped
     groupedByStrategy () {
       const groups = {}
       const ungrouped = []
@@ -1736,7 +1736,6 @@ export default {
               id: groupId,
               baseName: s.group_base_name || s.strategy_name.split('-')[0],
               strategies: [],
-              // 统计信息
               runningCount: 0,
               stoppedCount: 0
             }
@@ -1752,7 +1751,6 @@ export default {
         }
       }
 
-      // 转换为数组，按创建时间排序
       const groupList = Object.values(groups).sort((a, b) => {
         const aTime = Math.max(...a.strategies.map(s => s.created_at || 0))
         const bTime = Math.max(...b.strategies.map(s => s.created_at || 0))
