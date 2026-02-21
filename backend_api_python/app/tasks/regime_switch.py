@@ -40,6 +40,8 @@ def _load_config() -> Dict[str, Any]:
     try:
         from app.services.regime_config_service import get_regime_config_for_runtime
         _config_cache = get_regime_config_for_runtime(user_id=None) or {}
+        logger.info("[regime_switch] _load_config: cached, enabled=%s",
+                    _config_cache.get("multi_strategy", {}).get("enabled"))
     except Exception as e:
         logger.debug("[regime_switch] DB config not available: %s", e)
         _config_cache = {}

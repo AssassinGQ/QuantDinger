@@ -35,7 +35,10 @@ def _get_config():
 
 def _is_enabled(config=None):
     cfg = config or _get_config()
-    return cfg.get("multi_strategy", {}).get("enabled", False)
+    enabled = cfg.get("multi_strategy", {}).get("enabled", False)
+    logger.info("[multi_strategy] _is_enabled: enabled=%s, has_multi_strategy=%s",
+                enabled, bool(cfg.get("multi_strategy")))
+    return enabled
 
 
 # ── Regime history (DB persistence) ──────────────────────────────────────
@@ -111,6 +114,8 @@ def get_summary():
     try:
         config = _get_config()
         if not _is_enabled(config):
+            logger.info("[multi_strategy] get_summary: rejecting (multi-strategy not enabled), config_keys=%s",
+                        list(config.keys()) if config else "empty")
             return jsonify({"code": 1, "msg": "multi-strategy not enabled", "data": None})
 
         allocator = _get_allocator()
@@ -292,6 +297,8 @@ def put_config():
         from app.services.regime_config_service import save_regime_config
         from app.tasks.regime_switch import reload_config
         user_id = getattr(g, "user_id", None)
+        logger.info("[multi_strategy] put_config: user_id=%s, multi_strategy.enabled=%s",
+                    user_id, (multi_strategy or {}).get("enabled"))
         ok = save_regime_config(
             user_id=user_id,
             symbol_strategies=symbol_strategies,
@@ -300,8 +307,10 @@ def put_config():
             multi_strategy=multi_strategy,
         )
         if not ok:
+            logger.warning("[multi_strategy] put_config: save_regime_config returned False")
             return jsonify({"code": 0, "msg": "save failed", "data": None}), 500
         reload_config()
+        logger.info("[multi_strategy] put_config: saved OK, config reloaded")
         return jsonify({"code": 1, "msg": "saved", "data": None})
     except Exception as e:
         logger.exception("[multi_strategy] put config error: %s", e)
