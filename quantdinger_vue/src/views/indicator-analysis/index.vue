@@ -152,67 +152,90 @@
                     </a-button>
                   </div>
                   <div v-show="!customSectionCollapsed" class="section-content custom-scrollbar">
-                    <div
-                      v-for="indicator in customIndicators"
-                      :key="'custom-' + indicator.id"
-                      :class="['indicator-card', { 'indicator-active': isIndicatorActive('custom-' + indicator.id) }]"
-                      @click="toggleIndicator(indicator, 'custom')"
-                    >
-                      <div class="card-content">
-                        <div class="card-header">
-                          <span class="card-name">{{ indicator.name }}</span>
-                          <div class="card-actions">
-                            <!-- 编辑图标 -->
-                            <a-tooltip :title="$t('dashboard.indicator.action.edit')">
-                              <a-icon
-                                type="edit"
-                                class="action-icon edit-icon"
-                                @click.stop="handleEditIndicator(indicator)"
-                              />
-                            </a-tooltip>
-                            <!-- 删除图标 -->
-                            <a-tooltip :title="$t('dashboard.indicator.action.delete')">
-                              <a-icon
-                                type="delete"
-                                class="action-icon delete-icon"
-                                @click.stop="handleDeleteIndicator(indicator)"
-                              />
-                            </a-tooltip>
-                            <!-- 启动开关 -->
-                            <a-tooltip :title="isIndicatorActive('custom-' + indicator.id) ? $t('dashboard.indicator.action.stop') : $t('dashboard.indicator.action.start')">
-                              <a-icon
-                                :type="isIndicatorActive('custom-' + indicator.id) ? 'pause-circle' : 'play-circle'"
-                                :class="['action-icon', 'toggle-icon', { active: isIndicatorActive('custom-' + indicator.id) }]"
-                                @click.stop="toggleIndicator(indicator, 'custom')"
-                              />
-                            </a-tooltip>
-                            <!-- 回测按钮 -->
-                            <a-tooltip :title="$t('dashboard.indicator.backtest.title')">
-                              <a-icon
-                                type="experiment"
-                                class="action-icon backtest-icon"
-                                @click.stop="handleOpenBacktest(indicator)"
-                              />
-                            </a-tooltip>
-                            <!-- 回测记录 -->
-                            <a-tooltip :title="$t('dashboard.indicator.backtest.historyTitle')">
-                              <a-icon
-                                type="clock-circle"
-                                class="action-icon backtest-history-icon"
-                                @click.stop="handleOpenBacktestHistory(indicator)"
-                              />
-                            </a-tooltip>
-                            <!-- 发布到社区 -->
-                            <a-tooltip :title="indicator.publish_to_community ? $t('dashboard.indicator.action.unpublish') : $t('dashboard.indicator.action.publish')">
-                              <a-icon
-                                :type="indicator.publish_to_community ? 'cloud' : 'cloud-upload'"
-                                :class="['action-icon', 'publish-icon', { published: indicator.publish_to_community }]"
-                                @click.stop="handlePublishIndicator(indicator)"
-                              />
-                            </a-tooltip>
+                    <!-- 按分组显示 -->
+                    <div v-for="group in groupedCustomIndicators.groups" :key="'group-' + group.id" class="indicator-group-block">
+                      <div class="group-label" @click="toggleCustomGroup(group.id)">
+                        <a-icon :type="isCustomGroupCollapsed(group.id) ? 'right' : 'down'" class="collapse-icon" />
+                        <span>{{ group.baseName }}</span>
+                        <a-tag size="small" color="blue">{{ group.indicators.length }}</a-tag>
+                      </div>
+                      <div v-show="!isCustomGroupCollapsed(group.id)" class="group-indicators">
+                        <div
+                          v-for="indicator in group.indicators"
+                          :key="'custom-' + indicator.id"
+                          :class="['indicator-card', { 'indicator-active': isIndicatorActive('custom-' + indicator.id) }]"
+                          @click="toggleIndicator(indicator, 'custom')"
+                        >
+                          <div class="card-content">
+                            <div class="card-header">
+                              <span class="card-name">{{ indicator.name }}</span>
+                              <div class="card-actions">
+                                <a-tooltip :title="$t('dashboard.indicator.action.edit')">
+                                  <a-icon type="edit" class="action-icon edit-icon" @click.stop="handleEditIndicator(indicator)" />
+                                </a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.action.delete')">
+                                  <a-icon type="delete" class="action-icon delete-icon" @click.stop="handleDeleteIndicator(indicator)" />
+                                </a-tooltip>
+                                <a-tooltip :title="isIndicatorActive('custom-' + indicator.id) ? $t('dashboard.indicator.action.stop') : $t('dashboard.indicator.action.start')">
+                                  <a-icon :type="isIndicatorActive('custom-' + indicator.id) ? 'pause-circle' : 'play-circle'" :class="['action-icon', 'toggle-icon', { active: isIndicatorActive('custom-' + indicator.id) }]" @click.stop="toggleIndicator(indicator, 'custom')" />
+                                </a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.backtest.title')">
+                                  <a-icon type="experiment" class="action-icon backtest-icon" @click.stop="handleOpenBacktest(indicator)" />
+                                </a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.backtest.historyTitle')">
+                                  <a-icon type="clock-circle" class="action-icon backtest-history-icon" @click.stop="handleOpenBacktestHistory(indicator)" />
+                                </a-tooltip>
+                                <a-tooltip :title="indicator.publish_to_community ? $t('dashboard.indicator.action.unpublish') : $t('dashboard.indicator.action.publish')">
+                                  <a-icon :type="indicator.publish_to_community ? 'cloud' : 'cloud-upload'" :class="['action-icon', 'publish-icon', { published: indicator.publish_to_community }]" @click.stop="handlePublishIndicator(indicator)" />
+                                </a-tooltip>
+                              </div>
+                            </div>
+                            <span class="card-desc">{{ indicator.description || '' }}</span>
                           </div>
                         </div>
-                        <span class="card-desc">{{ indicator.description || '' }}</span>
+                      </div>
+                    </div>
+                    <!-- 未分组 -->
+                    <div v-if="groupedCustomIndicators.ungrouped.length > 0" class="indicator-group-block">
+                      <div class="group-label" @click="toggleCustomGroup('ungrouped')">
+                        <a-icon :type="isCustomGroupCollapsed('ungrouped') ? 'right' : 'down'" class="collapse-icon" />
+                        <span>{{ $t('dashboard.indicator.section.ungrouped') }}</span>
+                        <a-tag size="small" color="default">{{ groupedCustomIndicators.ungrouped.length }}</a-tag>
+                      </div>
+                      <div v-show="!isCustomGroupCollapsed('ungrouped')" class="group-indicators">
+                        <div
+                          v-for="indicator in groupedCustomIndicators.ungrouped"
+                          :key="'custom-' + indicator.id"
+                          :class="['indicator-card', { 'indicator-active': isIndicatorActive('custom-' + indicator.id) }]"
+                          @click="toggleIndicator(indicator, 'custom')"
+                        >
+                          <div class="card-content">
+                            <div class="card-header">
+                              <span class="card-name">{{ indicator.name }}</span>
+                              <div class="card-actions">
+                                <a-tooltip :title="$t('dashboard.indicator.action.edit')">
+                                  <a-icon type="edit" class="action-icon edit-icon" @click.stop="handleEditIndicator(indicator)" />
+                                </a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.action.delete')">
+                                  <a-icon type="delete" class="action-icon delete-icon" @click.stop="handleDeleteIndicator(indicator)" />
+                                </a-tooltip>
+                                <a-tooltip :title="isIndicatorActive('custom-' + indicator.id) ? $t('dashboard.indicator.action.stop') : $t('dashboard.indicator.action.start')">
+                                  <a-icon :type="isIndicatorActive('custom-' + indicator.id) ? 'pause-circle' : 'play-circle'" :class="['action-icon', 'toggle-icon', { active: isIndicatorActive('custom-' + indicator.id) }]" @click.stop="toggleIndicator(indicator, 'custom')" />
+                                </a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.backtest.title')">
+                                  <a-icon type="experiment" class="action-icon backtest-icon" @click.stop="handleOpenBacktest(indicator)" />
+                                </a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.backtest.historyTitle')">
+                                  <a-icon type="clock-circle" class="action-icon backtest-history-icon" @click.stop="handleOpenBacktestHistory(indicator)" />
+                                </a-tooltip>
+                                <a-tooltip :title="indicator.publish_to_community ? $t('dashboard.indicator.action.unpublish') : $t('dashboard.indicator.action.publish')">
+                                  <a-icon :type="indicator.publish_to_community ? 'cloud' : 'cloud-upload'" :class="['action-icon', 'publish-icon', { published: indicator.publish_to_community }]" @click.stop="handlePublishIndicator(indicator)" />
+                                </a-tooltip>
+                              </div>
+                            </div>
+                            <span class="card-desc">{{ indicator.description || '' }}</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <!-- 空状态 -->
@@ -286,12 +309,20 @@
               <template v-else>
                 <div class="mobile-tab-content">
                   <div class="section-content custom-scrollbar">
-                    <div
-                      v-for="indicator in customIndicators"
-                      :key="'custom-' + indicator.id"
-                      :class="['indicator-card', { 'indicator-active': isIndicatorActive('custom-' + indicator.id) }]"
-                      @click="toggleIndicator(indicator, 'custom')"
-                    >
+                    <template v-for="group in groupedCustomIndicators.groups">
+                      <div :key="'mg-' + group.id" class="indicator-group-block">
+                        <div class="group-label" @click="toggleCustomGroup(group.id)">
+                          <a-icon :type="isCustomGroupCollapsed(group.id) ? 'right' : 'down'" class="collapse-icon" />
+                          <span>{{ group.baseName }}</span>
+                          <a-tag size="small" color="blue">{{ group.indicators.length }}</a-tag>
+                        </div>
+                        <div v-show="!isCustomGroupCollapsed(group.id)" class="group-indicators">
+                          <div
+                            v-for="indicator in group.indicators"
+                            :key="'custom-' + indicator.id"
+                            :class="['indicator-card', { 'indicator-active': isIndicatorActive('custom-' + indicator.id) }]"
+                            @click="toggleIndicator(indicator, 'custom')"
+                          >
                       <div class="card-content">
                         <div class="card-header">
                           <span class="card-name">{{ indicator.name }}</span>
@@ -347,6 +378,39 @@
                           </div>
                         </div>
                         <span class="card-desc">{{ indicator.description || '' }}</span>
+                      </div>
+                        </div>
+                      </div>
+                    </div>
+                    </template>
+                    <div v-if="groupedCustomIndicators.ungrouped.length > 0" class="indicator-group-block">
+                      <div class="group-label" @click="toggleCustomGroup('ungrouped')">
+                        <a-icon :type="isCustomGroupCollapsed('ungrouped') ? 'right' : 'down'" class="collapse-icon" />
+                        <span>{{ $t('dashboard.indicator.section.ungrouped') }}</span>
+                        <a-tag size="small" color="default">{{ groupedCustomIndicators.ungrouped.length }}</a-tag>
+                      </div>
+                      <div v-show="!isCustomGroupCollapsed('ungrouped')" class="group-indicators">
+                        <div
+                          v-for="indicator in groupedCustomIndicators.ungrouped"
+                          :key="'custom-' + indicator.id"
+                          :class="['indicator-card', { 'indicator-active': isIndicatorActive('custom-' + indicator.id) }]"
+                          @click="toggleIndicator(indicator, 'custom')"
+                        >
+                          <div class="card-content">
+                            <div class="card-header">
+                              <span class="card-name">{{ indicator.name }}</span>
+                              <div class="card-actions">
+                                <a-tooltip :title="$t('dashboard.indicator.action.edit')"><a-icon type="edit" class="action-icon edit-icon" @click.stop="handleEditIndicator(indicator)" /></a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.action.delete')"><a-icon type="delete" class="action-icon delete-icon" @click.stop="handleDeleteIndicator(indicator)" /></a-tooltip>
+                                <a-tooltip :title="isIndicatorActive('custom-' + indicator.id) ? $t('dashboard.indicator.action.stop') : $t('dashboard.indicator.action.start')"><a-icon :type="isIndicatorActive('custom-' + indicator.id) ? 'pause-circle' : 'play-circle'" :class="['action-icon', 'toggle-icon', { active: isIndicatorActive('custom-' + indicator.id) }]" @click.stop="toggleIndicator(indicator, 'custom')" /></a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.backtest.title')"><a-icon type="experiment" class="action-icon backtest-icon" @click.stop="handleOpenBacktest(indicator)" /></a-tooltip>
+                                <a-tooltip :title="$t('dashboard.indicator.backtest.historyTitle')"><a-icon type="clock-circle" class="action-icon backtest-history-icon" @click.stop="handleOpenBacktestHistory(indicator)" /></a-tooltip>
+                                <a-tooltip :title="indicator.publish_to_community ? $t('dashboard.indicator.action.unpublish') : $t('dashboard.indicator.action.publish')"><a-icon :type="indicator.publish_to_community ? 'cloud' : 'cloud-upload'" :class="['action-icon', 'publish-icon', { published: indicator.publish_to_community }]" @click.stop="handlePublishIndicator(indicator)" /></a-tooltip>
+                              </div>
+                            </div>
+                            <span class="card-desc">{{ indicator.description || '' }}</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <!-- 空状态 -->
@@ -739,6 +803,23 @@ export default {
     const customIndicators = ref([]) // 我创建的指标（is_buy=0）
     const purchasedIndicators = ref([]) // 我购买的指标（is_buy=1）
     const loadingIndicators = ref(false)
+    // 按 indicator_group 分组的自定义指标
+    const groupedCustomIndicators = computed(() => {
+      const items = customIndicators.value || []
+      const groups = {}
+      const ungrouped = []
+      for (const item of items) {
+        const g = (item.indicator_group || item.group || '')?.trim() || 'ungrouped'
+        if (g === 'ungrouped') {
+          ungrouped.push(item)
+        } else {
+          if (!groups[g]) groups[g] = { id: g, baseName: g, indicators: [] }
+          groups[g].indicators.push(item)
+        }
+      }
+      const groupList = Object.values(groups).sort((a, b) => a.baseName.localeCompare(b.baseName))
+      return { groups: groupList, ungrouped }
+    })
 
     // 指标参数配置弹窗
     const showParamsModal = ref(false)
@@ -753,6 +834,7 @@ export default {
     // 折叠状态
     const customSectionCollapsed = ref(false) // 我创建的指标区域是否折叠
     const purchasedSectionCollapsed = ref(false) // 我购买的指标区域是否折叠
+    const customGroupCollapsed = ref({}) // 各分组的折叠状态 { groupId: bool }
 
     // 指标编辑器相关
     const showIndicatorEditor = ref(false)
@@ -1594,6 +1676,12 @@ export default {
     const toggleCustomSection = () => {
       customSectionCollapsed.value = !customSectionCollapsed.value
     }
+    // 切换分组折叠状态
+    const toggleCustomGroup = (groupId) => {
+      const prev = customGroupCollapsed.value[groupId]
+      customGroupCollapsed.value = { ...customGroupCollapsed.value, [groupId]: !prev }
+    }
+    const isCustomGroupCollapsed = (groupId) => !!customGroupCollapsed.value[groupId]
 
     // 删除指标
     const handleDeleteIndicator = (indicator) => {
@@ -1754,7 +1842,8 @@ export default {
           data: {
             userid: userId.value,
             id: data.id || 0,
-            code: data.code
+            code: data.code,
+            group: data.group || 'ungrouped'
           }
         })
 
@@ -2015,8 +2104,12 @@ getMarketColor,
       handleEditIndicator,
       handleDeleteIndicator,
       toggleCustomSection,
+      toggleCustomGroup,
+      isCustomGroupCollapsed,
       customSectionCollapsed,
+      customGroupCollapsed,
       purchasedSectionCollapsed,
+      groupedCustomIndicators,
       handlePriceChange,
       handleChartRetry,
       handleIndicatorToggle,
@@ -2353,6 +2446,31 @@ getMarketColor,
 
   &.section-empty {
     min-height: 200px;
+  }
+}
+
+.indicator-group-block {
+  margin-bottom: 8px;
+
+  .group-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #666;
+
+    .collapse-icon {
+      font-size: 12px;
+    }
+  }
+
+  .group-indicators {
+    padding-left: 8px;
+    margin-top: 4px;
   }
 }
 

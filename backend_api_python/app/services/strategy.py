@@ -498,8 +498,10 @@ class StrategyService:
                 tr = self._safe_json_loads(r.get('trading_config'), {})
                 ai = self._safe_json_loads(r.get('ai_model_config'), {})
                 notify = self._safe_json_loads(r.get('notification_config'), {})
+                display_group = r.get('display_group') or 'ungrouped'
                 out.append({
                     **r,
+                    'display_group': display_group,
                     'exchange_config': ex,
                     'indicator_config': ind,
                     'trading_config': tr,
@@ -524,6 +526,7 @@ class StrategyService:
                 cur.close()
             if not r:
                 return None
+            r['display_group'] = r.get('display_group') or 'ungrouped'
             r['exchange_config'] = self._safe_json_loads(r.get('exchange_config'), {})
             r['indicator_config'] = self._safe_json_loads(r.get('indicator_config'), {})
             r['trading_config'] = self._safe_json_loads(r.get('trading_config'), {})
@@ -552,6 +555,7 @@ class StrategyService:
         # Strategy group fields
         strategy_group_id = payload.get('strategy_group_id') or ''
         group_base_name = payload.get('group_base_name') or ''
+        display_group = (payload.get('display_group') or '').strip() or 'ungrouped'
 
         # Denormalized fields for quick list rendering
         symbol = (trading_config or {}).get('symbol')
@@ -583,9 +587,9 @@ class StrategyService:
                 (user_id, strategy_name, strategy_type, market_category, execution_mode, notification_config,
                  status, symbol, timeframe, initial_capital, leverage, market_type,
                  exchange_config, indicator_config, trading_config, ai_model_config, decide_interval,
-                 strategy_group_id, group_base_name,
+                 strategy_group_id, group_base_name, display_group,
                  created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                 """,
                 (
                     user_id,
@@ -606,7 +610,8 @@ class StrategyService:
                     self._dump_json_or_encrypt(payload.get('ai_model_config') or {}, encrypt=False),
                     int(payload.get('decide_interval') or 300),
                     strategy_group_id,
-                    group_base_name
+                    group_base_name,
+                    display_group
                 )
             )
             new_id = cur.lastrowid
@@ -643,11 +648,13 @@ class StrategyService:
         created_ids = []
         failed_symbols = []
         
+        display_group = (payload.get('display_group') or '').strip() or 'ungrouped'
         for symbol in symbols:
             try:
                 # Create individual strategy for each symbol
                 single_payload = dict(payload)
-                
+                single_payload['display_group'] = display_group
+
                 # Parse symbol (may be "Market:SYMBOL" format)
                 if isinstance(symbol, str) and ':' in symbol:
                     parts = symbol.split(':', 1)

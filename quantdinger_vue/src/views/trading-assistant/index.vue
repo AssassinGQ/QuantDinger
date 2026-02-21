@@ -30,6 +30,10 @@
                 <a-icon type="stock" />
                 {{ $t('trading-assistant.groupBySymbol') }}
               </a-radio-button>
+              <a-radio-button value="custom">
+                <a-icon type="appstore" />
+                {{ $t('trading-assistant.groupByCustom') }}
+              </a-radio-button>
             </a-radio-group>
           </div>
 
@@ -42,10 +46,10 @@
                 <div class="strategy-group-header" @click="toggleGroup(group.id)">
                   <div class="group-header-left">
                     <a-icon :type="collapsedGroups[group.id] ? 'right' : 'down'" class="collapse-icon" />
-                    <a-icon :type="groupByMode === 'symbol' ? 'stock' : 'folder'" class="group-icon" />
+                    <a-icon :type="groupByMode === 'symbol' ? 'stock' : (groupByMode === 'custom' ? 'appstore' : 'folder')" class="group-icon" />
                     <span class="group-name">{{ group.baseName }}</span>
                     <a-tag size="small" color="blue">{{ group.strategies.length }} {{
-                      groupByMode === 'symbol' ? $t('trading-assistant.strategyCount') : $t('trading-assistant.symbolCount') }}</a-tag>
+                      (groupByMode === 'symbol' || groupByMode === 'custom') ? $t('trading-assistant.strategyCount') : $t('trading-assistant.symbolCount') }}</a-tag>
                   </div>
                   <div class="group-header-right" @click.stop>
                     <span v-if="group.runningCount > 0" class="group-status running">
@@ -91,7 +95,7 @@
                               {{ item.trading_config.symbol }}
                             </span>
                           </template>
-                          <!-- 按 Symbol 分组：显示策略名称、周期、指标 -->
+                          <!-- 按 Symbol / 自定义 分组：显示策略名称、周期、指标 -->
                           <template v-else>
                             <span class="info-item strategy-name-text">
                               <a-icon type="thunderbolt" />
@@ -465,6 +469,12 @@
                   <a-input
                     v-decorator="['strategy_name', { rules: [{ required: true, message: $t('trading-assistant.validation.strategyNameRequired') }] }]"
                     :placeholder="$t('trading-assistant.placeholders.inputStrategyName')" />
+                </a-form-item>
+
+                <a-form-item :label="$t('trading-assistant.form.displayGroup')">
+                  <a-input
+                    v-decorator="['display_group', { initialValue: 'ungrouped' }]"
+                    placeholder="ungrouped" />
                 </a-form-item>
 
                 <!-- 策略类型选择 -->
@@ -1705,6 +1715,9 @@ export default {
     },
     // 策略分组显示
     groupedStrategies () {
+      if (this.groupByMode === 'custom') {
+        return this.groupedByCustom
+      }
       if (this.groupByMode === 'symbol') {
         return this.groupedBySymbol
       }
@@ -1746,6 +1759,47 @@ export default {
         return bTime - aTime
       })
 
+      return { groups: groupList, ungrouped }
+    },
+    // 按自定义 display_group 分组
+    groupedByCustom () {
+      const groups = {}
+      const ungrouped = []
+
+      for (const s of this.strategies) {
+        const dg = (s.display_group || '').trim()
+        const groupKey = dg || 'ungrouped'
+        if (groupKey === 'ungrouped') {
+          ungrouped.push(s)
+        } else {
+          if (!groups[groupKey]) {
+            groups[groupKey] = {
+              id: `custom_${groupKey}`,
+              baseName: groupKey,
+              strategies: [],
+              runningCount: 0,
+              stoppedCount: 0
+            }
+          }
+          const tc = s.trading_config || {}
+          const strategyInfo = {
+            ...s,
+            displayInfo: {
+              strategyName: s.strategy_name || s.group_base_name || 'Unnamed',
+              timeframe: tc.timeframe || '-',
+              indicatorName: s.indicator_name || (s.indicator_config && s.indicator_config.name) || '-'
+            }
+          }
+          groups[groupKey].strategies.push(strategyInfo)
+          if (s.status === 'running') {
+            groups[groupKey].runningCount++
+          } else {
+            groups[groupKey].stoppedCount++
+          }
+        }
+      }
+
+      const groupList = Object.values(groups).sort((a, b) => a.baseName.localeCompare(b.baseName))
       return { groups: groupList, ungrouped }
     },
     // 按 Symbol 分组
@@ -2606,6 +2660,7 @@ export default {
       await this.$nextTick()
 
       this.form.setFieldsValue({
+        display_group: strategy.display_group || 'ungrouped',
         execution_mode: this.executionModeUi,
         notify_channels: this.notifyChannelsUi,
         notify_email: strategy.notification_config?.targets?.email || '',
@@ -3720,6 +3775,7 @@ export default {
             // 构建基础 payload
             const basePayload = {
               strategy_name: values.strategy_name,
+              display_group: values.display_group ? String(values.display_group).trim() || 'ungrouped' : 'ungrouped',
               market_category: this.selectedMarketCategory || 'Crypto',
               execution_mode: values.execution_mode || 'signal',
               notification_config: notificationConfig,

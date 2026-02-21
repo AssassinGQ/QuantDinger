@@ -82,6 +82,7 @@ def _row_to_indicator(row: Dict[str, Any], user_id: int) -> Dict[str, Any]:
         # Prefer MySQL-like time fields; fallback to legacy local columns.
         "createtime": row.get("createtime") or row.get("created_at"),
         "updatetime": row.get("updatetime") or row.get("updated_at"),
+        "indicator_group": row.get("indicator_group") or "ungrouped",
     }
 
 
@@ -137,7 +138,8 @@ def get_indicators():
                 SELECT
                   id, user_id, is_buy, end_time, name, code, description,
                   publish_to_community, pricing_type, price, is_encrypted, preview_image,
-                  createtime, updatetime, created_at, updated_at
+                  createtime, updatetime, created_at, updated_at,
+                  indicator_group
                 FROM qd_indicator_codes
                 WHERE user_id = ?
                 ORDER BY id DESC
@@ -183,6 +185,7 @@ def save_indicator():
         except Exception:
             price = 0.0
         preview_image = (data.get("previewImage") or data.get("preview_image") or "").strip()
+        indicator_group = (data.get("group") or data.get("indicator_group") or "ungrouped").strip() or "ungrouped"
 
         if not code or not str(code).strip():
             return jsonify({"code": 0, "msg": "code is required", "data": None}), 400
@@ -225,11 +228,11 @@ def save_indicator():
                             SET name = ?, code = ?, description = ?,
                                 publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
                                 review_status = ?, review_note = '', reviewed_at = NOW(), reviewed_by = ?,
-                                updatetime = ?, updated_at = NOW()
+                                indicator_group = ?, updatetime = ?, updated_at = NOW()
                             WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
                             """,
-                            (name, code, description, publish_to_community, pricing_type, price, preview_image, 
-                             new_review_status, user_id if is_admin else None, now, indicator_id, user_id),
+                            (name, code, description, publish_to_community, pricing_type, price, preview_image,
+                             new_review_status, user_id if is_admin else None, indicator_group, now, indicator_id, user_id),
                         )
                     else:
                         # 已发布过的更新，保持原审核状态
@@ -238,10 +241,10 @@ def save_indicator():
                             UPDATE qd_indicator_codes
                             SET name = ?, code = ?, description = ?,
                                 publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
-                                updatetime = ?, updated_at = NOW()
+                                indicator_group = ?, updatetime = ?, updated_at = NOW()
                             WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
                             """,
-                            (name, code, description, publish_to_community, pricing_type, price, preview_image, now, indicator_id, user_id),
+                            (name, code, description, publish_to_community, pricing_type, price, preview_image, indicator_group, now, indicator_id, user_id),
                         )
                 else:
                     # 取消发布，清除审核状态
@@ -251,10 +254,10 @@ def save_indicator():
                         SET name = ?, code = ?, description = ?,
                             publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
                             review_status = NULL, review_note = '', reviewed_at = NULL, reviewed_by = NULL,
-                            updatetime = ?, updated_at = NOW()
+                            indicator_group = ?, updatetime = ?, updated_at = NOW()
                         WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
                         """,
-                        (name, code, description, publish_to_community, pricing_type, price, preview_image, now, indicator_id, user_id),
+                        (name, code, description, publish_to_community, pricing_type, price, preview_image, indicator_group, now, indicator_id, user_id),
                     )
             else:
                 # 新建指标 - 管理员发布的直接通过，普通用户需要待审核
@@ -266,10 +269,10 @@ def save_indicator():
                     INSERT INTO qd_indicator_codes
                       (user_id, is_buy, end_time, name, code, description,
                        publish_to_community, pricing_type, price, preview_image, review_status,
-                       createtime, updatetime, created_at, updated_at)
-                    VALUES (?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                       indicator_group, createtime, updatetime, created_at, updated_at)
+                    VALUES (?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                     """,
-                    (user_id, name, code, description, publish_to_community, pricing_type, price, preview_image, review_status, now, now),
+                    (user_id, name, code, description, publish_to_community, pricing_type, price, preview_image, review_status, indicator_group, now, now),
                 )
                 indicator_id = int(cur.lastrowid or 0)
             db.commit()
@@ -541,9 +544,10 @@ IMPORTANT: Output Python code directly, without explanations, without descriptio
 
     def _template_code() -> str:
         # Fallback template that follows the project expectations.
+        desc = prompt.replace('\n', ' ')[:200]
         header = (
             f"my_indicator_name = \"Custom Indicator\"\n"
-            f"my_indicator_description = \"{prompt.replace('\\n', ' ')[:200]}\"\n\n"
+            f"my_indicator_description = \"{desc}\"\n\n"
         )
         body = (
             "df = df.copy()\n\n"

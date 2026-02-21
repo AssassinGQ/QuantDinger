@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS qd_strategies_trading (
     decide_interval INTEGER DEFAULT 300,
     strategy_group_id VARCHAR(100) DEFAULT '',
     group_base_name VARCHAR(255) DEFAULT '',
+    display_group VARCHAR(100) DEFAULT 'ungrouped',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -312,6 +313,7 @@ CREATE TABLE IF NOT EXISTS qd_indicator_codes (
    review_note text DEFAULT ''::text NULL,
    reviewed_at timestamp NULL,
    reviewed_by int4 NULL,
+   indicator_group varchar(100) DEFAULT 'ungrouped'::character varying NULL,
    CONSTRAINT qd_indicator_codes_pkey PRIMARY KEY (id),
    CONSTRAINT qd_indicator_codes_user_id_fkey FOREIGN KEY (user_id) REFERENCES qd_users(id) ON DELETE CASCADE
 

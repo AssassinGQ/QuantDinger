@@ -17,6 +17,17 @@
     >
       <div class="editor-content">
         <a-row :gutter="16" class="editor-layout" :class="{ 'mobile-layout': isMobile }">
+          <!-- 分组 -->
+          <a-col :span="24" class="group-field-col">
+            <a-form-item :label="$t('dashboard.indicator.editor.group')">
+              <a-input
+                v-model="indicatorGroup"
+                :placeholder="$t('dashboard.indicator.section.ungrouped')"
+                allow-clear
+                style="max-width: 300px;"
+              />
+            </a-form-item>
+          </a-col>
           <!-- 左侧：代码编辑器和智能生成 -->
           <a-col :span="24" :xs="24" :sm="24" :md="24" class="code-editor-column">
             <div class="code-section">
@@ -140,7 +151,8 @@ export default {
       aiPrompt: '',
       aiGenerating: false,
       verifying: false,
-      isMobile: false
+      isMobile: false,
+      indicatorGroup: 'ungrouped'
     }
   },
   computed: {},
@@ -503,6 +515,9 @@ export default {
         return
       }
 
+      this.indicatorGroup = this.indicator && (this.indicator.indicator_group || this.indicator.group)
+        ? (this.indicator.indicator_group || this.indicator.group) : 'ungrouped'
+
       let code = this.indicator ? (this.indicator.code || '') : ''
       // If creating a new indicator (or code is empty), show the default template.
       if (!code || !String(code).trim()) {
@@ -595,7 +610,8 @@ export default {
       this.$emit('save', {
         id: this.indicator ? this.indicator.id : 0,
         code: finalCode,
-        userid: this.userId
+        userid: this.userId,
+        group: this.indicatorGroup ? String(this.indicatorGroup).trim() || 'ungrouped' : 'ungrouped'
       })
     },
     handleCancel () {
