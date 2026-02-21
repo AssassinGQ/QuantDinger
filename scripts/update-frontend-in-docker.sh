@@ -17,22 +17,19 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
   exit 1
 fi
 
-# 本地构建
+# 前端应在 SSH 容器内完成编译（见 infrastructure.md），此处仅拷贝 dist
 if [ ! -d "$VUE_DIR" ]; then
   echo "Error: $VUE_DIR not found."
   exit 1
 fi
 
-echo "Installing dependencies (if needed)..."
-cd "$VUE_DIR"
-rm -rf node_modules
-npm install webpack@5.105.0 --save-dev
-
-echo "Building frontend..."
-npm run build
+SRC="$VUE_DIR/dist"
+if [ ! -d "$SRC" ]; then
+  echo "Error: $SRC not found. Build frontend first in SSH container: cd quantdinger_vue && npm run build"
+  exit 1
+fi
 
 # 同步 dist 到容器
-SRC="$VUE_DIR/dist"
 DST="/usr/share/nginx/html"
 echo "Syncing $SRC/ -> ${CONTAINER}:${DST}/"
 #docker cp -r "${CONTAINER}:${DST}/" "${CONTAINER}:${DST}-bakk/"
