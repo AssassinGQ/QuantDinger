@@ -296,11 +296,9 @@ def put_config():
 
         from app.services.regime_config_service import save_regime_config
         from app.tasks.regime_switch import reload_config
-        user_id = getattr(g, "user_id", None)
-        logger.info("[multi_strategy] put_config: user_id=%s, multi_strategy.enabled=%s",
-                    user_id, (multi_strategy or {}).get("enabled"))
+        logger.info("[multi_strategy] put_config: multi_strategy.enabled=%s",
+                    (multi_strategy or {}).get("enabled"))
         ok = save_regime_config(
-            user_id=user_id,
             symbol_strategies=symbol_strategies,
             regime_to_weights=regime_to_weights,
             regime_rules=regime_rules,

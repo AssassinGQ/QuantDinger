@@ -29,10 +29,10 @@ _run_lock = threading.Lock()
 # ── 配置加载 ────────────────────────────────────────────────────────────
 
 def _load_config() -> Dict[str, Any]:
-    """加载配置：每次从 DB 读取，避免多 worker 下内存缓存导致不同 worker 返回过期配置。"""
+    """加载配置：regime 策略全局共用，user_id=None。"""
     try:
         from app.services.regime_config_service import get_regime_config_for_runtime
-        cfg = get_regime_config_for_runtime(user_id=None) or {}
+        cfg = get_regime_config_for_runtime() or {}
         logger.debug("[regime_switch] _load_config: enabled=%s",
                      cfg.get("multi_strategy", {}).get("enabled"))
         return cfg
@@ -306,8 +306,8 @@ def _is_multi_strategy_enabled(config: Dict) -> bool:
 def _run_inner() -> None:
     config = _load_config()
     symbol_strategies = config.get("symbol_strategies") or {}
-    user_id_raw = config.get("user_id")
-    user_id = int(user_id_raw) if user_id_raw is not None else None
+    # 策略启停使用默认主用户（regime 配置全局，策略仍按用户）
+    user_id = 1
 
     if not symbol_strategies:
         symbol_strategies = _get_symbol_strategies_from_db(user_id=user_id)

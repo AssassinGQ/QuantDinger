@@ -1,8 +1,7 @@
 """
 Regime 配置服务 — 从 DB 读写 regime 配置。
 
-用于前端配置页与 regime_switch 运行时读取。
-YAML 仅用于创建时的导入，运行与 YAML 无关。
+regime 策略全局共用，无用户维度。
 """
 
 from typing import Any, Dict, Optional
@@ -13,11 +12,11 @@ from app.utils.db import get_db_connection
 logger = get_logger(__name__)
 
 
-def get_regime_config_for_runtime(user_id: Optional[int] = None) -> Dict[str, Any]:
+def get_regime_config_for_runtime() -> Dict[str, Any]:
     """供 regime_switch 运行时读取的完整配置（YAML 结构兼容）。"""
-    row = get_regime_config(user_id)
+    row = get_regime_config()
     if not row:
-        logger.info("[regime_config] get_regime_config_for_runtime: no row in DB (user_id=%s)", user_id)
+        logger.info("[regime_config] get_regime_config_for_runtime: no row in DB")
         return {}
     ms = dict(row.get("multi_strategy") or {})
     if row.get("regime_to_weights"):
@@ -36,34 +35,23 @@ def get_regime_config_for_runtime(user_id: Optional[int] = None) -> Dict[str, An
     }
 
 
-def get_regime_config(user_id: Optional[int] = None) -> Dict[str, Any]:
-    """从 DB 读取 regime 配置。user_id 为 None 时取最新一条。"""
+def get_regime_config() -> Dict[str, Any]:
+    """从 DB 读取 regime 配置（全局单行）。"""
     try:
         with get_db_connection() as db:
             cur = db.cursor()
-            if user_id is not None:
-                cur.execute("""
-                    SELECT id, user_id, symbol_strategies, regime_to_weights, regime_rules,
-                           regime_to_style, multi_strategy, updated_at
-                    FROM qd_regime_config
-                    WHERE user_id = %s
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                """, (user_id,))
-            else:
-                cur.execute("""
-                    SELECT id, user_id, symbol_strategies, regime_to_weights, regime_rules,
-                           regime_to_style, multi_strategy, updated_at
-                    FROM qd_regime_config
-                    ORDER BY (CASE WHEN symbol_strategies = '{}'::jsonb THEN 1 ELSE 0 END),
-                             updated_at DESC
-                    LIMIT 1
-                """)
+            cur.execute("""
+                SELECT id, symbol_strategies, regime_to_weights, regime_rules,
+                       regime_to_style, multi_strategy, updated_at
+                FROM qd_regime_config
+                ORDER BY updated_at DESC
+                LIMIT 1
+            """)
             row = cur.fetchone()
             cur.close()
 
         if not row:
-            logger.info("[regime_config] get_regime_config: no row found (user_id=%s)", user_id)
+            logger.info("[regime_config] get_regime_config: no row found")
             return {}
 
         def _parse_jsonb(val):
@@ -80,7 +68,6 @@ def get_regime_config(user_id: Optional[int] = None) -> Dict[str, Any]:
             "regime_rules": _parse_jsonb(row.get("regime_rules")),
             "regime_to_style": _parse_jsonb(row.get("regime_to_style")),
             "multi_strategy": _parse_jsonb(row.get("multi_strategy")),
-            "user_id": user_id,
         }
         ms = result.get("multi_strategy") or {}
         logger.info("[regime_config] get_regime_config: got row, multi_strategy.enabled=%s, symbol_count=%s",
@@ -107,14 +94,13 @@ def _ensure_multi_strategy_structure(ms: Dict) -> Dict:
 
 
 def save_regime_config(
-    user_id: Optional[int],
     symbol_strategies: Dict[str, Any],
     regime_to_weights: Dict[str, Any],
     regime_rules: Optional[Dict] = None,
     regime_to_style: Optional[Dict] = None,
     multi_strategy: Optional[Dict] = None,
 ) -> bool:
-    """保存 regime 配置到 DB。"""
+    """保存 regime 配置到 DB（全局单行）。"""
     import json
     try:
         regime_rules = regime_rules or {}
@@ -124,8 +110,8 @@ def save_regime_config(
         if regime_to_weights:
             multi_strategy["regime_to_weights"] = regime_to_weights
 
-        logger.info("[regime_config] save_regime_config: user_id=%s, enabled=%s, symbol_count=%s",
-                    user_id, multi_strategy.get("enabled"), len(symbol_strategies))
+        logger.info("[regime_config] save_regime_config: enabled=%s, symbol_count=%s",
+                    multi_strategy.get("enabled"), len(symbol_strategies))
 
         ss_json = json.dumps(symbol_strategies, ensure_ascii=False)
         rtw_json = json.dumps(regime_to_weights, ensure_ascii=False)
@@ -135,10 +121,7 @@ def save_regime_config(
 
         with get_db_connection() as db:
             cur = db.cursor()
-            cur.execute("""
-                SELECT id FROM qd_regime_config WHERE user_id IS NOT DISTINCT FROM %s
-                ORDER BY updated_at DESC LIMIT 1
-            """, (user_id,))
+            cur.execute("SELECT id FROM qd_regime_config ORDER BY updated_at DESC LIMIT 1")
             existing = cur.fetchone()
             if existing:
                 cur.execute("""
@@ -151,9 +134,9 @@ def save_regime_config(
             else:
                 cur.execute("""
                     INSERT INTO qd_regime_config
-                        (user_id, symbol_strategies, regime_to_weights, regime_rules, regime_to_style, multi_strategy)
-                    VALUES (%s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)
-                """, (user_id, ss_json, rtw_json, rr_json, rts_json, ms_json))
+                        (symbol_strategies, regime_to_weights, regime_rules, regime_to_style, multi_strategy)
+                    VALUES (%s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)
+                """, (ss_json, rtw_json, rr_json, rts_json, ms_json))
             db.commit()
             cur.close()
         return True
