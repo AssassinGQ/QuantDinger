@@ -9,6 +9,7 @@ from app.services.scheduler_service import (
     start_task,
     stop_task,
     get_job_status,
+    run_kline_sync_once,
 )
 from app.utils.logger import get_logger
 
@@ -87,6 +88,18 @@ def get_status():
         return jsonify({"code": 1, "msg": "success", "data": data})
     except Exception as e:
         logger.exception("scheduler status: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
+@scheduler_bp.route("/kline-sync", methods=["POST"])
+def trigger_kline_sync():
+    """手动触发一次 K 线+宏观+新闻同步（与定时任务执行内容相同）。"""
+    try:
+        run_kline_sync_once()
+        logger.info("Scheduler API kline-sync: done")
+        return jsonify({"code": 1, "msg": "ok", "data": None})
+    except Exception as e:
+        logger.exception("kline-sync failed: %s", e)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
