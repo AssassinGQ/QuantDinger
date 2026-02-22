@@ -734,6 +734,7 @@ def send_test_notification():
 
         from app.services.signal_notifier import SignalNotifier
         notifier = SignalNotifier()
+        logger.info(f"send_test_notification: channels={channels} targets_keys={list(targets.keys())} smtp_configured={bool(notifier.smtp_host)}")
         result = notifier.notify_signal(
             strategy_id=0,
             strategy_name='QuantDinger Test',
@@ -746,9 +747,10 @@ def send_test_notification():
             extra={'test': True},
         )
 
+        logger.info(f"send_test_notification result: {result}")
         failed = [ch for ch, r in result.items() if not r.get('ok')]
         if failed:
-            errors = [f"{ch}: {r.get('error', '')}" for ch in failed for r in [result.get(ch, {})]]
+            errors = [f"{ch}: {result.get(ch, {}).get('error', '')}" for ch in failed]
             return jsonify({
                 'code': 0,
                 'msg': f'Some channels failed: {"; ".join(errors)}',
