@@ -495,7 +495,7 @@
 </template>
 
 <script>
-import { getProfile, updateProfile, getMyCreditsLog, getMyReferrals, getNotificationSettings, updateNotificationSettings } from '@/api/user'
+import { getProfile, updateProfile, getMyCreditsLog, getMyReferrals, getNotificationSettings, updateNotificationSettings, sendTestNotification } from '@/api/user'
 import { getSettingsValues } from '@/api/settings'
 import { baseMixin } from '@/store/app-mixin'
 
@@ -1078,7 +1078,7 @@ export default {
 
       this.testingNotification = true
       try {
-        // First save settings, then test
+        // First save settings, then send test notification
         const saveRes = await updateNotificationSettings({
           default_channels: channels,
           telegram_bot_token: values.telegram_bot_token || '',
@@ -1095,11 +1095,24 @@ export default {
           return
         }
 
-        this.$message.info(this.$t('profile.notifications.testSent') || '测试通知已发送，请检查您的通知渠道')
-        // Note: Actual test notification would require a backend endpoint
-        // For now, we just show a success message after saving
+        const testRes = await sendTestNotification({
+          default_channels: channels,
+          telegram_bot_token: values.telegram_bot_token || '',
+          telegram_chat_id: values.telegram_chat_id || '',
+          email: values.email || '',
+          phone: values.phone || '',
+          discord_webhook: values.discord_webhook || '',
+          webhook_url: values.webhook_url || '',
+          webhook_token: values.webhook_token || ''
+        })
+
+        if (testRes.code === 1) {
+          this.$message.success(this.$t('profile.notifications.testSent') || '测试通知已发送，请检查您的通知渠道')
+        } else {
+          this.$message.error(testRes.msg || '发送测试通知失败')
+        }
       } catch (e) {
-        this.$message.error('发送测试通知失败')
+        this.$message.error(e.response?.data?.msg || '发送测试通知失败')
       } finally {
         this.testingNotification = false
       }

@@ -148,6 +148,18 @@ export function updateNotificationSettings (data) {
 }
 
 /**
+ * Send test notification to configured channels
+ * @param {Object} data - Same as updateNotificationSettings (channels + targets)
+ */
+export function sendTestNotification (data) {
+  return request({
+    url: '/api/users/send-test-notification',
+    method: 'post',
+    data
+  })
+}
+
+/**
  * Get current user's credits log
  * @param {Object} params - { page, page_size }
  */

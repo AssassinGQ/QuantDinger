@@ -677,6 +677,94 @@ def update_notification_settings():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
+@user_bp.route('/send-test-notification', methods=['POST'])
+@login_required
+def send_test_notification():
+    """
+    Send a test notification to user's configured channels.
+    Uses the same notification config as update_notification_settings.
+    """
+    try:
+        user_id = getattr(g, 'user_id', None)
+        if not user_id:
+            return jsonify({'code': 0, 'msg': 'Not authenticated', 'data': None}), 401
+
+        data = request.get_json() or {}
+        channels = data.get('default_channels', [])
+        if not isinstance(channels, list):
+            channels = ['browser']
+        valid_channels = ['browser', 'email', 'telegram', 'discord', 'webhook', 'phone']
+        channels = [c for c in channels if c in valid_channels]
+        if not channels:
+            return jsonify({'code': 0, 'msg': 'Please select at least one notification channel', 'data': None}), 400
+
+        # Build targets from request
+        targets = {}
+        if 'email' in channels:
+            email = str(data.get('email') or '').strip()
+            if not email:
+                return jsonify({'code': 0, 'msg': 'Email channel requires an email address', 'data': None}), 400
+            targets['email'] = email
+        if 'telegram' in channels:
+            chat_id = str(data.get('telegram_chat_id') or '').strip()
+            token = str(data.get('telegram_bot_token') or '').strip()
+            if not chat_id or not token:
+                return jsonify({'code': 0, 'msg': 'Telegram channel requires bot token and chat ID', 'data': None}), 400
+            targets['telegram'] = chat_id
+            targets['telegram_bot_token'] = token
+        if 'discord' in channels:
+            webhook = str(data.get('discord_webhook') or '').strip()
+            if not webhook:
+                return jsonify({'code': 0, 'msg': 'Discord channel requires webhook URL', 'data': None}), 400
+            targets['discord'] = webhook
+        if 'webhook' in channels:
+            url = str(data.get('webhook_url') or '').strip()
+            if not url:
+                return jsonify({'code': 0, 'msg': 'Webhook channel requires URL', 'data': None}), 400
+            targets['webhook'] = url
+            if data.get('webhook_token'):
+                targets['webhook_token'] = str(data.get('webhook_token') or '').strip()
+        if 'phone' in channels:
+            phone = str(data.get('phone') or '').strip()
+            if not phone:
+                return jsonify({'code': 0, 'msg': 'Phone channel requires phone number', 'data': None}), 400
+            targets['phone'] = phone
+
+        notification_config = {'channels': channels, 'targets': targets}
+
+        from app.services.signal_notifier import SignalNotifier
+        notifier = SignalNotifier()
+        result = notifier.notify_signal(
+            strategy_id=0,
+            strategy_name='QuantDinger Test',
+            symbol='TEST',
+            signal_type='test',
+            price=0.0,
+            stake_amount=0.0,
+            direction='long',
+            notification_config=notification_config,
+            extra={'test': True},
+        )
+
+        failed = [ch for ch, r in result.items() if not r.get('ok')]
+        if failed:
+            errors = [f"{ch}: {r.get('error', '')}" for ch in failed for r in [result.get(ch, {})]]
+            return jsonify({
+                'code': 0,
+                'msg': f'Some channels failed: {"; ".join(errors)}',
+                'data': {'results': result}
+            })
+
+        return jsonify({
+            'code': 1,
+            'msg': 'Test notification sent successfully',
+            'data': {'results': result}
+        })
+    except Exception as e:
+        logger.error(f"send_test_notification failed: {e}", exc_info=True)
+        return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
+
+
 @user_bp.route('/change-password', methods=['POST'])
 @login_required
 def change_password():
