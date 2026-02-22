@@ -216,6 +216,7 @@ def get_regime():
             "regime": allocator.current_regime,
             "vix": macro["vix"],
             "vhsi": macro.get("vhsi", macro["vix"]),
+            "civix": macro.get("civix", macro["vix"]),
             "dxy": macro["dxy"],
             "fear_greed": macro["fear_greed"],
         }

@@ -63,6 +63,8 @@ def _resolve_primary_indicator(symbol_strategies: Dict[str, Any], config: Option
     indicator_per_market = cfg.get("indicator_per_market") or {}
     if _has_hshare_symbols(symbol_strategies) and indicator_per_market.get("HShare") == "vhsi":
         return "vhsi"
+    if _has_ashare_symbols(symbol_strategies) and indicator_per_market.get("AShare") == "civix":
+        return "civix"
     return indicator_per_market.get("default", "vix")
 
 
@@ -87,6 +89,19 @@ def compute_regime(vix: float, fear_greed: Optional[float] = None,
         if vol_val > vhsi_high_vol:
             return REGIME_HIGH_VOL
         if vol_val < vhsi_low_vol:
+            return REGIME_LOW_VOL
+        return REGIME_NORMAL
+
+    if primary == "civix":
+        vol_val = (macro or {}).get("civix", vix)
+        civix_panic = cfg.get("civix_panic", cfg.get("vix_panic", 30))
+        civix_high_vol = cfg.get("civix_high_vol", cfg.get("vix_high_vol", 25))
+        civix_low_vol = cfg.get("civix_low_vol", cfg.get("vix_low_vol", 15))
+        if vol_val > civix_panic:
+            return REGIME_PANIC
+        if vol_val > civix_high_vol:
+            return REGIME_HIGH_VOL
+        if vol_val < civix_low_vol:
             return REGIME_LOW_VOL
         return REGIME_NORMAL
 
@@ -132,6 +147,7 @@ def _compute_regime_custom(
     macro = {
         "vix": float(snapshot.get("vix", 18.0)) if snapshot else vix,
         "vhsi": float(snapshot.get("vhsi", 22.0)) if snapshot else vix,
+        "civix": float(snapshot.get("civix", 18.0)) if snapshot else vix,
         "dxy": float(snapshot.get("dxy", 100.0)) if snapshot else 100.0,
         "fear_greed": float(snapshot.get("fear_greed", 50.0)) if snapshot else (fear_greed or 50.0),
     }
@@ -146,6 +162,7 @@ def _compute_regime_custom(
         "macro": macro,
         "vix": macro["vix"],
         "vhsi": macro["vhsi"],
+        "civix": macro["civix"],
         "dxy": macro["dxy"],
         "fear_greed": macro["fear_greed"],
         "regime": None,
@@ -236,15 +253,17 @@ def compute_target_strategy_ids(regime: str, config: Optional[Dict] = None,
 # ── 获取宏观数据 ────────────────────────────────────────────────────────
 
 def _fetch_macro_snapshot() -> Dict[str, float]:
-    """拉取实时宏观快照（VIX / VHSI / DXY / Fear&Greed）。"""
+    """拉取实时宏观快照（VIX / VHSI / CIVIX / DXY / Fear&Greed）。"""
     from app.services.macro_data_service import MacroDataService
     snapshot = MacroDataService._get_realtime_snapshot()
     if not snapshot:
         logger.warning("[regime_switch] macro snapshot empty, using defaults")
-        return {"vix": 18.0, "vhsi": 22.0, "dxy": 100.0, "fear_greed": 50.0}
+        return {"vix": 18.0, "vhsi": 22.0, "civix": 18.0, "dxy": 100.0, "fear_greed": 50.0}
+    vix_def = float(snapshot.get("vix", 18.0))
     return {
-        "vix": float(snapshot.get("vix", 18.0)),
+        "vix": vix_def,
         "vhsi": float(snapshot.get("vhsi", snapshot.get("vix", 22.0))),
+        "civix": float(snapshot.get("civix", vix_def)),
         "dxy": float(snapshot.get("dxy", 100.0)),
         "fear_greed": float(snapshot.get("fear_greed", 50.0)),
     }
@@ -270,6 +289,28 @@ def _has_hshare_symbols(symbol_strategies: Dict[str, Any]) -> bool:
             return row is not None
     except Exception:
         return any(len(s) == 5 and s.isdigit() for s in symbols)
+
+
+def _has_ashare_symbols(symbol_strategies: Dict[str, Any]) -> bool:
+    """检测 symbol_strategies 中是否包含 A 股标的。"""
+    if not symbol_strategies:
+        return False
+    symbols = [str(k).strip() for k in symbol_strategies.keys()]
+    if not symbols:
+        return False
+    try:
+        from app.utils.db import get_db_connection
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT 1 FROM qd_market_symbols WHERE market = 'AShare' AND symbol = ANY(%s) LIMIT 1",
+                (symbols,)
+            )
+            row = cur.fetchone()
+            cur.close()
+            return row is not None
+    except Exception:
+        return any(len(s) == 6 and s.isdigit() for s in symbols)
 
 
 def _get_symbol_to_market(symbol_strategies: Dict[str, Any]) -> Dict[str, str]:

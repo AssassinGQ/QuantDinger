@@ -9,6 +9,7 @@
 数据注入到 df 后，指标代码可直接使用:
     df["vix"]         - VIX 恐慌指数（美股）
     df["vhsi"]        - VHSI 恒生波动率指数（港股）
+    df["civix"]       - 中国波指 50ETF QVIX（A股，optbbs 数据源）
     df["dxy"]         - 美元指数
     df["fear_greed"]  - Fear & Greed 指数 (0-100)
 """
@@ -54,7 +55,7 @@ class MacroDataService:
     _db_ready = False
     MEM_TTL = int(os.getenv("MACRO_CACHE_TTL", 3600))
 
-    MACRO_COLUMNS = ["vix", "vhsi", "dxy", "fear_greed"]
+    MACRO_COLUMNS = ["vix", "vhsi", "civix", "dxy", "fear_greed"]
 
     @classmethod
     def _ensure_table(cls):
@@ -154,6 +155,7 @@ class MacroDataService:
         for indicator, fetcher in [
             ("vix", cls._fetch_vix_net),
             ("vhsi", cls._fetch_vhsi_net),
+            ("civix", cls._fetch_civix_net),
             ("dxy", cls._fetch_dxy_net),
             ("fear_greed", cls._fetch_fg_net),
         ]:
@@ -292,6 +294,35 @@ class MacroDataService:
         return None
 
     @classmethod
+    def _fetch_civix_net(cls, start: datetime, end: datetime) -> Optional[pd.DataFrame]:
+        """
+        中国波指 50ETF QVIX（A股波动率指数）
+        数据源: optbbs http://1.optbbs.com/d/csv/d/k.csv
+        akshare index_option_50etf_qvix 存在 pandas 兼容性问题，此处直接拉取原始 CSV
+        """
+        if not HAS_REQUESTS:
+            return None
+        try:
+            resp = _requests.get("http://1.optbbs.com/d/csv/d/k.csv", timeout=15)
+            resp.encoding = "gbk"
+            raw = pd.read_csv(pd.io.common.BytesIO(resp.content), encoding="gbk")
+            if raw.empty or raw.shape[1] < 5:
+                return None
+            sub = raw.iloc[:, :5].copy()
+            sub.columns = ["date", "open", "high", "low", "close"]
+            sub["date"] = pd.to_datetime(sub["date"], errors="coerce")
+            sub["close"] = pd.to_numeric(sub["close"], errors="coerce")
+            sub = sub.dropna(subset=["date", "close"])
+            sub = sub.set_index("date")[["close"]]
+            sub.columns = ["civix"]
+            sub.index = pd.to_datetime(sub.index).tz_localize(None)
+            sub.index.name = "time"
+            return sub.sort_index()
+        except Exception as e:
+            logger.warning(f"CIVIX (50ETF QVIX) network fetch failed: {e}")
+            return None
+
+    @classmethod
     def _fetch_dxy_net(cls, start: datetime, end: datetime) -> Optional[pd.DataFrame]:
         if not HAS_YFINANCE:
             return None
@@ -366,6 +397,18 @@ class MacroDataService:
                         break
                 except Exception:
                     continue
+        if HAS_REQUESTS:
+            try:
+                resp = _requests.get("http://1.optbbs.com/d/csv/d/k.csv", timeout=10)
+                resp.encoding = "gbk"
+                raw = pd.read_csv(pd.io.common.BytesIO(resp.content), encoding="gbk")
+                if not raw.empty and raw.shape[1] >= 5:
+                    close_val = pd.to_numeric(raw.iloc[-1, 4], errors="coerce")
+                    if pd.notna(close_val) and close_val > 0:
+                        snapshot["civix"] = float(close_val)
+            except Exception:
+                pass
+        if HAS_YFINANCE:
             try:
                 dxy_t = yf.Ticker("DX-Y.NYB")
                 info = dxy_t.fast_info
@@ -407,6 +450,7 @@ class MacroDataService:
         fetchers = [
             ("vix", cls._fetch_vix_net),
             ("vhsi", cls._fetch_vhsi_net),
+            ("civix", cls._fetch_civix_net),
             ("dxy", cls._fetch_dxy_net),
             ("fear_greed", cls._fetch_fg_net),
         ]
