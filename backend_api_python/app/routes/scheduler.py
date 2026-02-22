@@ -9,6 +9,7 @@ from app.services.scheduler_service import (
     start_task,
     stop_task,
     get_job_status,
+    get_all_jobs_status,
     run_kline_sync_once,
 )
 from app.utils.logger import get_logger
@@ -88,6 +89,17 @@ def get_status():
         return jsonify({"code": 1, "msg": "success", "data": data})
     except Exception as e:
         logger.exception("scheduler status: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
+@scheduler_bp.route("/jobs", methods=["GET"])
+def list_all_jobs():
+    """列出所有 APScheduler 任务（含插件 task_kline_sync 等）及下次运行时间。"""
+    try:
+        jobs = get_all_jobs_status()
+        return jsonify({"code": 1, "msg": "success", "data": jobs})
+    except Exception as e:
+        logger.exception("scheduler jobs: %s", e)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
