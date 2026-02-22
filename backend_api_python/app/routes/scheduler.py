@@ -93,11 +93,30 @@ def get_status():
 
 @scheduler_bp.route("/kline-sync", methods=["POST"])
 def trigger_kline_sync():
-    """手动触发一次 K 线+宏观+新闻同步（与定时任务执行内容相同）。"""
+    """
+    手动触发同步。
+
+    Body:
+        fetch_type: "all"(默认) 全量 K线+宏观+情绪+新闻；"macro_only" 仅宏观数据
+        macro_days: 宏观数据历史天数，默认 30，可传如 360
+    """
     try:
-        run_kline_sync_once()
-        logger.info("Scheduler API kline-sync: done")
-        return jsonify({"code": 1, "msg": "ok", "data": None})
+        data = request.get_json() or {}
+        fetch_type = (data.get("fetch_type") or "all").strip().lower()
+        if fetch_type not in ("all", "macro_only"):
+            return jsonify({"code": 0, "msg": "fetch_type must be 'all' or 'macro_only'", "data": None}), 400
+        try:
+            macro_days = int(data.get("macro_days", 30))
+        except (TypeError, ValueError):
+            macro_days = 30
+        macro_days = max(1, min(macro_days, 3650))
+
+        run_kline_sync_once(fetch_type=fetch_type, macro_days=macro_days)
+        logger.info("Scheduler API kline-sync: done fetch_type=%s macro_days=%d", fetch_type, macro_days)
+        return jsonify({
+            "code": 1, "msg": "ok",
+            "data": {"fetch_type": fetch_type, "macro_days": macro_days},
+        })
     except Exception as e:
         logger.exception("kline-sync failed: %s", e)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500

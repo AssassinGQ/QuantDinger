@@ -311,13 +311,13 @@ def _run_kline_sync(task_type: str) -> None:
         logger.warning("Scheduler %s: market %s sync aborted (rate limited)", task_type, market)
 
 
-def _run_macro_sync() -> None:
+def _run_macro_sync(days: int = 30) -> None:
     """同步 VIX、VHSI、DXY、Fear&Greed 等到 qd_macro_data（基本盘）。"""
     try:
         from app.services.macro_data_service import MacroDataService
-        stats = MacroDataService.sync_recent_to_db(days=30)
+        stats = MacroDataService.sync_recent_to_db(days=days)
         if stats:
-            logger.info("Macro sync done: %s", stats)
+            logger.info("Macro sync done: %s (days=%d)", stats, days)
     except Exception as e:
         logger.warning("Macro sync failed: %s", e)
 
@@ -415,7 +415,7 @@ def _run_news_sync() -> None:
         logger.debug("News sync skipped (search may be unconfigured): %s", e)
 
 
-def _run_all_kline_sync() -> None:
+def _run_all_kline_sync(macro_days: int = 30) -> None:
     """单一定时任务入口：按品类顺序执行 K 线 + 宏观 + 新闻同步。"""
     ensure_default_task_types()
     with _task_lock:
@@ -428,7 +428,7 @@ def _run_all_kline_sync() -> None:
                 time.sleep(DELAY_BETWEEN_CATEGORIES_SECONDS)
 
     time.sleep(2)
-    _run_macro_sync()
+    _run_macro_sync(days=macro_days)
     time.sleep(2)
     _run_sentiment_sync()
     time.sleep(2)
@@ -568,6 +568,15 @@ def get_all_jobs_status() -> List[Dict[str, Any]]:
     return result
 
 
-def run_kline_sync_once() -> None:
-    """手动触发一次完整 K 线同步（供插件或测试调用）。"""
-    _run_all_kline_sync()
+def run_kline_sync_once(fetch_type: str = "all", macro_days: int = 30) -> None:
+    """
+    手动触发一次同步（供 API 或测试调用）。
+
+    Args:
+        fetch_type: "all" 全量（K线+宏观+情绪+新闻）；"macro_only" 仅宏观数据
+        macro_days: 宏观数据拉取历史天数，默认 30
+    """
+    if fetch_type == "macro_only":
+        _run_macro_sync(days=macro_days)
+    else:
+        _run_all_kline_sync(macro_days=macro_days)
