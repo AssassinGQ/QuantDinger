@@ -27,7 +27,7 @@ MAX_GAP: Dict[tuple, int] = {
     ("Forex", 86400): 4 * 86400,
     ("Futures", 86400): 4 * 86400,
     ("USStock", 86400): 5 * 86400,
-    ("HShare", 86400): 6 * 86400,
+    ("HShare", 86400): 2 * 86400,   # 原 6 天过宽，1D 命中后不刷新；改为 2 天
     ("AShare", 86400): 10 * 86400,
 }
 
@@ -510,6 +510,30 @@ def get_kline(
                     market, symbol, need_start_ts, need_end_ts, interval_sec=interval_sec
                 )
                 if from_same:
+                    # 实时场景：范围命中但数据可能过期，补充增量尾巴（1m 有同样逻辑，非 1m 此前缺失）
+                    if before_time is None and len(from_same) > 0:
+                        max_ts_db = max(b["time"] for b in from_same)
+                        stale_threshold = interval_sec * 2  # 1D=2天、1H=2小时
+                        if (now_sec - max_ts_db) > stale_threshold:
+                            tail_limit = min(
+                                (now_sec - max_ts_db) // interval_sec + 5,
+                                min(limit, PAGINATE_CHUNK),
+                            )
+                            try:
+                                tail_part = DataSourceFactory.get_kline(
+                                    market, symbol, timeframe, max(10, tail_limit), before_time=now_sec + interval_sec
+                                )
+                                if tail_part:
+                                    by_time = {b["time"]: b for b in from_same}
+                                    for b in tail_part:
+                                        by_time[b["time"]] = b
+                                    merged = sorted(by_time.values(), key=lambda x: x["time"])
+                                    _write_points_to_db(market, symbol, tail_part, interval_sec=interval_sec)
+                                    result = _slice(merged, limit, before_time)
+                                    logger.info("Kline range hit + tail: %s %s %s count=%d", market, symbol, timeframe, len(result))
+                                    return result
+                            except Exception as e:
+                                logger.debug("Kline tail fetch failed (using cached): %s %s %s %s", market, symbol, timeframe, e)
                     result = _slice(from_same, limit, before_time)
                     logger.info("Kline range hit: %s %s %s count=%d", market, symbol, timeframe, len(result))
                     return result
@@ -520,6 +544,27 @@ def get_kline(
             market, symbol, need_start_ts, need_end_ts, interval_sec=interval_sec
         )
         if len(from_same) >= limit:
+            # 实时场景：数据可能过期，补充增量尾巴
+            if before_time is None and len(from_same) > 0:
+                max_ts_db = max(b["time"] for b in from_same)
+                stale_threshold = interval_sec * 2
+                if (now_sec - max_ts_db) > stale_threshold:
+                    try:
+                        tail_limit = min((now_sec - max_ts_db) // interval_sec + 5, min(limit, PAGINATE_CHUNK))
+                        tail_part = DataSourceFactory.get_kline(
+                            market, symbol, timeframe, max(10, tail_limit), before_time=now_sec + interval_sec
+                        )
+                        if tail_part:
+                            by_time = {b["time"]: b for b in from_same}
+                            for b in tail_part:
+                                by_time[b["time"]] = b
+                            merged = sorted(by_time.values(), key=lambda x: x["time"])
+                            _write_points_to_db(market, symbol, tail_part, interval_sec=interval_sec)
+                            result = _slice(merged, limit, before_time)
+                            logger.info("Kline same layer + tail: %s %s %s count=%d", market, symbol, timeframe, len(result))
+                            return result
+                    except Exception as e:
+                        logger.debug("Kline tail fetch failed (using cached): %s %s %s %s", market, symbol, timeframe, e)
             result = _slice(from_same, limit, before_time)
             logger.info("Kline from same layer: %s %s %s count=%d", market, symbol, timeframe, len(result))
             return result
