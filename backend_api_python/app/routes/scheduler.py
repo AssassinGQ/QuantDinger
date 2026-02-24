@@ -103,6 +103,22 @@ def list_all_jobs():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
+@scheduler_bp.route("/regime-switch", methods=["POST"])
+def trigger_regime_switch():
+    """
+    手动触发 regime 切换：根据 VIX/Fear&Greed 等重新计算 regime，启停策略。
+    Body 可选 `{}`，与定时任务逻辑一致。
+    """
+    try:
+        from app.tasks.regime_switch import run
+        run()
+        logger.info("Scheduler API regime-switch: done")
+        return jsonify({"code": 1, "msg": "ok", "data": {"triggered": True}})
+    except Exception as e:
+        logger.exception("regime-switch failed: %s", e)
+        return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+
 @scheduler_bp.route("/kline-sync", methods=["POST"])
 def trigger_kline_sync():
     """
