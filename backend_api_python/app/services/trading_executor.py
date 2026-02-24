@@ -49,6 +49,7 @@ class TradingExecutor:
         
         # 单实例线程上限，避免无限制创建线程导致 can't start new thread/OOM
         self.max_threads = int(os.getenv('STRATEGY_MAX_THREADS', '64'))
+        logger.info("TradingExecutor max_threads=%d (set STRATEGY_MAX_THREADS in .env if needed)", self.max_threads)
         
         # 确保数据库字段存在
         self._ensure_db_columns()
@@ -412,8 +413,9 @@ class TradingExecutor:
 
                 if len(self.running_strategies) >= self.max_threads:
                     logger.error(
-                        f"Thread limit reached ({self.max_threads}); refuse to start strategy {strategy_id}. "
-                        f"Reduce running strategies or increase STRATEGY_MAX_THREADS."
+                        "Thread limit reached (running=%d, max=%d); refuse to start strategy %d. "
+                        "Reduce running strategies or set STRATEGY_MAX_THREADS in backend_api_python/.env",
+                        len(self.running_strategies), self.max_threads, strategy_id,
                     )
                     self._log_resource_status(prefix="start_denied: ")
                     return False

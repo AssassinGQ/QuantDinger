@@ -432,7 +432,7 @@ def _stop_strategies(ids: List[int], user_id: Optional[int] = None) -> None:
 
 
 def _start_strategies(ids: List[int], user_id: Optional[int] = None) -> None:
-    """启动策略：先 service 改 DB → 再 executor.start。"""
+    """启动策略：先 service 改 DB → 再 executor.start。executor 失败时回滚 DB 并记日志。"""
     if not ids:
         return
     from app import get_trading_executor
@@ -442,11 +442,25 @@ def _start_strategies(ids: List[int], user_id: Optional[int] = None) -> None:
     service = StrategyService()
 
     service.batch_start_strategies(ids, user_id=user_id)
+    failed_ids = []
     for sid in ids:
         try:
-            executor.start_strategy(sid)
+            ok = executor.start_strategy(sid)
+            if not ok:
+                failed_ids.append(sid)
+                logger.warning(
+                    "[regime_switch] executor.start_strategy(%d) returned False (likely thread limit), revert DB",
+                    sid,
+                )
         except Exception as e:
+            failed_ids.append(sid)
             logger.warning("[regime_switch] executor.start_strategy(%d) failed: %s", sid, e)
+    if failed_ids:
+        service.batch_stop_strategies(failed_ids, user_id=user_id)
+        logger.warning(
+            "[regime_switch] reverted DB status for %d strategies that failed to start: %s",
+            len(failed_ids), failed_ids[:20] if len(failed_ids) > 20 else failed_ids,
+        )
 
 
 # ── 主入口 ──────────────────────────────────────────────────────────────

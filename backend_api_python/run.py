@@ -15,17 +15,16 @@ except Exception:
     pass
 
 # Load local .env early so config classes can read from os.environ.
-# This keeps local deployment simple: edit one file and run.
+# Primary use override=True so backend_api_python/.env can override Docker env (e.g. STRATEGY_MAX_THREADS).
 try:
     from dotenv import load_dotenv
     this_dir = os.path.dirname(os.path.abspath(__file__))
-    # Primary: backend_api_python/.env (same dir as run.py)
-    load_dotenv(os.path.join(this_dir, ".env"), override=False)
-    # Fallback: repo-root/.env (one level up) for users who place .env at workspace root.
+    # Primary: backend_api_python/.env — override=True 使 .env 可覆盖容器/Docker 传入的变量
+    load_dotenv(os.path.join(this_dir, ".env"), override=True)
+    # Fallback: repo-root/.env
     parent_dir = os.path.dirname(this_dir)
     load_dotenv(os.path.join(parent_dir, ".env"), override=False)
 except Exception:
-    # python-dotenv is optional; environment variables can still be provided by the OS.
     pass
 
 # Optional: disable tqdm progress bars (some data providers like akshare may emit them),

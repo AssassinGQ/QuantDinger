@@ -53,6 +53,8 @@ services:
       # Database connection
       - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger123}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - DB_TYPE=postgresql
+      # 策略最大并发线程数（默认 64；大批量部署时可调高，如 STRATEGY_MAX_THREADS=256）
+      - STRATEGY_MAX_THREADS=${STRATEGY_MAX_THREADS:-256}
     networks:
       - quantdinger-network
     healthcheck:
