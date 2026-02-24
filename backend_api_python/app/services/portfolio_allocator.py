@@ -180,12 +180,15 @@ class PortfolioAllocator:
                 running_ids = self._get_running_ids()
                 all_m = self._get_all_managed_ids()
                 target_count = sum(1 for sid in all_m if self._strategy_allocation.get(sid, 0) > 0)
+                symbols_with_pool = sum(1 for p in self._symbol_capital_pool.values() if p > 0)
                 return {
                     "started": ids_to_start,
                     "stopped": ids_to_stop,
                     "weight_changed": sorted(set(weight_changed_ids)),
                     "running_count": len(running_ids),
                     "target_count": target_count,
+                    "symbols_with_pool": symbols_with_pool,
+                    "symbols_total": len(self._symbol_capital_pool),
                 }
 
             raw_target = self._get_target_weights(regime, ms_cfg)
@@ -206,12 +209,15 @@ class PortfolioAllocator:
             running_ids = self._get_running_ids()
             all_m = self._get_all_managed_ids()
             target_count = sum(1 for sid in all_m if self._strategy_allocation.get(sid, 0) > 0)
+            symbols_with_pool = sum(1 for p in self._symbol_capital_pool.values() if p > 0)
             return {
                 "started": ids_to_start,
                 "stopped": ids_to_stop,
                 "weight_changed": self._find_weight_changed(old_weights, effective),
                 "running_count": len(running_ids),
                 "target_count": target_count,
+                "symbols_with_pool": symbols_with_pool,
+                "symbols_total": len(self._symbol_capital_pool),
             }
 
     # ── 组合持仓查询 ─────────────────────────────────────────────────
@@ -327,14 +333,23 @@ class PortfolioAllocator:
 
         configured_pools = ms_cfg.get("symbol_capital_pool", {}) or {}
 
+        # 诊断：记录 pool 来源，便于排查 target 偏低（如 A 股无 symbol_capital_pool）
+        symbols_from_config = 0
+        symbols_from_calc = 0
+        symbols_zero_pool = []
+
         for symbol, style_map in self._symbol_strategies.items():
             if not isinstance(style_map, dict):
                 continue
 
             if symbol in configured_pools:
                 pool = float(configured_pools[symbol])
+                symbols_from_config += 1
             else:
                 pool = self._calculate_symbol_pool(style_map)
+                symbols_from_calc += 1
+            if pool <= 0:
+                symbols_zero_pool.append(symbol)
 
             new_pools[symbol] = pool
 
@@ -363,6 +378,13 @@ class PortfolioAllocator:
 
         self._strategy_allocation = new_alloc
         self._symbol_capital_pool = new_pools
+
+        if symbols_zero_pool:
+            logger.info(
+                "[portfolio_allocator] pool: config=%d calc=%d zero_pool=%d symbols=%s",
+                symbols_from_config, symbols_from_calc, len(symbols_zero_pool),
+                symbols_zero_pool[:15] if len(symbols_zero_pool) > 15 else symbols_zero_pool,
+            )
 
     def _calculate_symbol_pool(self, style_map: Dict[str, List[int]]) -> float:
         """未配置 symbol_capital_pool 时，取该品种所有策略 initial_capital 的最大值 × style 数。
@@ -397,7 +419,9 @@ class PortfolioAllocator:
                 del self._frozen_strategies[sid]
 
     def _compute_start_stop_diff(self, config: Dict) -> Tuple[List[int], List[int]]:
-        """计算需要停止和启动的策略 ID。weight=0 → 停止，weight>0 且未运行 → 启动。"""
+        """计算需要停止和启动的策略 ID。仅处理 regime 配置内的策略（all_managed）。
+        weight=0 → 停止，weight>0 且未运行 → 启动。非 regime 策略不参与启停。
+        """
         ids_to_stop: List[int] = []
         ids_to_start: List[int] = []
 

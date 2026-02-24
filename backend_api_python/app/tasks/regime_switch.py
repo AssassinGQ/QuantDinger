@@ -522,6 +522,8 @@ def _run_multi_strategy(
     weight_changed = result.get("weight_changed", [])
     running_count = result.get("running_count", 0)
     target_count = result.get("target_count", 0)
+    symbols_with_pool = result.get("symbols_with_pool", 0)
+    symbols_total = result.get("symbols_total", 0)
 
     if ids_to_stop:
         _stop_strategies(ids_to_stop, user_id=user_id)
@@ -529,8 +531,9 @@ def _run_multi_strategy(
         _start_strategies(ids_to_start, user_id=user_id)
 
     logger.info(
-        "[regime_switch] MULTI regime=%s (VIX=%.1f F&G=%.0f) | running=%d target=%d | weights=%s | stop=%s start=%s weight_changed=%s",
+        "[regime_switch] MULTI regime=%s (VIX=%.1f F&G=%.0f) | symbols_pool=%d/%d running=%d target=%d | weights=%s | stop=%s start=%s weight_changed=%s",
         regime, macro["vix"], macro["fear_greed"],
+        symbols_with_pool, symbols_total,
         running_count, target_count,
         allocator.effective_weights,
         ids_to_stop, ids_to_start, weight_changed,
