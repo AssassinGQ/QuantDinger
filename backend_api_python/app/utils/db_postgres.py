@@ -97,7 +97,9 @@ def _get_connection_pool():
             raise RuntimeError(f"Invalid DATABASE_URL format: {db_url}")
         
         try:
-            maxconn = int(os.getenv('DB_POOL_MAXCONN', '40'))
+            # 默认随 STRATEGY_MAX_THREADS 伸缩：策略线程多时需更多 DB 连接
+            default_pool = max(40, int(os.getenv('STRATEGY_MAX_THREADS', '64')) + 80)
+            maxconn = int(os.getenv('DB_POOL_MAXCONN', str(default_pool)))
             _connection_pool = pool.ThreadedConnectionPool(
                 minconn=2,
                 maxconn=maxconn,
@@ -108,7 +110,10 @@ def _get_connection_pool():
                 dbname=params.get('dbname', 'quantdinger'),
                 connect_timeout=10,
             )
-            logger.info(f"PostgreSQL connection pool created: {params.get('host')}:{params.get('port')}/{params.get('dbname')}")
+            logger.info(
+                "PostgreSQL connection pool created: %s:%s/%s maxconn=%d",
+                params.get('host'), params.get('port'), params.get('dbname'), maxconn,
+            )
         except Exception as e:
             logger.error(f"Failed to create PostgreSQL connection pool: {e}")
             raise

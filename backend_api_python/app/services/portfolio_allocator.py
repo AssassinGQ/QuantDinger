@@ -177,10 +177,15 @@ class PortfolioAllocator:
                 self._handle_over_allocation(old_alloc)
 
                 ids_to_stop, ids_to_start = self._compute_start_stop_diff(config)
+                running_ids = self._get_running_ids()
+                all_m = self._get_all_managed_ids()
+                target_count = sum(1 for sid in all_m if self._strategy_allocation.get(sid, 0) > 0)
                 return {
                     "started": ids_to_start,
                     "stopped": ids_to_stop,
                     "weight_changed": sorted(set(weight_changed_ids)),
+                    "running_count": len(running_ids),
+                    "target_count": target_count,
                 }
 
             raw_target = self._get_target_weights(regime, ms_cfg)
@@ -198,10 +203,15 @@ class PortfolioAllocator:
             self._handle_over_allocation(old_alloc)
 
             ids_to_stop, ids_to_start = self._compute_start_stop_diff(config)
+            running_ids = self._get_running_ids()
+            all_m = self._get_all_managed_ids()
+            target_count = sum(1 for sid in all_m if self._strategy_allocation.get(sid, 0) > 0)
             return {
                 "started": ids_to_start,
                 "stopped": ids_to_stop,
                 "weight_changed": self._find_weight_changed(old_weights, effective),
+                "running_count": len(running_ids),
+                "target_count": target_count,
             }
 
     # ── 组合持仓查询 ─────────────────────────────────────────────────
@@ -409,10 +419,14 @@ class PortfolioAllocator:
         return sorted(ids_to_stop), sorted(ids_to_start)
 
     def _get_running_ids(self) -> Set[int]:
+        """只返回线程仍存活的策略 ID，排除已退出的 'ghost' 线程。"""
         from app import get_trading_executor
         executor = get_trading_executor()
         with executor.lock:
-            return set(executor.running_strategies.keys())
+            return set(
+                sid for sid, th in executor.running_strategies.items()
+                if th.is_alive()
+            )
 
     def _get_all_managed_ids(self) -> Set[int]:
         ids: Set[int] = set()
