@@ -5,6 +5,7 @@ Handles login, logout, registration, password reset, and OAuth authentication.
 Supports both multi-user (database) and single-user (legacy) modes.
 """
 import os
+import time
 from flask import Blueprint, request, jsonify, g, redirect
 from urllib.parse import urlencode
 from app.config.settings import Config
@@ -12,6 +13,9 @@ from app.utils.auth import generate_token, login_required, authenticate_legacy
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 登录流程耗时日志 tag，方便 grep 筛选，如: grep LOGIN_FLOW_TAG app.log
+LOGIN_FLOW_TAG = '[LOGIN_FLOW]'
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -74,12 +78,14 @@ def get_security_config():
         oauth_google_enabled: bool
         oauth_github_enabled: bool
     """
+    t0 = time.perf_counter()
     try:
         from app.services.security_service import get_security_service
         config = get_security_service().get_security_config()
+        logger.info(f"{LOGIN_FLOW_TAG} security_config elapsed_ms={int((time.perf_counter()-t0)*1000)}")
         return jsonify({'code': 1, 'msg': 'success', 'data': config})
     except Exception as e:
-        logger.error(f"get_security_config error: {e}")
+        logger.error(f"{LOGIN_FLOW_TAG} security_config error elapsed_ms={int((time.perf_counter()-t0)*1000)} err={e}")
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
@@ -101,8 +107,12 @@ def login():
         token: JWT token
         userinfo: User information
     """
+    t0 = time.perf_counter()
     ip_address = _get_client_ip()
     user_agent = _get_user_agent()
+    
+    def _log(step: str, t_start: float):
+        logger.info(f"{LOGIN_FLOW_TAG} login step={step} elapsed_ms={int((time.perf_counter()-t_start)*1000)}")
     
     try:
         from app.services.security_service import get_security_service
@@ -110,6 +120,7 @@ def login():
         
         data = request.get_json()
         if not data:
+            _log('parse_fail', t0)
             return jsonify({'code': 400, 'msg': 'No data provided', 'data': None}), 400
         
         username = data.get('username') or data.get('account')
@@ -117,22 +128,30 @@ def login():
         turnstile_token = data.get('turnstile_token')
         
         if not username or not password:
+            _log('validate_fail', t0)
             return jsonify({'code': 400, 'msg': 'Missing username/email or password', 'data': None}), 400
         
         # Step 1: Verify Turnstile (if enabled)
+        t1 = time.perf_counter()
         turnstile_ok, turnstile_msg = security.verify_turnstile(turnstile_token, ip_address)
+        _log('turnstile', t1)
         if not turnstile_ok:
+            _log('turnstile_reject_total', t0)
             return jsonify({'code': 0, 'msg': turnstile_msg, 'data': None}), 400
         
         # Step 2: Check rate limiting
+        t2 = time.perf_counter()
         allowed, block_msg = security.check_login_allowed(username, ip_address)
+        _log('rate_limit_check', t2)
         if not allowed:
+            _log('rate_limit_block_total', t0)
             return jsonify({'code': 0, 'msg': block_msg, 'data': {'blocked': True}}), 429
         
         is_demo = os.getenv('IS_DEMO_MODE', 'false').lower() == 'true'
         user = None
         
         # Step 3: Authenticate
+        t3 = time.perf_counter()
         if not _is_single_user_mode():
             try:
                 from app.services.user_service import get_user_service
@@ -146,6 +165,7 @@ def login():
                     security.record_login_attempt(username, 'account', False, ip_address, user_agent)
                     security.log_security_event('login_failed', user.get('id'), ip_address, user_agent, 
                                                {'username': username, 'reason': 'no_password_set'})
+                    _log('auth_no_password_total', t0)
                     return jsonify({
                         'code': 0, 
                         'msg': 'This account was created with email verification code and has no password set. Please use email code login or set a password first in your profile settings.', 
@@ -158,49 +178,61 @@ def login():
         if not user:
             user = authenticate_legacy(username, password)
         
+        _log('authenticate', t3)
+        
         if not user:
             # Record failed attempt
             security.record_login_attempt(ip_address, 'ip', False, ip_address, user_agent)
             security.record_login_attempt(username, 'account', False, ip_address, user_agent)
             security.log_security_event('login_failed', None, ip_address, user_agent, 
                                        {'username': username, 'reason': 'invalid_credentials'})
+            _log('auth_fail_total', t0)
             return jsonify({'code': 0, 'msg': 'Invalid credentials', 'data': None}), 401
         
         # Check user status
         if user.get('status') == 'disabled':
             security.log_security_event('login_blocked', user.get('id'), ip_address, user_agent,
                                        {'reason': 'account_disabled'})
+            _log('disabled_total', t0)
             return jsonify({'code': 0, 'msg': 'Account is disabled', 'data': None}), 403
         
         if user.get('status') == 'pending':
+            _log('pending_total', t0)
             return jsonify({'code': 0, 'msg': 'Account is pending activation', 'data': None}), 403
         
         # Step 4: Increment token_version (invalidates old sessions for single-client login)
         user_id = user.get('id') or user.get('user_id', 1)
+        t4 = time.perf_counter()
         try:
             from app.services.user_service import get_user_service
             new_token_version = get_user_service().increment_token_version(user_id)
         except Exception as e:
             logger.warning(f"Failed to increment token_version: {e}")
             new_token_version = 1
+        _log('increment_token_version', t4)
         
         # Step 5: Generate token with new token_version
+        t5 = time.perf_counter()
         token = generate_token(
             user_id=user_id,
             username=user.get('username', username),
             role=user.get('role', 'admin'),
             token_version=new_token_version  # 包含新的 token_version
         )
+        _log('generate_token', t5)
         
         if not token:
+            _log('token_gen_fail_total', t0)
             return jsonify({'code': 500, 'msg': 'Token generation error', 'data': None}), 500
         
         # Step 6: Record successful login
+        t6 = time.perf_counter()
         security.record_login_attempt(ip_address, 'ip', True, ip_address, user_agent)
         security.record_login_attempt(username, 'account', True, ip_address, user_agent)
         security.clear_login_attempts(ip_address, 'ip')
         security.clear_login_attempts(username, 'account')
         security.log_security_event('login_success', user.get('id'), ip_address, user_agent)
+        _log('record_success', t6)
         
         # Build user info for frontend
         userinfo = {
@@ -215,6 +247,7 @@ def login():
             }
         }
         
+        _log('success_total', t0)
         return jsonify({
             'code': 1,
             'msg': 'Login successful',
@@ -225,7 +258,7 @@ def login():
         })
             
     except Exception as e:
-        logger.error(f"Login error: {e}")
+        logger.error(f"{LOGIN_FLOW_TAG} login error elapsed_ms={int((time.perf_counter()-t0)*1000)} err={e}")
         return jsonify({'code': 500, 'msg': str(e), 'data': None}), 500
 
 
@@ -245,8 +278,12 @@ def login_with_code():
         turnstile_token: str (optional)
         referral_code: str (optional, referrer's user ID - only for new users)
     """
+    t0 = time.perf_counter()
     ip_address = _get_client_ip()
     user_agent = _get_user_agent()
+
+    def _log_code(step: str, t_start: float):
+        logger.info(f"{LOGIN_FLOW_TAG} login_code step={step} elapsed_ms={int((time.perf_counter()-t_start)*1000)}")
     
     try:
         from app.services.security_service import get_security_service
@@ -276,22 +313,30 @@ def login_with_code():
             return jsonify({'code': 0, 'msg': 'Verification code is required', 'data': None}), 400
         
         # Verify Turnstile
+        t1 = time.perf_counter()
         turnstile_ok, turnstile_msg = security.verify_turnstile(turnstile_token, ip_address)
+        _log_code('turnstile', t1)
         if not turnstile_ok:
+            _log_code('turnstile_reject_total', t0)
             return jsonify({'code': 0, 'msg': turnstile_msg, 'data': None}), 400
         
         # Verify email code
+        t2 = time.perf_counter()
         code_valid, code_msg = email_service.verify_code(email, code, 'login')
         if not code_valid:
+            _log_code('verify_code_fail_total', t0)
             return jsonify({'code': 0, 'msg': code_msg, 'data': None}), 400
+        _log_code('verify_code', t2)
         
         # Check if user exists
+        t3 = time.perf_counter()
         user = user_service.get_user_by_email(email)
         is_new_user = False
         
         if not user:
             # Check if registration is enabled
             if os.getenv('ENABLE_REGISTRATION', 'true').lower() != 'true':
+                _log_code('reg_disabled_total', t0)
                 return jsonify({'code': 0, 'msg': 'User not found and registration is disabled', 'data': None}), 403
             
             # Auto-create user with email as username
@@ -362,19 +407,23 @@ def login_with_code():
             # Log registration
             security.log_security_event('register_via_code', user_id, ip_address, user_agent, 
                                        {'email': email, 'referred_by': referred_by})
+        _log_code('auth_or_create_user', t3)
         
         # Check user status
         if user.get('status') == 'disabled':
             security.log_security_event('login_blocked', user.get('id'), ip_address, user_agent,
                                        {'reason': 'account_disabled'})
+            _log_code('disabled_total', t0)
             return jsonify({'code': 0, 'msg': 'Account is disabled', 'data': None}), 403
         
         # Increment token_version (invalidates old sessions for single-client login)
+        t4 = time.perf_counter()
         try:
             new_token_version = user_service.increment_token_version(user['id'])
         except Exception as e:
             logger.warning(f"Failed to increment token_version: {e}")
             new_token_version = 1
+        _log_code('increment_token_version', t4)
         
         # Generate token with new token_version
         token = generate_token(
@@ -410,7 +459,7 @@ def login_with_code():
         security.log_security_event('login_via_code', user['id'], ip_address, user_agent)
         
         is_demo = os.getenv('IS_DEMO_MODE', 'false').lower() == 'true'
-        
+        _log_code('success_total', t0)
         return jsonify({
             'code': 1,
             'msg': 'Login successful' + (' (new account created)' if is_new_user else ''),
@@ -433,7 +482,7 @@ def login_with_code():
         })
         
     except Exception as e:
-        logger.error(f"login_with_code error: {e}")
+        logger.error(f"{LOGIN_FLOW_TAG} login_code error elapsed_ms={int((time.perf_counter()-t0)*1000)} err={e}")
         return jsonify({'code': 0, 'msg': 'Login failed', 'data': None}), 500
 
 

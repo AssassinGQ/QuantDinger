@@ -1,5 +1,8 @@
 import request from '@/utils/request'
 
+// 登录相关请求超时（网络较慢时易超时，调大至 90s）
+const LOGIN_TIMEOUT = 90000
+
 function joinApiBase (path) {
   const base = (process.env.VUE_APP_API_BASE_URL || '').trim()
   const p = path.startsWith('/') ? path : `/${path}`
@@ -19,7 +22,8 @@ function joinApiBase (path) {
 export function getSecurityConfig () {
   return request({
     url: '/api/auth/security-config',
-    method: 'get'
+    method: 'get',
+    timeout: LOGIN_TIMEOUT
   })
 }
 
@@ -31,7 +35,8 @@ export function login (data) {
   return request({
     url: '/api/auth/login',
     method: 'post',
-    data
+    data,
+    timeout: LOGIN_TIMEOUT
   })
 }
 
@@ -51,7 +56,8 @@ export function logout () {
 export function getUserInfo () {
   return request({
     url: '/api/auth/info',
-    method: 'get'
+    method: 'get',
+    timeout: LOGIN_TIMEOUT
   })
 }
 
@@ -64,7 +70,8 @@ export function sendVerificationCode (data) {
   return request({
     url: '/api/auth/send-code',
     method: 'post',
-    data
+    data,
+    timeout: LOGIN_TIMEOUT
   })
 }
 
@@ -76,7 +83,8 @@ export function loginWithCode (data) {
   return request({
     url: '/api/auth/login-code',
     method: 'post',
-    data
+    data,
+    timeout: LOGIN_TIMEOUT
   })
 }
 
@@ -88,7 +96,8 @@ export function register (data) {
   return request({
     url: '/api/auth/register',
     method: 'post',
-    data
+    data,
+    timeout: LOGIN_TIMEOUT
   })
 }
 
@@ -100,7 +109,8 @@ export function resetPassword (data) {
   return request({
     url: '/api/auth/reset-password',
     method: 'post',
-    data
+    data,
+    timeout: LOGIN_TIMEOUT
   })
 }
 

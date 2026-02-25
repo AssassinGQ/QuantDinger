@@ -12,6 +12,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# 登录流程耗时日志 tag，方便 grep 筛选
+LOGIN_FLOW_TAG = '[LOGIN_FLOW]'
+
 # Try to import bcrypt for secure password hashing
 try:
     import bcrypt
@@ -89,6 +92,7 @@ class UserService:
     
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Get user by username (includes password_hash for auth)"""
+        t0 = time.perf_counter()
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
@@ -102,7 +106,8 @@ class UserService:
                 )
                 row = cur.fetchone()
                 cur.close()
-                return row
+            logger.info(f"{LOGIN_FLOW_TAG} db get_user_by_username elapsed_ms={int((time.perf_counter()-t0)*1000)}")
+            return row
         except Exception as e:
             logger.error(f"get_user_by_username failed: {e}")
             return None
@@ -111,6 +116,7 @@ class UserService:
         """Get user by email (includes password_hash for auth)"""
         if not email:
             return None
+        t0 = time.perf_counter()
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
@@ -124,7 +130,8 @@ class UserService:
                 )
                 row = cur.fetchone()
                 cur.close()
-                return row
+            logger.info(f"{LOGIN_FLOW_TAG} db get_user_by_email elapsed_ms={int((time.perf_counter()-t0)*1000)}")
+            return row
         except Exception as e:
             logger.error(f"get_user_by_email failed: {e}")
             return None
@@ -158,10 +165,13 @@ class UserService:
             # This allows the caller to provide a more specific error message
             return {'_no_password': True, **user}
         
+        t_verify = time.perf_counter()
         if not self.verify_password(password, password_hash):
             return None
+        logger.info(f"{LOGIN_FLOW_TAG} auth verify_password elapsed_ms={int((time.perf_counter()-t_verify)*1000)}")
         
         # Update last login time
+        t_update = time.perf_counter()
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
@@ -172,10 +182,11 @@ class UserService:
                 db.commit()
                 affected = cur.rowcount
                 cur.close()
-                if affected == 0:
-                    logger.error(f"Failed to update last_login_at: no rows affected for user_id={user['id']}")
-                else:
-                    logger.info(f"Updated last_login_at for user_id={user['id']}")
+            logger.info(f"{LOGIN_FLOW_TAG} db update_last_login_at elapsed_ms={int((time.perf_counter()-t_update)*1000)}")
+            if affected == 0:
+                logger.error(f"Failed to update last_login_at: no rows affected for user_id={user['id']}")
+            else:
+                logger.info(f"Updated last_login_at for user_id={user['id']}")
         except Exception as e:
             logger.error(f"Failed to update last_login_at for user_id={user.get('id')}: {e}")
         
@@ -220,6 +231,7 @@ class UserService:
         Returns:
             新的 token 版本号
         """
+        t0 = time.perf_counter()
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
@@ -241,10 +253,10 @@ class UserService:
                 )
                 row = cur.fetchone()
                 cur.close()
-                
-                new_version = int(row.get('token_version') or 1) if row else 1
-                logger.info(f"Incremented token_version for user_id={user_id} to {new_version}")
-                return new_version
+            logger.info(f"{LOGIN_FLOW_TAG} db increment_token_version elapsed_ms={int((time.perf_counter()-t0)*1000)}")
+            new_version = int(row.get('token_version') or 1) if row else 1
+            logger.info(f"Incremented token_version for user_id={user_id} to {new_version}")
+            return new_version
         except Exception as e:
             logger.error(f"increment_token_version failed: {e}")
             return 1

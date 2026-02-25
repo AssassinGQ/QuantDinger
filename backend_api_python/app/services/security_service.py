@@ -3,6 +3,7 @@ Security Service - Handles Turnstile verification, rate limiting, and brute-forc
 """
 import os
 import json
+import time
 import requests
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, Dict, Any
@@ -10,6 +11,9 @@ from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 登录流程耗时日志 tag，方便 grep 筛选
+LOGIN_FLOW_TAG = '[LOGIN_FLOW]'
 
 # Singleton instance
 _security_service = None
@@ -120,6 +124,7 @@ class SecurityService:
             ip_address: Client IP address
             user_agent: Client user agent string
         """
+        t0 = time.perf_counter()
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
@@ -133,6 +138,7 @@ class SecurityService:
                 )
                 db.commit()
                 cur.close()
+            logger.info(f"{LOGIN_FLOW_TAG} db record_login_attempt id_type={identifier_type} elapsed_ms={int((time.perf_counter()-t0)*1000)}")
             return True
         except Exception as e:
             logger.error(f"Failed to record login attempt: {e}")
@@ -145,6 +151,7 @@ class SecurityService:
         Returns:
             (is_blocked, remaining_seconds)
         """
+        t0 = time.perf_counter()
         try:
             if identifier_type == 'ip':
                 max_attempts = self.ip_max_attempts
@@ -171,22 +178,18 @@ class SecurityService:
                 )
                 row = cur.fetchone()
                 cur.close()
-                
-                if not row:
-                    return False, 0
-                
-                failed_count = row['count'] or 0
-                last_attempt = row['last_attempt']
-                
-                if failed_count >= max_attempts:
-                    # Check if still in block period
-                    if last_attempt:
-                        block_until = last_attempt + timedelta(minutes=block_minutes)
-                        if datetime.now() < block_until:
-                            remaining = int((block_until - datetime.now()).total_seconds())
-                            return True, remaining
-                
+            logger.info(f"{LOGIN_FLOW_TAG} db is_blocked id_type={identifier_type} elapsed_ms={int((time.perf_counter()-t0)*1000)}")
+            if not row:
                 return False, 0
+            failed_count = row['count'] or 0
+            last_attempt = row['last_attempt']
+            if failed_count >= max_attempts:
+                if last_attempt:
+                    block_until = last_attempt + timedelta(minutes=block_minutes)
+                    if datetime.now() < block_until:
+                        remaining = int((block_until - datetime.now()).total_seconds())
+                        return True, remaining
+            return False, 0
                 
         except Exception as e:
             logger.error(f"Failed to check block status: {e}")
@@ -217,6 +220,7 @@ class SecurityService:
         """
         Clear login attempts for an identifier (called after successful login).
         """
+        t0 = time.perf_counter()
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
@@ -229,6 +233,7 @@ class SecurityService:
                 )
                 db.commit()
                 cur.close()
+            logger.info(f"{LOGIN_FLOW_TAG} db clear_login_attempts id_type={identifier_type} elapsed_ms={int((time.perf_counter()-t0)*1000)}")
             return True
         except Exception as e:
             logger.error(f"Failed to clear login attempts: {e}")
@@ -251,6 +256,7 @@ class SecurityService:
             user_agent: Client user agent
             details: Additional details as dict
         """
+        t0 = time.perf_counter()
         try:
             details_json = json.dumps(details) if details else None
             
@@ -266,6 +272,7 @@ class SecurityService:
                 )
                 db.commit()
                 cur.close()
+            logger.info(f"{LOGIN_FLOW_TAG} db log_security_event action={action} elapsed_ms={int((time.perf_counter()-t0)*1000)}")
             return True
         except Exception as e:
             logger.error(f"Failed to log security event: {e}")
