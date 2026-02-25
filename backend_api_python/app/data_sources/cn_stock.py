@@ -494,7 +494,8 @@ class AShareDataSource(BaseDataSource, TencentDataMixin):
                     d = data['data']
                     last_price = d.get('f43', 0)
                     if last_price and last_price > 0:
-                        divisor = 100 if last_price > 1000 else 1
+                        # 东方财富 A 股接口返回价格单位为「分」(1/100元)，需统一除以 100
+                        divisor = 100
                         return {
                             'last': last_price / divisor,
                             'high': d.get('f44', 0) / divisor,
