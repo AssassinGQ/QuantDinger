@@ -5,14 +5,9 @@ import time
 import threading
 import traceback
 import os
-try:
-    import resource  # Linux/Unix only
-except Exception:
-    resource = None
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 import json
-from decimal import Decimal, ROUND_DOWN, ROUND_UP
 import pandas as pd
 import numpy as np
 import ccxt
@@ -29,7 +24,7 @@ logger = get_logger(__name__)
 
 class TradingExecutor:
     """实时交易执行器 (Signal Provider Mode)"""
-    
+
     def __init__(self):
         # 不再使用全局连接，改为每次使用时从连接池获取
         self.running_strategies = {}  # {strategy_id: thread}
@@ -46,11 +41,14 @@ class TradingExecutor:
         self._signal_dedup = {}  # type: Dict[int, Dict[str, float]]
         self._signal_dedup_lock = threading.Lock()
         self.kline_service = KlineService()   # K线服务（带缓存）
-        
+
         # 单实例线程上限，避免无限制创建线程导致 can't start new thread/OOM
         self.max_threads = int(os.getenv('STRATEGY_MAX_THREADS', '64'))
-        logger.info("TradingExecutor max_threads=%d (set STRATEGY_MAX_THREADS in .env if needed)", self.max_threads)
-        
+        logger.info(
+            "TradingExecutor max_threads=%d (set STRATEGY_MAX_THREADS in .env if needed)",
+            self.max_threads,
+        )
+
         # 确保数据库字段存在
         self._ensure_db_columns()
 
@@ -66,11 +64,15 @@ class TradingExecutor:
                     # PostgreSQL: 使用 information_schema 查询列
                     try:
                         cursor.execute("""
-                            SELECT column_name FROM information_schema.columns 
+                            SELECT column_name FROM information_schema.columns
                             WHERE table_name = 'qd_strategy_positions'
                         """)
                         cols = cursor.fetchall() or []
-                        col_names = {c.get('column_name') or c.get('COLUMN_NAME') for c in cols if isinstance(c, dict)}
+                        col_names = {
+                            c.get('column_name') or c.get('COLUMN_NAME')
+                            for c in cols
+                            if isinstance(c, dict)
+                        }
                     except Exception:
                         col_names = set()
                 else:
@@ -83,18 +85,30 @@ class TradingExecutor:
                         col_names = set()
 
                 if 'highest_price' not in col_names:
-                    logger.info(f"Adding highest_price column to qd_strategy_positions ({db_type})...")
+                    logger.info(
+                        "Adding highest_price column to qd_strategy_positions (%s)...",
+                        db_type,
+                    )
                     if db_type == 'postgresql':
-                        cursor.execute("ALTER TABLE qd_strategy_positions ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION DEFAULT 0")
+                        cursor.execute(
+                            "ALTER TABLE qd_strategy_positions ADD COLUMN IF NOT EXISTS "
+                            "highest_price DOUBLE PRECISION DEFAULT 0"
+                        )
                     else:
                         cursor.execute("ALTER TABLE qd_strategy_positions ADD COLUMN highest_price REAL DEFAULT 0")
                     db.commit()
                     logger.info("highest_price column added")
 
                 if 'lowest_price' not in col_names:
-                    logger.info(f"Adding lowest_price column to qd_strategy_positions ({db_type})...")
+                    logger.info(
+                        "Adding lowest_price column to qd_strategy_positions (%s)...",
+                        db_type,
+                    )
                     if db_type == 'postgresql':
-                        cursor.execute("ALTER TABLE qd_strategy_positions ADD COLUMN IF NOT EXISTS lowest_price DOUBLE PRECISION DEFAULT 0")
+                        cursor.execute(
+                            "ALTER TABLE qd_strategy_positions ADD COLUMN IF NOT EXISTS "
+                            "lowest_price DOUBLE PRECISION DEFAULT 0"
+                        )
                     else:
                         cursor.execute("ALTER TABLE qd_strategy_positions ADD COLUMN lowest_price REAL DEFAULT 0")
                     db.commit()
@@ -102,9 +116,11 @@ class TradingExecutor:
 
                 cursor.close()
         except Exception as e:
-            logger.error(f"Failed to check/ensure DB columns: {str(e)}")
+            logger.error("Failed to check/ensure DB columns: %s", e)
 
-    def _normalize_trade_symbol(self, exchange: Any, symbol: str, market_type: str, exchange_id: str) -> str:
+    def _normalize_trade_symbol(
+        self, exchange: Any, symbol: str, market_type: str, exchange_id: str
+    ) -> str:
         """
         将数据库/配置里的 symbol 规范化为交易所合约可用的 CCXT symbol。
 
@@ -141,7 +157,13 @@ class TradingExecutor:
                 if cand in exchange.markets:
                     cm = exchange.markets[cand]
                     if cm and (cm.get('swap') or cm.get('future') or cm.get('contract')):
-                        logger.info(f"symbol normalized: {symbol} -> {cand} (exchange={exchange_id}, market_type={market_type})")
+                        logger.info(
+                            "symbol normalized: %s -> %s (exchange=%s, market_type=%s)",
+                            symbol,
+                            cand,
+                            exchange_id,
+                            market_type,
+                        )
                         return cand
 
             return symbol
@@ -155,8 +177,13 @@ class TradingExecutor:
             p = psutil.Process()
             mem = p.memory_info().rss / 1024 / 1024
             th = p.num_threads()
-            logger.warning(f"{prefix}resource status: memory={mem:.1f}MB, threads={th}, "
-                           f"running_strategies={len(self.running_strategies)}")
+            logger.warning(
+                "%sresource status: memory=%.1fMB, threads=%s, running_strategies=%d",
+                prefix,
+                mem,
+                th,
+                len(self.running_strategies),
+            )
         except Exception:
             try:
                 th = threading.active_count()
@@ -171,8 +198,13 @@ class TradingExecutor:
                 except Exception:
                     pass
                 vmrss_str = f"{vmrss[0]}{vmrss[1]}" if vmrss else "N/A"
-                logger.warning(f"{prefix}resource status: VmRSS={vmrss_str}, active_threads={th}, "
-                               f"running_strategies={len(self.running_strategies)}")
+                logger.warning(
+                    "%sresource status: VmRSS=%s, active_threads=%s, running_strategies=%d",
+                    prefix,
+                    vmrss_str,
+                    th,
+                    len(self.running_strategies),
+                )
             except Exception:
                 pass
 
@@ -298,7 +330,7 @@ class TradingExecutor:
         """
         try:
             x = float(v if v is not None else default)
-        except Exception:
+        except (ValueError, TypeError):
             x = float(default or 0.0)
         if x > 1.0:
             x = x / 100.0
@@ -393,14 +425,14 @@ class TradingExecutor:
                 },
             },
         }
-    
+
     def start_strategy(self, strategy_id: int) -> bool:
         """
         启动策略
-        
+
         Args:
             strategy_id: 策略ID
-            
+
         Returns:
             是否成功
         """
@@ -421,9 +453,9 @@ class TradingExecutor:
                     return False
 
                 if strategy_id in self.running_strategies:
-                    logger.warning(f"Strategy {strategy_id} is already running")
+                    logger.warning("Strategy %s is already running", strategy_id)
                     return False
-                
+
                 # 创建并启动线程
                 thread = threading.Thread(
                     target=self._run_strategy_loop,
@@ -437,32 +469,32 @@ class TradingExecutor:
                     self._log_resource_status(prefix="启动异常")
                     raise e
                 self.running_strategies[strategy_id] = thread
-                
-                logger.info(f"Strategy {strategy_id} started")
+
+                logger.info("Strategy %s started", strategy_id)
                 self._console_print(f"[strategy:{strategy_id}] started")
                 return True
-                
+
         except Exception as e:
-            logger.error(f"Failed to start strategy {strategy_id}: {str(e)}")
+            logger.error("Failed to start strategy %s: %s", strategy_id, e)
             logger.error(traceback.format_exc())
             return False
-    
+
     def stop_strategy(self, strategy_id: int) -> bool:
         """
         停止策略
-        
+
         Args:
             strategy_id: 策略ID
-            
+
         Returns:
             是否成功
         """
         try:
             with self.lock:
                 if strategy_id not in self.running_strategies:
-                    logger.warning(f"Strategy {strategy_id} is not running")
+                    logger.warning("Strategy %s is not running", strategy_id)
                     return False
-                
+
                 # 标记策略为停止状态
                 with get_db_connection() as db:
                     cursor = db.cursor()
@@ -472,586 +504,44 @@ class TradingExecutor:
                     )
                     db.commit()
                     cursor.close()
-                
+
                 # 从运行列表中移除（线程会在下次循环检查状态时退出）
                 del self.running_strategies[strategy_id]
-                
-                logger.info(f"Strategy {strategy_id} stopped")
+
+                logger.info("Strategy %s stopped", strategy_id)
                 self._console_print(f"[strategy:{strategy_id}] stopped (requested)")
                 return True
-                
+
         except Exception as e:
-            logger.error(f"Failed to stop strategy {strategy_id}: {str(e)}")
+            logger.error("Failed to stop strategy %s: %s", strategy_id, e)
             logger.error(traceback.format_exc())
             return False
-    
+
     def _run_strategy_loop(self, strategy_id: int):
         """
         策略运行循环
-        
+
         Args:
             strategy_id: 策略ID
         """
-        logger.info(f"Strategy {strategy_id} loop starting")
+        logger.info("Strategy %s loop starting", strategy_id)
         self._console_print(f"[strategy:{strategy_id}] loop initializing")
-        
+
         try:
-            # 加载策略配置
             strategy = self._load_strategy(strategy_id)
             if not strategy:
-                logger.error(f"Strategy {strategy_id} not found")
+                logger.error("Strategy %s not found or invalid", strategy_id)
                 return
-            
-            if strategy['strategy_type'] != 'IndicatorStrategy':
-                logger.error(f"Strategy {strategy_id} has unsupported strategy_type for realtime execution: {strategy['strategy_type']}")
-                return
-            
-            # 初始化策略状态
-            trading_config = strategy['trading_config']
-            indicator_config = strategy['indicator_config']
-            ai_model_config = strategy.get('ai_model_config') or {}
-            execution_mode = (strategy.get('execution_mode') or 'signal').strip().lower()
-            if execution_mode not in ['signal', 'live']:
-                execution_mode = 'signal'
-            notification_config = strategy.get('notification_config') or {}
-            strategy_name = strategy.get('strategy_name') or f"strategy_{int(strategy_id)}"
-            symbol = trading_config.get('symbol', '')
-            timeframe = trading_config.get('timeframe', '1H')
-            
-            # 安全获取 leverage 和 trade_direction
-            try:
-                leverage_val = trading_config.get('leverage', 1)
-                if isinstance(leverage_val, (list, tuple)):
-                    leverage_val = leverage_val[0] if leverage_val else 1
-                leverage = float(leverage_val)
-            except:
-                logger.warning(f"Strategy {strategy_id} invalid leverage format, reset to 1: {trading_config.get('leverage')}")
-                leverage = 1.0
-            
-            # 获取市场类型，默认为合约
-            # 根据杠杆自动判断：杠杆=1为现货，杠杆>1为合约
-            market_type = trading_config.get('market_type', 'swap')
-            if market_type not in ['swap', 'spot']:
-                logger.error(f"Strategy {strategy_id} invalid market_type={market_type} (only swap/spot supported); refusing to start")
-                return
-            
-            # 根据杠杆自动调整市场类型
-            if leverage == 1.0:
-                market_type = 'spot'  # 现货固定1倍杠杆
-                logger.info(f"Strategy {strategy_id} leverage=1; auto-switch market_type to spot")
-            else:
-                # 合约市场：统一使用 swap（永续），避免 futures/delivery 混淆导致持仓/下单查错市场
-                market_type = 'swap'
-                logger.info(f"Strategy {strategy_id} derivatives trading; normalize market_type to: {market_type}")
-            
-            # 根据市场类型限制杠杆
-            if market_type == 'spot':
-                leverage = 1.0  # 现货固定1倍杠杆
-            elif leverage < 1:
-                leverage = 1.0
-            elif leverage > 125:
-                leverage = 125.0
-                logger.warning(f"Strategy {strategy_id} leverage > 125; capped to 125")
-            
-            # 获取交易方向，现货只能做多
-            trade_direction = trading_config.get('trade_direction', 'long')
-            if market_type == 'spot':
-                trade_direction = 'long'  # 现货只能做多
-                logger.info(f"Strategy {strategy_id} spot trading; force trade_direction=long")
 
-            # 获取市场类别（Crypto, USStock, Forex, Futures, AShare, HShare）
-            # 这决定了使用哪个数据源来获取价格和K线数据
-            market_category = (strategy.get('market_category') or 'Crypto').strip()
-            logger.info(f"Strategy {strategy_id} market_category: {market_category}")
-
-            # Check if this is a cross-sectional strategy
-            cs_strategy_type = trading_config.get('cs_strategy_type', 'single')
+            cs_strategy_type = (strategy.get('trading_config') or {}).get('cs_strategy_type', 'single')
             if cs_strategy_type == 'cross_sectional':
-                # Run cross-sectional strategy loop
-                self._run_cross_sectional_strategy_loop(
-                    strategy_id, strategy, trading_config, indicator_config, 
-                    ai_model_config, execution_mode, notification_config, 
-                    strategy_name, market_category, market_type, leverage, 
-                    initial_capital, indicator_code, indicator_id
-                )
+                self._run_cross_sectional_strategy_loop(strategy_id, strategy)
                 return
 
-            # 初始化交易所连接（信号模式下无需真实连接）
-            exchange = None
-            
-            # 安全获取 initial_capital
-            try:
-                initial_capital_val = strategy.get('initial_capital', 1000)
-                if isinstance(initial_capital_val, (list, tuple)):
-                    initial_capital_val = initial_capital_val[0] if initial_capital_val else 1000
-                initial_capital = float(initial_capital_val)
-            except:
-                logger.warning(f"Strategy {strategy_id} invalid initial_capital format, reset to 1000: {strategy.get('initial_capital')}")
-                initial_capital = 1000.0
-            
-            # 净值会在首次更新持仓时自动计算和更新
-            
-            # 获取指标代码
-            indicator_id = indicator_config.get('indicator_id')
-            indicator_code = indicator_config.get('indicator_code', '')
-            
-            # 如果代码为空，尝试从数据库获取
-            if not indicator_code and indicator_id:
-                indicator_code = self._get_indicator_code_from_db(indicator_id)
-            
-            if not indicator_code:
-                logger.error(f"Strategy {strategy_id} indicator_code is empty")
-                return
-            
-            # 确保 indicator_code 是字符串（处理 JSON 转义问题）
-            if not isinstance(indicator_code, str):
-                indicator_code = str(indicator_code)
-            
-            # 处理可能的 JSON 转义问题
-            if '\\n' in indicator_code and '\n' not in indicator_code:
-                try:
-                    import json
-                    decoded = json.loads(f'"{indicator_code}"')
-                    if isinstance(decoded, str):
-                        indicator_code = decoded
-                        logger.info(f"Strategy {strategy_id} decoded escaped indicator_code")
-                except Exception as e:
-                    logger.warning(f"Strategy {strategy_id} JSON decode failed; falling back to manual unescape: {str(e)}")
-                    indicator_code = (
-                        indicator_code
-                        .replace('\\n', '\n')
-                        .replace('\\t', '\t')
-                        .replace('\\r', '\r')
-                        .replace('\\"', '"')
-                        .replace("\\'", "'")
-                        .replace('\\\\', '\\')
-                    )
-            
-            # ============================================
-            # 初始化阶段：获取历史K线并计算指标
-            # ============================================
-            # logger.info(f"策略 {strategy_id} 初始化：获取历史K线数据...")
-            history_limit = int(os.getenv('K_LINE_HISTORY_GET_NUMBER', 500))
-            klines = self._fetch_latest_kline(symbol, timeframe, limit=history_limit, market_category=market_category)
-            if not klines or len(klines) < 2:
-                logger.error(f"Strategy {strategy_id} failed to fetch K-lines")
-                return
-            logger.info(rf'Strategy {strategy_id} history kline number: {len(klines)}')
-            
-            # 转换为DataFrame
-            df = self._klines_to_dataframe(klines)
-            if len(df) == 0:
-                logger.error(f"Strategy {strategy_id} K-lines are empty after normalization")
-                return
+            self._run_single_symbol_strategy_loop(strategy_id, strategy)
 
-            # 按需注入宏观数据 (VIX/DXY/Fear&Greed)
-            # 仅当 trading_config.include_macro=true 时才拉取，避免影响不需要的策略
-            include_macro = trading_config.get('include_macro', False)
-            if include_macro:
-                try:
-                    df = MacroDataService.enrich_dataframe_realtime(df)
-                    logger.info(f"Strategy {strategy_id} macro data injected (vix/dxy/fear_greed)")
-                except Exception as e:
-                    logger.warning(f"Strategy {strategy_id} macro data injection failed (continuing without): {e}")
-
-            # ============================================
-            # 启动时：完全依赖本地数据库的持仓状态（虚拟持仓）
-            # ============================================
-            # 信号模式下，不再同步交易所持仓
-            pass
-
-            # 获取当前持仓最高价（从本地数据库读取）
-            current_pos_list = self._get_current_positions(strategy_id, symbol)
-            initial_highest = 0.0
-            initial_position = 0  # 0=无持仓, 1=多头, -1=空头
-            initial_avg_entry_price = 0.0
-            initial_position_count = 0
-            initial_last_add_price = 0.0
-            
-            if current_pos_list:
-                pos = current_pos_list[0]  # 取第一个持仓（单向持仓模式）
-                initial_highest = float(pos.get('highest_price', 0) or 0)
-                pos_side = pos.get('side', 'long')
-                initial_position = 1 if pos_side == 'long' else -1
-                initial_avg_entry_price = float(pos.get('entry_price', 0) or 0)
-                initial_position_count = 1  # 简化处理，假设是单笔持仓
-                initial_last_add_price = initial_avg_entry_price
-
-            # 关键诊断日志：确认指标是否拿到了持仓状态
-            logger.info(
-                f"策略 {strategy_id} 指标注入持仓状态: count={len(current_pos_list)}, "
-                f"position={initial_position}, entry_price={initial_avg_entry_price}, highest={initial_highest}"
-            )
-
-            # 执行指标代码，获取信号和触发价格
-            indicator_result = self._execute_indicator_with_prices(
-                indicator_code, df, trading_config, 
-                initial_highest_price=initial_highest,
-                initial_position=initial_position,
-                initial_avg_entry_price=initial_avg_entry_price,
-                initial_position_count=initial_position_count,
-                initial_last_add_price=initial_last_add_price
-            )
-            if indicator_result is None:
-                logger.error(f"Strategy {strategy_id} indicator execution failed")
-                return
-            
-            # 提取信号和触发价格
-            pending_signals = indicator_result.get('pending_signals', [])  # 待触发的信号列表
-            last_kline_time = indicator_result.get('last_kline_time', 0)  # 最后一根K线的时间
-            
-            logger.info(f"Strategy {strategy_id} initialized; pending_signals={len(pending_signals)}")
-            if pending_signals:
-                logger.info(f"Initial signals: {pending_signals}")
-            
-            # ============================================
-            # Main loop: unified tick cadence (default: 10s)
-            # ============================================
-            # One tick = fetch current price once + evaluate triggers once + (if needed) refresh K-lines / recalc indicator.
-            # Note: `pending_orders` scanning stays at 1s (see PendingOrderWorker) to reduce live dispatch latency.
-            try:
-                # Global-only (no per-strategy override)
-                tick_interval_sec = int(os.getenv('STRATEGY_TICK_INTERVAL_SEC', '10'))
-            except Exception:
-                tick_interval_sec = 10
-            if tick_interval_sec < 1:
-                tick_interval_sec = 1
-
-            last_tick_time = 0.0
-            last_kline_update_time = time.time()
-            
-            # 计算K线周期（秒）
-            from app.data_sources.base import TIMEFRAME_SECONDS
-            timeframe_seconds = TIMEFRAME_SECONDS.get(timeframe, 3600)
-            kline_update_interval = timeframe_seconds  # 每个K线周期更新一次
-            
-            while True:
-                try:
-                    # 检查策略状态
-                    if not self._is_strategy_running(strategy_id):
-                        logger.info(f"Strategy {strategy_id} stopped")
-                        break
-                    
-                    current_time = time.time()
-
-                    # Sleep until next tick to avoid CPU spin.
-                    if last_tick_time > 0:
-                        sleep_sec = (last_tick_time + tick_interval_sec) - current_time
-                        if sleep_sec > 0:
-                            time.sleep(min(sleep_sec, 1.0))
-                            continue
-                    last_tick_time = current_time
-
-                    # ============================================
-                    # 0. 虚拟持仓模式，无需同步交易所
-                    # ============================================
-                    # pass
-                    
-                    # ============================================
-                    # 1. Fetch current price once per tick
-                    # ============================================
-                    current_price = self._fetch_current_price(exchange, symbol, market_type=market_type, market_category=market_category)
-                    if current_price is None:
-                        logger.warning(f"Strategy {strategy_id} failed to fetch current price for {market_category}:{symbol}")
-                        continue
-
-                    # ============================================
-                    # 2. 检查是否需要更新K线（每个K线周期更新一次，从API拉取）
-                    # ============================================
-                    if current_time - last_kline_update_time >= kline_update_interval:
-                        klines = self._fetch_latest_kline(symbol, timeframe, limit=history_limit, market_category=market_category)
-                        if klines and len(klines) >= 2:
-                            df = self._klines_to_dataframe(klines)
-                            if include_macro:
-                                try:
-                                    df = MacroDataService.enrich_dataframe_realtime(df)
-                                except Exception:
-                                    pass
-                            if len(df) > 0:
-                                current_pos_list = self._get_current_positions(strategy_id, symbol)
-                                initial_highest = 0.0
-                                initial_position = 0
-                                initial_avg_entry_price = 0.0
-                                initial_position_count = 0
-                                initial_last_add_price = 0.0
-
-                                if current_pos_list:
-                                    pos = current_pos_list[0]
-                                    initial_highest = float(pos.get('highest_price', 0) or 0)
-                                    pos_side = pos.get('side', 'long')
-                                    initial_position = 1 if pos_side == 'long' else -1
-                                    initial_avg_entry_price = float(pos.get('entry_price', 0) or 0)
-                                    initial_position_count = 1
-                                    initial_last_add_price = initial_avg_entry_price
-
-                                indicator_result = self._execute_indicator_with_prices(
-                                    indicator_code, df, trading_config,
-                                    initial_highest_price=initial_highest,
-                                    initial_position=initial_position,
-                                    initial_avg_entry_price=initial_avg_entry_price,
-                                    initial_position_count=initial_position_count,
-                                    initial_last_add_price=initial_last_add_price
-                                )
-                                if indicator_result:
-                                    pending_signals = indicator_result.get('pending_signals', [])
-                                    last_kline_time = indicator_result.get('last_kline_time', 0)
-                                    new_hp = indicator_result.get('new_highest_price', 0)
-
-                                    last_kline_update_time = current_time
-
-                                    # 更新 highest_price（使用最新 close 作为 current_price 的近似）
-                                    if new_hp > 0 and current_pos_list:
-                                        current_close = float(df['close'].iloc[-1])
-                                        for p in current_pos_list:
-                                            self._update_position(
-                                                strategy_id, p['symbol'], p['side'],
-                                                float(p['size']), float(p['entry_price']),
-                                                current_close,
-                                                highest_price=new_hp
-                                            )
-                    else:
-                        # ============================================
-                        # 3. 非K线更新tick：用当前价更新最后一根K线并重算指标（统一tick节奏）
-                        # ============================================
-                        if 'df' in locals() and df is not None and len(df) > 0:
-                            try:
-                                realtime_df = df.copy()
-                                realtime_df = self._update_dataframe_with_current_price(realtime_df, current_price, timeframe)
-
-                                current_pos_list = self._get_current_positions(strategy_id, symbol)
-                                initial_highest = 0.0
-                                initial_position = 0
-                                initial_avg_entry_price = 0.0
-                                initial_position_count = 0
-                                initial_last_add_price = 0.0
-
-                                if current_pos_list:
-                                    pos = current_pos_list[0]
-                                    initial_highest = float(pos.get('highest_price', 0) or 0)
-                                    pos_side = pos.get('side', 'long')
-                                    initial_position = 1 if pos_side == 'long' else -1
-                                    initial_avg_entry_price = float(pos.get('entry_price', 0) or 0)
-                                    initial_position_count = 1
-                                    initial_last_add_price = initial_avg_entry_price
-
-                                indicator_result = self._execute_indicator_with_prices(
-                                    indicator_code, realtime_df, trading_config,
-                                    initial_highest_price=initial_highest,
-                                    initial_position=initial_position,
-                                    initial_avg_entry_price=initial_avg_entry_price,
-                                    initial_position_count=initial_position_count,
-                                    initial_last_add_price=initial_last_add_price
-                                )
-                                if indicator_result:
-                                    pending_signals = indicator_result.get('pending_signals', [])
-                                    new_hp = indicator_result.get('new_highest_price', 0)
-
-                                    if new_hp > 0 and current_pos_list:
-                                        for p in current_pos_list:
-                                            self._update_position(
-                                                strategy_id, p['symbol'], p['side'],
-                                                float(p['size']), float(p['entry_price']),
-                                                current_price,
-                                                highest_price=new_hp
-                                            )
-                            except Exception as e:
-                                logger.warning(f"Strategy {strategy_id} realtime indicator recompute failed: {str(e)}")
-                    
-                    # ============================================
-                    # 4. Evaluate triggers once per tick
-                    # ============================================
-                    # 优化点4: 信号有效期清理 (Signal Expiration)
-                    current_ts = int(time.time())
-                    if pending_signals:
-                        expiration_threshold = timeframe_seconds * 2
-                        valid_signals = []
-                        for s in pending_signals:
-                            signal_time = s.get('timestamp', 0)
-                            if signal_time == 0 or (current_ts - signal_time) < expiration_threshold:
-                                valid_signals.append(s)
-                            else:
-                                logger.warning(f"Signal expired and removed: {s}")
-                        if len(valid_signals) != len(pending_signals):
-                            pending_signals = valid_signals
-
-                    # Unified cadence log: at most once per tick.
-                    if pending_signals:
-                        logger.info(f"[monitoring] strategy={strategy_id} price={current_price}, pending_signals={len(pending_signals)}")
-
-                    # 检查是否有待触发的信号
-                    triggered_signals = []
-                    signals_to_remove = []
-                        
-                    for signal_info in pending_signals:
-                        signal_type = signal_info.get('type')  # 'open_long', 'close_long', 'open_short', 'close_short'
-                        trigger_price = signal_info.get('trigger_price', 0)
-                        
-                        # 检查价格是否触发
-                        triggered = False
-
-                        # 【关键修复】平仓/止损止盈信号默认“立即触发”
-                        exit_trigger_mode = trading_config.get('exit_trigger_mode', 'immediate')  # 'immediate' or 'price'
-                        if signal_type in ['close_long', 'close_short'] and exit_trigger_mode == 'immediate':
-                            triggered = True
-                        
-                        # 【可选】开仓/加仓信号是否“立即触发”
-                        entry_trigger_mode = trading_config.get('entry_trigger_mode', 'price')  # 'price' or 'immediate'
-                        if signal_type in ['open_long', 'open_short', 'add_long', 'add_short'] and entry_trigger_mode == 'immediate':
-                            triggered = True
-
-                        if trigger_price > 0:
-                            if signal_type in ['open_long', 'close_short', 'add_long']:
-                                if current_price >= trigger_price:
-                                    triggered = True
-                            elif signal_type in ['open_short', 'close_long', 'add_short']:
-                                if current_price <= trigger_price:
-                                    triggered = True
-                        else:
-                            triggered = True
-                        
-                        if triggered:
-                            triggered_signals.append(signal_info)
-                            signals_to_remove.append(signal_info)
-
-                    # ============================================
-                    # 4.1 Server-side exits (config-driven): SL / TP / trailing
-                    # ============================================
-                    # Note: stop-loss is only applied when stop_loss_pct > 0. No default fallback.
-                    risk_tp = self._server_side_take_profit_or_trailing_signal(
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        current_price=float(current_price),
-                        market_type=market_type,
-                        leverage=float(leverage),
-                        trading_config=trading_config,
-                        timeframe_seconds=int(timeframe_seconds or 60),
-                    )
-                    if risk_tp:
-                        triggered_signals.append(risk_tp)
-
-                    risk_sl = self._server_side_stop_loss_signal(
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        current_price=float(current_price),
-                        market_type=market_type,
-                        leverage=float(leverage),
-                        trading_config=trading_config,
-                        timeframe_seconds=int(timeframe_seconds or 60),
-                    )
-                    if risk_sl:
-                        triggered_signals.append(risk_sl)
-                        
-                    # 从待触发列表中移除已触发的信号
-                    for signal_info in signals_to_remove:
-                        if signal_info in pending_signals:
-                            pending_signals.remove(signal_info)
-                        
-                    # 执行触发的信号
-                    if triggered_signals:
-                        logger.info(f"Strategy {strategy_id} triggered signals: {triggered_signals}")
-
-                        current_positions = self._get_current_positions(strategy_id, symbol)
-                        state = self._position_state(current_positions)
-
-                        # Strict state machine + priority:
-                        # - Only allow signals matching current state (flat/long/short).
-                        # - Always prefer close_* over open_*/add_*.
-                        # - Execute at most ONE signal per tick to avoid duplicated/re-entrant orders.
-                        candidates = [s for s in triggered_signals if self._is_signal_allowed(state, s.get('type'))]
-
-                        # If both directions are present while flat, choose by trade_direction (deterministic).
-                        if state == "flat" and candidates:
-                            td = (trade_direction or "both").strip().lower()
-                            if td == "long":
-                                candidates = [s for s in candidates if s.get("type") == "open_long"]
-                            elif td == "short":
-                                candidates = [s for s in candidates if s.get("type") == "open_short"]
-
-                        candidates = sorted(
-                            candidates,
-                            key=lambda s: (
-                                self._signal_priority(s.get("type")),
-                                int(s.get("timestamp") or 0),
-                                str(s.get("type") or ""),
-                            ),
-                        )
-
-                        selected = None
-                        now_i = int(time.time())
-                        for s in candidates:
-                            stype = s.get("type")
-                            sts = int(s.get("timestamp") or 0)
-                            if self._should_skip_signal_once_per_candle(
-                                strategy_id=strategy_id,
-                                symbol=symbol,
-                                signal_type=str(stype or ""),
-                                signal_ts=sts,
-                                timeframe_seconds=int(timeframe_seconds or 60),
-                                now_ts=now_i,
-                            ):
-                                continue
-                            selected = s
-                            break
-
-                        if selected:
-                            signal_type = selected.get('type')
-                            position_size = selected.get('position_size', 0)
-                            trigger_price = selected.get('trigger_price', current_price)
-                            execute_price = trigger_price if trigger_price > 0 else current_price
-                            signal_ts = int(selected.get("timestamp") or 0)
-
-                            ok = self._execute_signal(
-                                strategy_id=strategy_id,
-                                strategy_name=strategy_name,
-                                exchange=exchange,
-                                symbol=symbol,
-                                current_price=execute_price,
-                                signal_type=signal_type,
-                                position_size=position_size,
-                                signal_ts=signal_ts,
-                                current_positions=current_positions,
-                                trade_direction=trade_direction,
-                                leverage=leverage,
-                                initial_capital=initial_capital,
-                                market_type=market_type,
-                                market_category=market_category,
-                                execution_mode=execution_mode,
-                                notification_config=notification_config,
-                                trading_config=trading_config,
-                                ai_model_config=ai_model_config,
-                            )
-                            if ok:
-                                logger.info(f"Strategy {strategy_id} signal executed: {signal_type} @ {execute_price}")
-                                # Notify portfolio positions linked to this symbol
-                                try:
-                                    from app.services.portfolio_monitor import notify_strategy_signal_for_positions
-                                    notify_strategy_signal_for_positions(
-                                        market=market_type or 'Crypto',
-                                        symbol=symbol,
-                                        signal_type=signal_type,
-                                        signal_detail=f"策略: {strategy_name}\n信号: {signal_type}\n价格: {execute_price:.4f}"
-                                    )
-                                except Exception as link_e:
-                                    logger.warning(f"Strategy signal linkage notification failed: {link_e}")
-                            else:
-                                logger.warning(f"Strategy {strategy_id} signal rejected/failed: {signal_type}")
-
-                    # Update positions once per tick.
-                    self._update_positions(strategy_id, symbol, current_price)
-
-                    # Heartbeat for UI observability (once per tick).
-                    self._console_print(
-                        f"[strategy:{strategy_id}] tick price={float(current_price or 0.0):.8f} pending_signals={len(pending_signals or [])}"
-                    )
-                    
-                except Exception as e:
-                    logger.error(f"Strategy {strategy_id} loop error: {str(e)}")
-                    logger.error(traceback.format_exc())
-                    self._console_print(f"[strategy:{strategy_id}] loop error: {e}")
-                    time.sleep(5)
-                    
         except Exception as e:
-            logger.error(f"Strategy {strategy_id} crashed: {str(e)}")
+            logger.error("Strategy %s crashed: %s", strategy_id, e)
             logger.error(traceback.format_exc())
             self._console_print(f"[strategy:{strategy_id}] fatal error: {e}")
         finally:
@@ -1060,21 +550,26 @@ class TradingExecutor:
                 if strategy_id in self.running_strategies:
                     del self.running_strategies[strategy_id]
             self._console_print(f"[strategy:{strategy_id}] loop exited")
-            logger.info(f"Strategy {strategy_id} loop exited")
-    
-    def _sync_positions_with_exchange(self, strategy_id: int, exchange: Any, symbol: str, market_type: str):
+            logger.info("Strategy %s loop exited", strategy_id)
+
+    def _sync_positions_with_exchange(
+        self, strategy_id: int, exchange: Any, symbol: str, market_type: str
+    ):
         """
         [Depracated] 信号模式下无需同步交易所持仓
         """
         pass
 
     def _load_strategy(self, strategy_id: int) -> Optional[Dict[str, Any]]:
-        """Load strategy config (local deployment: no encryption/decryption)."""
+        """
+        加载策略配置，包含解析、校验、归一化。
+        返回可直接用于 run 的配置，失败返回 None。
+        """
         try:
             with get_db_connection() as db:
                 cursor = db.cursor()
                 query = """
-                    SELECT 
+                    SELECT
                         id, strategy_name, strategy_type, status,
                         initial_capital, leverage, decide_interval,
                         execution_mode, notification_config,
@@ -1086,37 +581,165 @@ class TradingExecutor:
                 cursor.execute(query, (strategy_id,))
                 strategy = cursor.fetchone()
                 cursor.close()
-            
-            if strategy:
-                # 解析JSON字段
-                for field in ['indicator_config', 'trading_config', 'notification_config', 'ai_model_config']:
-                    if isinstance(strategy.get(field), str):
-                        try:
-                            strategy[field] = json.loads(strategy[field])
-                        except:
-                            strategy[field] = {}
-                
-                # exchange_config: local deployment stores plaintext JSON
-                exchange_config_str = strategy.get('exchange_config', '{}')
-                if isinstance(exchange_config_str, str) and exchange_config_str:
+
+            if not strategy:
+                return None
+
+            # 解析 JSON 字段
+            for field in ['indicator_config', 'trading_config', 'notification_config', 'ai_model_config']:
+                if isinstance(strategy.get(field), str):
+                    try:
+                        strategy[field] = json.loads(strategy[field])
+                    except Exception:
+                        strategy[field] = {}
+
+            exchange_config_str = strategy.get('exchange_config', '{}')
+            if isinstance(exchange_config_str, str) and exchange_config_str:
+                try:
+                    strategy['exchange_config'] = json.loads(exchange_config_str)
+                except Exception as e:
+                    logger.error(
+                        "Strategy %s failed to parse exchange_config: %s",
+                        strategy_id,
+                        e,
+                    )
                     try:
                         strategy['exchange_config'] = json.loads(exchange_config_str)
-                    except Exception as e:
-                        logger.error(f"Strategy {strategy_id} failed to parse exchange_config: {str(e)}")
-                        # 尝试直接解析 JSON（向后兼容）
-                        try:
-                            strategy['exchange_config'] = json.loads(exchange_config_str)
-                        except:
-                            strategy['exchange_config'] = {}
-                else:
-                    strategy['exchange_config'] = {}
-            
+                    except Exception:
+                        strategy['exchange_config'] = {}
+            else:
+                strategy['exchange_config'] = {}
+
+            # 校验 strategy_type
+            if strategy.get('strategy_type') != 'IndicatorStrategy':
+                logger.error(
+                    f"Strategy {strategy_id} has unsupported strategy_type for realtime execution: "
+                    f"{strategy.get('strategy_type')}"
+                )
+                return None
+
+            trading_config = strategy.get('trading_config') or {}
+            indicator_config = strategy.get('indicator_config') or {}
+
+            # 归一化 execution_mode
+            execution_mode = (strategy.get('execution_mode') or 'signal').strip().lower()
+            if execution_mode not in ['signal', 'live']:
+                execution_mode = 'signal'
+            strategy['_execution_mode'] = execution_mode
+
+            strategy['_strategy_name'] = strategy.get('strategy_name') or f"strategy_{int(strategy_id)}"
+            strategy['_notification_config'] = strategy.get('notification_config') or {}
+
+            # 解析 leverage
+            try:
+                leverage_val = trading_config.get('leverage', 1)
+                if isinstance(leverage_val, (list, tuple)):
+                    leverage_val = leverage_val[0] if leverage_val else 1
+                leverage = float(leverage_val)
+            except Exception:
+                logger.warning(
+                    "Strategy %s invalid leverage format, reset to 1: %s",
+                    strategy_id,
+                    trading_config.get('leverage'),
+                )
+                leverage = 1.0
+
+            # 归一化 market_type：杠杆=1→spot，否则→swap
+            market_type = trading_config.get('market_type', 'swap')
+            if market_type not in ['swap', 'spot']:
+                logger.error(
+                    f"Strategy {strategy_id} invalid market_type={market_type} "
+                    "(only swap/spot supported); refusing to start"
+                )
+                return None
+            if leverage == 1.0:
+                market_type = 'spot'
+                logger.info(
+                    "Strategy %s leverage=1; auto-switch market_type to spot",
+                    strategy_id,
+                )
+            else:
+                market_type = 'swap'
+                logger.info(
+                    "Strategy %s derivatives trading; normalize market_type to: %s",
+                    strategy_id,
+                    market_type,
+                )
+
+            if market_type == 'spot':
+                leverage = 1.0
+            elif leverage < 1:
+                leverage = 1.0
+            elif leverage > 125:
+                leverage = 125.0
+                logger.warning("Strategy %s leverage > 125; capped to 125", strategy_id)
+
+            strategy['_market_type'] = market_type
+            strategy['_leverage'] = leverage
+
+            # market_category
+            market_category = (strategy.get('market_category') or 'Crypto').strip()
+            strategy['_market_category'] = market_category
+            logger.info("Strategy %s market_category: %s", strategy_id, market_category)
+
+            # initial_capital
+            try:
+                initial_capital_val = strategy.get('initial_capital', 1000)
+                if isinstance(initial_capital_val, (list, tuple)):
+                    initial_capital_val = initial_capital_val[0] if initial_capital_val else 1000
+                initial_capital = float(initial_capital_val)
+            except Exception:
+                logger.warning(
+                    "Strategy %s invalid initial_capital format, reset to 1000: %s",
+                    strategy_id,
+                    strategy.get('initial_capital'),
+                )
+                initial_capital = 1000.0
+            strategy['_initial_capital'] = initial_capital
+
+            # indicator_code
+            indicator_id = indicator_config.get('indicator_id')
+            indicator_code = indicator_config.get('indicator_code', '')
+            if not indicator_code and indicator_id:
+                indicator_code = self._get_indicator_code_from_db(indicator_id)
+            if not indicator_code:
+                logger.error("Strategy %s indicator_code is empty", strategy_id)
+                return None
+            if not isinstance(indicator_code, str):
+                indicator_code = str(indicator_code)
+            if '\\n' in indicator_code and '\n' not in indicator_code:
+                try:
+                    decoded = json.loads(f'"{indicator_code}"')
+                    if isinstance(decoded, str):
+                        indicator_code = decoded
+                        logger.info(
+                            "Strategy %s decoded escaped indicator_code",
+                            strategy_id,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Strategy %s JSON decode failed; falling back to manual unescape: %s",
+                        strategy_id,
+                        e,
+                    )
+                    indicator_code = (
+                        indicator_code
+                        .replace('\\n', '\n')
+                        .replace('\\t', '\t')
+                        .replace('\\r', '\r')
+                        .replace('\\"', '"')
+                        .replace("\\'", "'")
+                        .replace('\\\\', '\\')
+                    )
+            strategy['_indicator_code'] = indicator_code
+            strategy['_indicator_id'] = indicator_id
+
             return strategy
-            
+
         except Exception as e:
-            logger.error(f"Failed to load strategy config: {str(e)}")
+            logger.error("Failed to load strategy config: %s", e)
             return None
-    
+
     def _is_strategy_running(self, strategy_id: int) -> bool:
         """检查策略是否在运行"""
         try:
@@ -1131,7 +754,7 @@ class TradingExecutor:
                 return result and result.get('status') == 'running'
         except:
             return False
-    
+
     def _init_exchange(
         self,
         exchange_config: Dict[str, Any],
@@ -1141,10 +764,16 @@ class TradingExecutor:
     ) -> Optional[ccxt.Exchange]:
         """(Mock) 信号模式不需要真实交易所连接"""
         return None
-    
-    def _fetch_latest_kline(self, symbol: str, timeframe: str, limit: int = 500, market_category: str = 'Crypto') -> List[Dict[str, Any]]:
+
+    def _fetch_latest_kline(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int = 500,
+        market_category: str = 'Crypto',
+    ) -> List[Dict[str, Any]]:
         """获取最新K线数据（优先从缓存获取）
-        
+
         Args:
             symbol: 交易对/代码
             timeframe: 时间周期
@@ -1161,12 +790,23 @@ class TradingExecutor:
                 before_time=int(time.time())
             )
         except Exception as e:
-            logger.error(f"Failed to fetch K-lines for {market_category}:{symbol}: {str(e)}")
+            logger.error(
+                "Failed to fetch K-lines for %s:%s: %s",
+                market_category,
+                symbol,
+                e,
+            )
             return []
-    
-    def _fetch_current_price(self, exchange: Any, symbol: str, market_type: str = None, market_category: str = 'Crypto') -> Optional[float]:
+
+    def _fetch_current_price(
+        self,
+        exchange: Any,
+        symbol: str,
+        market_type: str = None,
+        market_category: str = 'Crypto',
+    ) -> Optional[float]:
         """获取当前价格 (根据 market_category 选择正确的数据源)
-        
+
         Args:
             exchange: 交易所实例（信号模式下为 None）
             symbol: 交易对/代码
@@ -1188,7 +828,7 @@ class TradingExecutor:
                         del self._price_cache[cache_key]
             except Exception:
                 pass
-            
+
         try:
             # 根据 market_category 选择正确的数据源
             # 支持: Crypto, USStock, Forex, Futures, AShare, HShare
@@ -1204,8 +844,13 @@ class TradingExecutor:
                             pass
                     return price
         except Exception as e:
-            logger.warning(f"Failed to fetch price for {market_category}:{symbol}: {e}")
-            
+            logger.warning(
+                "Failed to fetch price for %s:%s: %s",
+                market_category,
+                symbol,
+                e,
+            )
+
         return None
 
     def _server_side_stop_loss_signal(
@@ -1297,7 +942,11 @@ class TradingExecutor:
 
             return None
         except Exception as e:
-            logger.warning(f"Strategy {strategy_id} server-side stop-loss check failed: {str(e)}")
+            logger.warning(
+                "Strategy %s server-side stop-loss check failed: %s",
+                strategy_id,
+                e,
+            )
             return None
 
     def _server_side_take_profit_or_trailing_signal(
@@ -1454,16 +1103,16 @@ class TradingExecutor:
             return None
         except Exception:
             return None
-    
+
     def _klines_to_dataframe(self, klines: List[Dict[str, Any]]) -> pd.DataFrame:
         """将K线数据转换为DataFrame"""
         if not klines:
             # 返回空的 DataFrame，包含正确的列
             return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
-        
+
         # 创建 DataFrame
         df = pd.DataFrame(klines)
-        
+
         # Convert time column.
         # IMPORTANT: use UTC tz-aware index to avoid timezone skew when computing candle boundaries.
         if 'time' in df.columns:
@@ -1472,38 +1121,216 @@ class TradingExecutor:
         elif 'timestamp' in df.columns:
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
             df = df.set_index('timestamp')
-        
+
         # 确保只包含需要的列
         required_columns = ['open', 'high', 'low', 'close', 'volume']
         available_columns = [col for col in required_columns if col in df.columns]
         if not available_columns:
             logger.warning("K-lines are missing required columns")
             return pd.DataFrame(columns=required_columns)
-        
+
         df = df[available_columns]
-        
+
         # 强制转换所有数值列为 float64 类型
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col in df.columns:
                 # 先转换为数值类型，然后强制转换为 float64
                 df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
-        
+
         # 删除包含 NaN 的行
         df = df.dropna()
-        
+
         return df
 
-    def _update_dataframe_with_current_price(self, df: pd.DataFrame, current_price: float, timeframe: str) -> pd.DataFrame:
+    # ─── 4.1 数据准备与计算切分（由 Executor 按序调用，互不调用） ────────────────────────
+
+    def _prepare_input_single(
+        self,
+        strategy_id: int,
+        symbol: str,
+        timeframe: str,
+        trading_config: Dict[str, Any],
+        market_category: str,
+        need_macro: bool = False,
+        current_price: Optional[float] = None,
+        df_override: Optional[pd.DataFrame] = None,
+        limit: int = 500,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        拉单标 K 线、可选 macro、当前持仓，组装 InputContext。
+        返回 None 表示失败。
+        """
+        if df_override is not None and len(df_override) > 0:
+            df = df_override.copy()
+        else:
+            klines = self._fetch_latest_kline(
+                symbol, timeframe, limit=limit, market_category=market_category
+            )
+            if not klines or len(klines) < 2:
+                return None
+            df = self._klines_to_dataframe(klines)
+            if len(df) == 0:
+                return None
+            if need_macro:
+                try:
+                    df = MacroDataService.enrich_dataframe_realtime(df)
+                except Exception as e:
+                    logger.warning("Macro injection failed (continuing): %s", e)
+        if current_price is not None and len(df) > 0:
+            df = self._update_dataframe_with_current_price(df, current_price, timeframe)
+        current_pos_list = self._get_current_positions(strategy_id, symbol)
+        initial_highest = 0.0
+        initial_position = 0
+        initial_avg_entry_price = 0.0
+        initial_position_count = 0
+        initial_last_add_price = 0.0
+        if current_pos_list:
+            pos = current_pos_list[0]
+            initial_highest = float(pos.get('highest_price', 0) or 0)
+            pos_side = pos.get('side', 'long')
+            initial_position = 1 if pos_side == 'long' else -1
+            initial_avg_entry_price = float(pos.get('entry_price', 0) or 0)
+            initial_position_count = 1
+            initial_last_add_price = initial_avg_entry_price
+        return {
+            'df': df,
+            'positions': current_pos_list,
+            'initial_highest_price': initial_highest,
+            'initial_position': initial_position,
+            'initial_avg_entry_price': initial_avg_entry_price,
+            'initial_position_count': initial_position_count,
+            'initial_last_add_price': initial_last_add_price,
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'market_category': market_category,
+            'trading_config': trading_config,
+        }
+
+    def _prepare_input_cross(
+        self,
+        strategy_id: int,
+        symbol_list: List[str],
+        timeframe: str,
+        trading_config: Dict[str, Any],
+        market_category: str,
+        need_macro: bool = False,
+        limit: int = 200,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        拉多标 K 线、可选 macro、当前持仓，组装 InputContext。
+        返回 None 表示所有标的数据均为空。
+        """
+        all_data = {}
+        for symbol in symbol_list:
+            try:
+                klines = self._fetch_latest_kline(
+                    symbol, timeframe, limit=limit, market_category=market_category
+                )
+                if klines and len(klines) >= 2:
+                    df = self._klines_to_dataframe(klines)
+                    if need_macro:
+                        try:
+                            df = MacroDataService.enrich_dataframe_realtime(df)
+                        except Exception:
+                            pass
+                    if len(df) > 0:
+                        all_data[symbol] = df
+            except Exception as e:
+                logger.warning("Failed to fetch data for %s: %s", symbol, e)
+                continue
+        if not all_data:
+            return None
+        positions = self._get_all_positions(strategy_id)
+        return {
+            'data': all_data,
+            'positions': positions,
+            'symbols': list(all_data.keys()),
+            'timeframe': timeframe,
+            'market_category': market_category,
+            'trading_config': trading_config,
+        }
+
+    def _run_indicator_single(
+        self,
+        input_ctx: Dict[str, Any],
+        indicator_code: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        在 InputContext 上执行单标指标，返回 RawOutputSingle。
+        内部调用 _execute_indicator_with_prices。
+        """
+        df = input_ctx.get('df')
+        if df is None or len(df) == 0:
+            return None
+        tc = input_ctx.get('trading_config', {})
+        result = self._execute_indicator_with_prices(
+            indicator_code, df, tc,
+            initial_highest_price=input_ctx.get('initial_highest_price', 0.0),
+            initial_position=input_ctx.get('initial_position', 0),
+            initial_avg_entry_price=input_ctx.get('initial_avg_entry_price', 0.0),
+            initial_position_count=input_ctx.get('initial_position_count', 0),
+            initial_last_add_price=input_ctx.get('initial_last_add_price', 0.0),
+        )
+        return result
+
+    def _run_indicator_cross(
+        self,
+        input_ctx: Dict[str, Any],
+        indicator_code: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        在 InputContext 上执行截面指标，返回 RawOutputCross。
+        使用 input_ctx.data，不拉 K 线。
+        """
+        return self._execute_cross_sectional_indicator(
+            indicator_code,
+            input_ctx.get('symbols', []),
+            input_ctx.get('trading_config', {}),
+            input_ctx.get('market_category', 'Crypto'),
+            input_ctx.get('timeframe', '1H'),
+            data_override=input_ctx.get('data'),
+        )
+
+    def _generate_signals_single(
+        self,
+        raw_output: Dict[str, Any],
+        _input_ctx: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """从 RawOutputSingle 解析为待触发信号列表。"""
+        return raw_output.get('pending_signals', []) if raw_output else []
+
+    def _generate_signals_cross(
+        self,
+        raw_output: Dict[str, Any],
+        _input_ctx: Dict[str, Any],
+        strategy_id: int,
+        trading_config: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """复用 _generate_cross_sectional_signals。"""
+        if not raw_output:
+            return []
+        return self._generate_cross_sectional_signals(
+            strategy_id,
+            raw_output.get('rankings', []),
+            raw_output.get('scores', {}),
+            trading_config,
+        )
+
+    # ─── 以上 4.1 切分函数 ────────────────────────────────────────────────────────────
+
+    def _update_dataframe_with_current_price(
+        self, df: pd.DataFrame, current_price: float, timeframe: str
+    ) -> pd.DataFrame:
         """
         使用当前价格更新DataFrame的最后一根K线（用于实时计算）
         """
         if df is None or len(df) == 0:
             return df
-            
+
         try:
             # 获取最后一根K线的时间
             last_time = df.index[-1]
-            
+
             # 计算当前时间对应的K线起始时间
             from app.data_sources.base import TIMEFRAME_SECONDS
             timeframe_key = timeframe
@@ -1512,14 +1339,14 @@ class TradingExecutor:
             if timeframe_key not in TIMEFRAME_SECONDS:
                 timeframe_key = str(timeframe_key).lower()
             tf_seconds = TIMEFRAME_SECONDS.get(timeframe_key, 60)
-            
+
             # Use epoch seconds directly to avoid naive datetime timezone conversion issues.
             last_ts = float(last_time.timestamp())
             now_ts = float(time.time())
-            
+
             # 计算当前价格所属的 K 线开始时间
             current_period_start = int(now_ts // tf_seconds) * tf_seconds
-            
+
             # 检查最后一根K线是否就是当前周期的
             if abs(last_ts - current_period_start) < 2:
                 # 更新最后一根
@@ -1535,17 +1362,17 @@ class TradingExecutor:
                     'close': [current_price],
                     'volume': [0.0]
                 }, index=[pd.to_datetime(current_period_start, unit='s', utc=True)])
-                
+
                 df = pd.concat([df, new_row])
-            
+
             return df
-            
+
         except Exception as e:
-            logger.error(f"Failed to update realtime candle: {str(e)}")
+            logger.error("Failed to update realtime candle: %s", e)
             return df
-    
+
     def _execute_indicator_with_prices(
-        self, indicator_code: str, df: pd.DataFrame, trading_config: Dict[str, Any], 
+        self, indicator_code: str, df: pd.DataFrame, trading_config: Dict[str, Any],
         initial_highest_price: float = 0.0,
         initial_position: int = 0,
         initial_avg_entry_price: float = 0.0,
@@ -1558,7 +1385,7 @@ class TradingExecutor:
         try:
             # 执行指标代码
             executed_df, exec_env = self._execute_indicator_df(
-                indicator_code, df, trading_config, 
+                indicator_code, df, trading_config,
                 initial_highest_price=initial_highest_price,
                 initial_position=initial_position,
                 initial_avg_entry_price=initial_avg_entry_price,
@@ -1567,16 +1394,16 @@ class TradingExecutor:
             )
             if executed_df is None:
                 return None
-            
+
             # 提取最新的 highest_price
             new_highest_price = exec_env.get('highest_price', 0.0)
-            
+
             # 提取最后一根K线的时间
             last_kline_time = int(df.index[-1].timestamp()) if hasattr(df.index[-1], 'timestamp') else int(time.time())
-            
+
             # 提取待触发的信号
             pending_signals = []
-            
+
             # Supported indicator signal formats:
             # - Preferred (simple): df['buy'], df['sell'] as boolean
             # - Internal (4-way): df['open_long'], df['close_long'], df['open_short'], df['close_short'] as boolean
@@ -1612,30 +1439,30 @@ class TradingExecutor:
                 # 优化点3: 防“信号闪烁” (Repainting)
                 signal_mode = trading_config.get('signal_mode', 'confirmed') # 'confirmed' or 'aggressive'
                 exit_signal_mode = trading_config.get('exit_signal_mode', 'aggressive') # 'confirmed' or 'aggressive'
-                
+
                 entry_check_set = set()
                 exit_check_set = set()
-                
+
                 if len(executed_df) > 1:
                     # 始终检查上一根已完成K线
                     entry_check_set.add(len(executed_df) - 2)
                     exit_check_set.add(len(executed_df) - 2)
-                
+
                 if signal_mode == 'aggressive' and len(executed_df) > 0:
                     entry_check_set.add(len(executed_df) - 1)
-                
+
                 if exit_signal_mode == 'aggressive' and len(executed_df) > 0:
                     exit_check_set.add(len(executed_df) - 1)
-                
+
                 # 统一遍历索引（保持确定性排序）
                 check_indices = sorted(entry_check_set.union(exit_check_set), reverse=True)
-                
+
                 for idx in check_indices:
                     # 获取该K线的收盘价（作为默认触发价）
                     close_price = float(executed_df['close'].iloc[idx])
                     # 该信号的时间戳
                     signal_timestamp = int(executed_df.index[idx].timestamp()) if hasattr(executed_df.index[idx], 'timestamp') else last_kline_time
-                    
+
                     # 开多信号（仅在 entry_check_set 中检查）
                     if idx in entry_check_set and executed_df['open_long'].iloc[idx]:
                         trigger_price = close_price
@@ -1644,7 +1471,7 @@ class TradingExecutor:
                             pos_size = executed_df['position_size'].iloc[idx]
                             if pos_size > 0:
                                 position_size = float(pos_size)
-                        
+
                         if not any(s['type'] == 'open_long' and s.get('timestamp') == signal_timestamp for s in pending_signals):
                             pending_signals.append({
                                 'type': 'open_long',
@@ -1652,7 +1479,7 @@ class TradingExecutor:
                                 'position_size': position_size,
                                 'timestamp': signal_timestamp
                             })
-                    
+
                     # 平多信号
                     if idx in exit_check_set and executed_df['close_long'].iloc[idx]:
                         trigger_price = close_price
@@ -1663,7 +1490,7 @@ class TradingExecutor:
                                 'position_size': 0,
                                 'timestamp': signal_timestamp
                             })
-                    
+
                     # 开空信号
                     if idx in entry_check_set and executed_df['open_short'].iloc[idx]:
                         trigger_price = close_price
@@ -1672,7 +1499,7 @@ class TradingExecutor:
                             pos_size = executed_df['position_size'].iloc[idx]
                             if pos_size > 0:
                                 position_size = float(pos_size)
-                        
+
                         if not any(s['type'] == 'open_short' and s.get('timestamp') == signal_timestamp for s in pending_signals):
                             pending_signals.append({
                                 'type': 'open_short',
@@ -1680,7 +1507,7 @@ class TradingExecutor:
                                 'position_size': position_size,
                                 'timestamp': signal_timestamp
                             })
-                    
+
                     # 平空信号
                     if idx in exit_check_set and executed_df['close_short'].iloc[idx]:
                         trigger_price = close_price
@@ -1691,7 +1518,7 @@ class TradingExecutor:
                                 'position_size': 0,
                                 'timestamp': signal_timestamp
                             })
-                            
+
                     # 加多信号
                     if idx in entry_check_set and 'add_long' in executed_df.columns and executed_df['add_long'].iloc[idx]:
                         trigger_price = close_price
@@ -1708,7 +1535,7 @@ class TradingExecutor:
                                 'position_size': position_size,
                                 'timestamp': signal_timestamp
                             })
-                            
+
                     # 加空信号
                     if idx in entry_check_set and 'add_short' in executed_df.columns and executed_df['add_short'].iloc[idx]:
                         trigger_price = close_price
@@ -1773,20 +1600,20 @@ class TradingExecutor:
                                 'position_size': reduce_pct,
                                 'timestamp': signal_timestamp
                             })
-            
+
             return {
                 'pending_signals': pending_signals,
                 'last_kline_time': last_kline_time,
                 'new_highest_price': new_highest_price
             }
-            
+
         except Exception as e:
-            logger.error(f"Failed to execute indicator and extract prices: {str(e)}")
+            logger.error("Failed to execute indicator and extract prices: %s", e)
             logger.error(traceback.format_exc())
             return None
-    
+
     def _execute_indicator_df(
-        self, indicator_code: str, df: pd.DataFrame, trading_config: Dict[str, Any], 
+        self, indicator_code: str, df: pd.DataFrame, trading_config: Dict[str, Any],
         initial_highest_price: float = 0.0,
         initial_position: int = 0,
         initial_avg_entry_price: float = 0.0,
@@ -1803,25 +1630,25 @@ class TradingExecutor:
                         df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
                     else:
                         df[col] = df[col].astype('float64')
-            
+
             # 删除 OHLCV 核心列中含 NaN 的行（保留宏观列中可能的 NaN）
             ohlcv_cols = [c for c in ['open', 'high', 'low', 'close', 'volume'] if c in df.columns]
             df = df.dropna(subset=ohlcv_cols)
-            
+
             if len(df) == 0:
                 logger.warning("DataFrame is empty; cannot execute indicator script")
                 return None, {}
-            
+
             # 初始化信号Series
             signals = pd.Series(0, index=df.index, dtype='float64')
-            
+
             # 准备执行环境
             # Expose the full trading config to indicator scripts so frontend parameters
             # (scale-in/out, position sizing, risk params) can be used directly.
             # Also provide a backtest-modal compatible nested config object: cfg.risk/cfg.scale/cfg.position.
             tc = dict(trading_config or {})
             cfg = self._build_cfg_from_trading_config(tc)
-            
+
             # === 指标参数支持 ===
             # 从 trading_config 获取用户设置的指标参数
             user_indicator_params = tc.get('indicator_params', {})
@@ -1829,13 +1656,13 @@ class TradingExecutor:
             declared_params = IndicatorParamsParser.parse_params(indicator_code)
             # 合并参数（用户值优先，否则使用默认值）
             merged_params = IndicatorParamsParser.merge_params(declared_params, user_indicator_params)
-            
+
             # === 指标调用器支持 ===
             # 获取用户ID和指标ID（用于 call_indicator 权限检查）
             user_id = tc.get('user_id', 1)
             indicator_id = tc.get('indicator_id')
             indicator_caller = IndicatorCaller(user_id, indicator_id)
-            
+
             local_vars = {
                 'df': df,
                 'open': df['open'].astype('float64'),
@@ -1865,31 +1692,31 @@ class TradingExecutor:
             for macro_col in MacroDataService.MACRO_COLUMNS:
                 if macro_col in df.columns:
                     local_vars[macro_col] = df[macro_col]
-            
+
             import builtins
             def safe_import(name, *args, **kwargs):
                 allowed_modules = ['numpy', 'pandas', 'math', 'json', 'time']
                 if name in allowed_modules or name.split('.')[0] in allowed_modules:
                     return builtins.__import__(name, *args, **kwargs)
                 raise ImportError(f"不允许导入模块: {name}")
-            
-            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins) 
+
+            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins)
                            if not k.startswith('_') and k not in [
                                'eval', 'exec', 'compile', 'open', 'input',
                                'help', 'exit', 'quit', '__import__',
                                'copyright', 'credits', 'license'
                            ]}
             safe_builtins['__import__'] = safe_import
-            
+
             exec_env = local_vars.copy()
             exec_env['__builtins__'] = safe_builtins
-            
+
             pre_import_code = "import numpy as np\nimport pandas as pd\n"
             exec(pre_import_code, exec_env)
-            
+
             # 这里的 safe_exec_code 假设已存在
             exec(indicator_code, exec_env)
-            
+
             executed_df = exec_env.get('df', df)
 
             # Validation: if chart signals are provided, df['buy']/df['sell'] must exist for execution normalization.
@@ -1900,14 +1727,14 @@ class TradingExecutor:
                     "Invalid indicator script: output['signals'] is provided, but df['buy'] and df['sell'] are missing. "
                     "Please set df['buy'] and df['sell'] as boolean columns (len == len(df))."
                 )
-            
+
             return executed_df, exec_env
-            
+
         except Exception as e:
-            logger.error(f"Failed to execute indicator script: {str(e)}")
+            logger.error("Failed to execute indicator script: %s", e)
             logger.error(traceback.format_exc())
             return None, {}
-    
+
     def _execute_indicator(self, indicator_code: str, df: pd.DataFrame, trading_config: Dict[str, Any]) -> Optional[Any]:
         """兼容旧版本"""
         executed_df, _ = self._execute_indicator_df(indicator_code, df, trading_config)
@@ -1927,23 +1754,23 @@ class TradingExecutor:
                 """
                 cursor.execute(query, (strategy_id,))
                 all_positions = cursor.fetchall()
-                
+
                 matched_positions = []
                 for pos in all_positions:
                     # 简化匹配逻辑：只匹配前缀
                     if pos['symbol'].split(':')[0] == symbol.split(':')[0]:
                         matched_positions.append(pos)
-                
+
                 cursor.close()
                 return matched_positions
         except Exception as e:
-            logger.error(f"Failed to fetch positions: {str(e)}")
+            logger.error("Failed to fetch positions: %s", e)
             return []
 
     def _execute_trading_logic(self, *args, **kwargs):
         """已废弃"""
         pass
-    
+
     def _execute_signal(
         self,
         strategy_id: int,
@@ -1977,7 +1804,7 @@ class TradingExecutor:
 
             # 1. 检查交易方向限制
             if market_type == 'spot' and 'short' in signal_type:
-                 return False
+                return False
 
             sig = (signal_type or "").strip().lower()
 
@@ -2014,13 +1841,18 @@ class TradingExecutor:
                         },
                     )
                     logger.info(
-                        f"AI entry filter rejected: strategy_id={strategy_id} symbol={symbol} signal={sig} ai={ai_decision} reason={reason}"
+                        "AI entry filter rejected: strategy_id=%s symbol=%s signal=%s ai=%s reason=%s",
+                        strategy_id,
+                        symbol,
+                        sig,
+                        ai_decision,
+                        reason,
                     )
                     return False
 
             # 2. 计算下单数量
             available_capital = self._get_available_capital(strategy_id, initial_capital)
-            
+
             amount = 0.0
 
             # Frontend position sizing alignment:
@@ -2032,15 +1864,15 @@ class TradingExecutor:
 
             # Open / add sizing: position_size is treated as capital ratio in [0,1].
             if ('open' in sig or 'add' in sig):
-                 if position_size is None or float(position_size) <= 0:
-                     position_size = 0.05
-                 position_ratio = self._to_ratio(position_size, default=0.05)
-                 if market_type == 'spot':
-                     amount = available_capital * position_ratio / current_price
-                 else:
-                     # Futures sizing: treat available_capital as margin budget.
-                     # Notional = margin * leverage, so base quantity = (margin * leverage) / price.
-                     amount = (available_capital * position_ratio * leverage) / current_price
+                if position_size is None or float(position_size) <= 0:
+                    position_size = 0.05
+                position_ratio = self._to_ratio(position_size, default=0.05)
+                if market_type == 'spot':
+                    amount = available_capital * position_ratio / current_price
+                else:
+                    # Futures sizing: treat available_capital as margin budget.
+                    # Notional = margin * leverage, so base quantity = (margin * leverage) / price.
+                    amount = (available_capital * position_ratio * leverage) / current_price
 
             # Reduce sizing: position_size is treated as a reduce ratio (close X% of current position).
             if sig in ("reduce_long", "reduce_short"):
@@ -2060,7 +1892,7 @@ class TradingExecutor:
                     amount = cur_size
                 else:
                     amount = reduce_amount
-            
+
             # 3. 检查反向持仓（单向持仓逻辑）
             # ... (简化处理，假设无反向或由用户处理) ...
 
@@ -2076,7 +1908,7 @@ class TradingExecutor:
 
             if amount <= 0 and ('open' in signal_type or 'add' in signal_type):
                 return False
-            
+
             order_result = self._execute_exchange_order(
                 exchange=exchange,
                 strategy_id=strategy_id,
@@ -2091,7 +1923,7 @@ class TradingExecutor:
                 notification_config=notification_config,
                 signal_ts=int(signal_ts or 0),
             )
-            
+
             if order_result and order_result.get('success'):
                 # For live execution, the order is only enqueued here.
                 # The actual fill/trade/position updates are performed by PendingOrderWorker.
@@ -2105,7 +1937,7 @@ class TradingExecutor:
                         price=current_price, amount=amount, value=amount*current_price
                     )
                     side = 'short' if 'short' in signal_type else 'long'
-                    
+
                     # 查找现有持仓以计算均价
                     old_pos = next((p for p in current_positions if p['side'] == side), None)
                     new_size = amount
@@ -2129,7 +1961,7 @@ class TradingExecutor:
                         return True
                     old_size = float(old_pos.get('size') or 0.0)
                     old_entry = float(old_pos.get('entry_price') or 0.0)
-                    
+
                     # 计算减仓部分的盈亏（信号模式下，不含手续费）
                     reduce_profit = None
                     if old_entry > 0 and amount > 0:
@@ -2137,13 +1969,13 @@ class TradingExecutor:
                             reduce_profit = (current_price - old_entry) * amount
                         else:
                             reduce_profit = (old_entry - current_price) * amount
-                    
+
                     self._record_trade(
                         strategy_id=strategy_id, symbol=symbol, type=signal_type,
                         price=current_price, amount=amount, value=amount*current_price,
                         profit=reduce_profit
                     )
-                    
+
                     new_size = max(0.0, old_size - float(amount or 0.0))
                     if new_size <= old_size * 0.001:
                         self._close_position(strategy_id, symbol, side)
@@ -2156,7 +1988,7 @@ class TradingExecutor:
                     # 信号模式下计算平仓盈亏
                     side = 'short' if 'short' in signal_type else 'long'
                     old_pos = next((p for p in current_positions if p.get('side') == side), None)
-                    
+
                     # 计算盈亏（信号模式下，不含手续费）
                     close_profit = None
                     if old_pos:
@@ -2166,7 +1998,7 @@ class TradingExecutor:
                                 close_profit = (current_price - entry_price) * amount
                             else:
                                 close_profit = (entry_price - current_price) * amount
-                    
+
                     self._record_trade(
                         strategy_id=strategy_id, symbol=symbol, type=signal_type,
                         price=current_price, amount=amount, value=amount*current_price,
@@ -2177,9 +2009,9 @@ class TradingExecutor:
                 return True
 
             return False
-            
+
         except Exception as e:
-            logger.error(f"Failed to execute signal: {e}")
+            logger.error("Failed to execute signal: %s", e)
             return False
 
     def _is_entry_ai_filter_enabled(self, *, ai_model_config: Optional[Dict[str, Any]], trading_config: Optional[Dict[str, Any]]) -> bool:
@@ -2261,7 +2093,7 @@ class TradingExecutor:
             expected = "BUY" if signal_type == "open_long" else "SELL"
             confidence = result.get("confidence", 50)
             summary = result.get("summary", "")
-            
+
             if ai_dec == expected:
                 return True, {"ai_decision": ai_dec, "reason": "match", "confidence": confidence, "summary": summary}
             if ai_dec == "HOLD":
@@ -2354,7 +2186,7 @@ class TradingExecutor:
                 db.commit()
                 cur.close()
         except Exception as e:
-            logger.warning(f"persist_browser_notification failed: {e}")
+            logger.warning("persist_browser_notification failed: %s", e)
 
     def _execute_exchange_order(
         self,
@@ -2438,8 +2270,8 @@ class TradingExecutor:
                 'message': 'Order enqueued to pending_orders'
             }
         except Exception as e:
-             logger.error(f"Signal execution failed: {e}")
-             return {'success': False, 'error': str(e)}
+            logger.error("Signal execution failed: %s", e)
+            return {'success': False, 'error': str(e)}
 
     def _enqueue_pending_order(
         self,
@@ -2494,7 +2326,7 @@ class TradingExecutor:
                 try:
                     stsig = int(signal_ts or 0)
                     # Strict "same candle" de-dup applies to open and close signals.
-                    # Rationale: 
+                    # Rationale:
                     # - open_* signals should only trigger once per candle (prevents repeated entries)
                     # - close_* signals should only trigger once per candle (prevents repeated close attempts)
                     # - add_*/reduce_* signals may legitimately trigger multiple times within same candle
@@ -2536,23 +2368,40 @@ class TradingExecutor:
                     if last_id > 0:
                         if strict_candle_dedup:
                             logger.info(
-                                f"enqueue_pending_order skipped (same candle): existing id={last_id} "
-                                f"strategy_id={strategy_id} symbol={symbol} signal={signal_type} signal_ts={stsig} status={last_status}"
+                                "enqueue_pending_order skipped (same candle): existing id=%s "
+                                "strategy_id=%s symbol=%s signal=%s signal_ts=%s status=%s",
+                                last_id,
+                                strategy_id,
+                                symbol,
+                                signal_type,
+                                stsig,
+                                last_status,
                             )
                             cur.close()
                             return None
                         if last_status in ("pending", "processing"):
                             logger.info(
-                                f"enqueue_pending_order skipped: existing_inflight id={last_id} "
-                                f"strategy_id={strategy_id} symbol={symbol} signal={signal_type} status={last_status}"
+                                "enqueue_pending_order skipped: existing_inflight id=%s "
+                                "strategy_id=%s symbol=%s signal=%s status=%s",
+                                last_id,
+                                strategy_id,
+                                symbol,
+                                signal_type,
+                                last_status,
                             )
                             cur.close()
                             return None
                         if last_created > 0 and (now - last_created) < cooldown_sec:
                             logger.info(
-                                f"enqueue_pending_order cooldown: last_id={last_id} last_status={last_status} "
-                                f"age_sec={now - last_created} (<{cooldown_sec}) "
-                                f"strategy_id={strategy_id} symbol={symbol} signal={signal_type}"
+                                "enqueue_pending_order cooldown: last_id=%s last_status=%s "
+                                "age_sec=%s (<%s) strategy_id=%s symbol=%s signal=%s",
+                                last_id,
+                                last_status,
+                                now - last_created,
+                                cooldown_sec,
+                                strategy_id,
+                                symbol,
+                                signal_type,
                             )
                             cur.close()
                             return None
@@ -2604,7 +2453,7 @@ class TradingExecutor:
                 cur.close()
             return int(pending_id) if pending_id is not None else None
         except Exception as e:
-            logger.error(f"enqueue_pending_order failed: {e}")
+            logger.error("enqueue_pending_order failed: %s", e)
             return None
 
     def _place_stop_loss_order(self, *args, **kwargs):
@@ -2649,7 +2498,7 @@ class TradingExecutor:
                 db.commit()
                 cursor.close()
         except Exception as e:
-            logger.error(f"Failed to record trade: {e}")
+            logger.error("Failed to record trade: %s", e)
 
     def _update_position(
         self,
@@ -2694,7 +2543,7 @@ class TradingExecutor:
                 db.commit()
                 cursor.close()
         except Exception as e:
-            logger.error(f"Failed to update position: {e}")
+            logger.error("Failed to update position: %s", e)
 
     def _close_position(self, strategy_id: int, symbol: str, side: str):
         """平仓：删除持仓记录"""
@@ -2705,10 +2554,10 @@ class TradingExecutor:
                 db.commit()
                 cursor.close()
         except Exception as e:
-            logger.error(f"Failed to close position: {e}")
-    
+            logger.error("Failed to close position: %s", e)
+
     def _delete_position_by_id(self, position_id: int):
-         pass
+        pass
 
     def _update_positions(self, strategy_id: int, symbol: str, current_price: float):
         """更新所有持仓的当前价格"""
@@ -2720,7 +2569,7 @@ class TradingExecutor:
                 cursor.close()
         except Exception:
             pass
-            
+
     def _get_indicator_code_from_db(self, indicator_id: int) -> Optional[str]:
         try:
             with get_db_connection() as db:
@@ -2728,9 +2577,9 @@ class TradingExecutor:
                 cursor.execute("SELECT code FROM qd_indicator_codes WHERE id = %s", (indicator_id,))
                 result = cursor.fetchone()
                 return result['code'] if result else None
-        except:
+        except Exception:
             return None
-    
+
     def _get_all_positions(self, strategy_id: int) -> List[Dict[str, Any]]:
         """获取策略的所有持仓（截面策略使用）"""
         try:
@@ -2743,9 +2592,9 @@ class TradingExecutor:
                 """, (strategy_id,))
                 return cursor.fetchall() or []
         except Exception as e:
-            logger.error(f"Failed to get all positions: {e}")
+            logger.error("Failed to get all positions: %s", e)
             return []
-    
+
     def _should_rebalance(self, strategy_id: int, rebalance_frequency: str) -> bool:
         """检查是否应该调仓"""
         try:
@@ -2757,15 +2606,14 @@ class TradingExecutor:
                 result = cursor.fetchone()
                 if not result or not result.get('last_rebalance_at'):
                     return True
-                
+
                 last_rebalance = result['last_rebalance_at']
                 if isinstance(last_rebalance, str):
-                    from datetime import datetime
                     last_rebalance = datetime.fromisoformat(last_rebalance.replace('Z', '+00:00'))
-                
+
                 now = datetime.now()
                 delta = now - last_rebalance
-                
+
                 if rebalance_frequency == 'daily':
                     return delta.days >= 1
                 elif rebalance_frequency == 'weekly':
@@ -2774,9 +2622,9 @@ class TradingExecutor:
                     return delta.days >= 30
                 return True
         except Exception as e:
-            logger.error(f"Failed to check rebalance: {e}")
+            logger.error("Failed to check rebalance: %s", e)
             return True
-    
+
     def _update_last_rebalance(self, strategy_id: int):
         """更新上次调仓时间"""
         try:
@@ -2785,8 +2633,8 @@ class TradingExecutor:
                 # Try to update, if column doesn't exist, ignore
                 try:
                     cursor.execute("""
-                        UPDATE qd_strategies_trading 
-                        SET last_rebalance_at = NOW() 
+                        UPDATE qd_strategies_trading
+                        SET last_rebalance_at = NOW()
                         WHERE id = %s
                     """, (strategy_id,))
                     db.commit()
@@ -2795,42 +2643,48 @@ class TradingExecutor:
                     pass
                 cursor.close()
         except Exception as e:
-            logger.warning(f"Failed to update last_rebalance_at: {e}")
-    
+            logger.warning("Failed to update last_rebalance_at: %s", e)
+
     def _execute_cross_sectional_indicator(
         self,
         indicator_code: str,
         symbols: List[str],
         trading_config: Dict[str, Any],
         market_category: str,
-        timeframe: str
+        timeframe: str,
+        data_override: Optional[Dict[str, pd.DataFrame]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        执行截面策略指标，返回所有标的的评分和排序
+        执行截面策略指标，返回所有标的的评分和排序。
+        data_override 存在时跳过 K 线拉取，用于 _run_indicator_cross。
         """
         try:
-            # 获取所有标的的K线数据
-            all_data = {}
-            for symbol in symbols:
-                try:
-                    klines = self._fetch_latest_kline(symbol, timeframe, limit=200, market_category=market_category)
-                    if klines and len(klines) >= 2:
-                        df = self._klines_to_dataframe(klines)
-                        if trading_config.get('include_macro', False):
-                            try:
-                                df = MacroDataService.enrich_dataframe_realtime(df)
-                            except Exception:
-                                pass
-                        if len(df) > 0:
-                            all_data[symbol] = df
-                except Exception as e:
-                    logger.warning(f"Failed to fetch data for {symbol}: {e}")
-                    continue
-            
+            if data_override is not None and len(data_override) > 0:
+                all_data = data_override
+            else:
+                all_data = {}
+                for symbol in symbols:
+                    try:
+                        klines = self._fetch_latest_kline(
+                            symbol, timeframe, limit=200, market_category=market_category
+                        )
+                        if klines and len(klines) >= 2:
+                            df = self._klines_to_dataframe(klines)
+                            if trading_config.get('include_macro', False):
+                                try:
+                                    df = MacroDataService.enrich_dataframe_realtime(df)
+                                except Exception:
+                                    pass
+                            if len(df) > 0:
+                                all_data[symbol] = df
+                    except Exception as e:
+                        logger.warning("Failed to fetch data for %s: %s", symbol, e)
+                        continue
+
             if not all_data:
                 logger.error("No data available for cross-sectional strategy")
                 return None
-            
+
             # 准备执行环境
             exec_env = {
                 'symbols': list(all_data.keys()),
@@ -2842,36 +2696,34 @@ class TradingExecutor:
                 'trading_config': trading_config,
                 'config': trading_config,
             }
-            
+
             # 执行指标代码
             import builtins
-            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins) 
+            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins)
                            if not k.startswith('_') and k not in [
                                'eval', 'exec', 'compile', 'open', 'input',
                                'help', 'exit', 'quit', '__import__',
                            ]}
             exec_env['__builtins__'] = safe_builtins
-            
-            pre_import_code = "import numpy as np\nimport pandas as pd\n"
-            exec(pre_import_code, exec_env)
+            # np/pd 已注入 exec_env，无需 exec import（避免 safe_builtins 排除 __import__ 导致失败）
             exec(indicator_code, exec_env)
-            
+
             scores = exec_env.get('scores', {})
             rankings = exec_env.get('rankings', [])
-            
+
             # 如果没有提供rankings，根据scores排序
             if not rankings and scores:
                 rankings = sorted(scores.keys(), key=lambda x: scores.get(x, 0), reverse=True)
-            
+
             return {
                 'scores': scores,
                 'rankings': rankings
             }
         except Exception as e:
-            logger.error(f"Failed to execute cross-sectional indicator: {e}")
+            logger.error("Failed to execute cross-sectional indicator: %s", e)
             logger.error(traceback.format_exc())
             return None
-    
+
     def _generate_cross_sectional_signals(
         self,
         strategy_id: int,
@@ -2884,21 +2736,21 @@ class TradingExecutor:
         """
         portfolio_size = trading_config.get('portfolio_size', 10)
         long_ratio = float(trading_config.get('long_ratio', 0.5))
-        
+
         # 选择持仓标的
         long_count = int(portfolio_size * long_ratio)
         short_count = portfolio_size - long_count
-        
+
         long_symbols = set(rankings[:long_count]) if long_count > 0 else set()
         short_symbols = set(rankings[-short_count:]) if short_count > 0 and len(rankings) >= short_count else set()
-        
+
         # 获取当前持仓
         current_positions = self._get_all_positions(strategy_id)
         current_long = {p['symbol'] for p in current_positions if p.get('side') == 'long'}
         current_short = {p['symbol'] for p in current_positions if p.get('side') == 'short'}
-        
+
         signals = []
-        
+
         # 生成做多信号
         for symbol in long_symbols:
             if symbol not in current_long:
@@ -2915,7 +2767,7 @@ class TradingExecutor:
                     'type': 'open_long',
                     'score': scores.get(symbol, 0)
                 })
-        
+
         # 平掉不在做多列表中的多仓
         for symbol in current_long:
             if symbol not in long_symbols:
@@ -2924,7 +2776,7 @@ class TradingExecutor:
                     'type': 'close_long',
                     'score': scores.get(symbol, 0)
                 })
-        
+
         # 生成做空信号
         for symbol in short_symbols:
             if symbol not in current_short:
@@ -2941,7 +2793,7 @@ class TradingExecutor:
                     'type': 'open_short',
                     'score': scores.get(symbol, 0)
                 })
-        
+
         # 平掉不在做空列表中的空仓
         for symbol in current_short:
             if symbol not in short_symbols:
@@ -2950,52 +2802,352 @@ class TradingExecutor:
                     'type': 'close_short',
                     'score': scores.get(symbol, 0)
                 })
-        
+
         return signals
-    
-    def _run_cross_sectional_strategy_loop(
-        self,
-        strategy_id: int,
-        strategy: Dict[str, Any],
-        trading_config: Dict[str, Any],
-        indicator_config: Dict[str, Any],
-        ai_model_config: Dict[str, Any],
-        execution_mode: str,
-        notification_config: Dict[str, Any],
-        strategy_name: str,
-        market_category: str,
-        market_type: str,
-        leverage: float,
-        initial_capital: float,
-        indicator_code: str,
-        indicator_id: Optional[int]
-    ):
+
+    def _run_single_symbol_strategy_loop(self, strategy_id: int, strategy: Dict[str, Any]):
+        """
+        单标策略执行循环（与 _run_cross_sectional_strategy_loop 对称）
+        """
+        logger.info(
+            "Starting single-symbol strategy loop for strategy %s",
+            strategy_id,
+        )
+        trading_config = strategy.get('trading_config') or {}
+        ai_model_config = strategy.get('ai_model_config') or {}
+        execution_mode = strategy['_execution_mode']
+        notification_config = strategy['_notification_config']
+        strategy_name = strategy['_strategy_name']
+        market_category = strategy['_market_category']
+        market_type = strategy['_market_type']
+        leverage = strategy['_leverage']
+        initial_capital = strategy['_initial_capital']
+        indicator_code = strategy['_indicator_code']
+        symbol = trading_config.get("symbol", "")
+        timeframe = trading_config.get("timeframe", "1H")
+        trade_direction = trading_config.get("trade_direction", "long")
+        if market_type == "spot":
+            trade_direction = "long"
+        exchange = None
+        include_macro = trading_config.get("include_macro", False)
+        history_limit = int(os.getenv("K_LINE_HISTORY_GET_NUMBER", 500))
+
+        input_ctx = self._prepare_input_single(
+            strategy_id, symbol, timeframe, trading_config, market_category,
+            need_macro=include_macro, limit=history_limit,
+        )
+        if input_ctx is None:
+            logger.error("Strategy %s failed to fetch K-lines", strategy_id)
+            return
+        logger.info(
+            "Strategy %s history kline number: %d",
+            strategy_id,
+            len(input_ctx["df"]),
+        )
+        df = input_ctx["df"]
+        current_pos_list = input_ctx["positions"]
+        logger.info(
+            "策略 %s 指标注入持仓状态: count=%d, position=%s, entry_price=%s, highest=%s",
+            strategy_id,
+            len(current_pos_list),
+            input_ctx.get('initial_position'),
+            input_ctx.get('initial_avg_entry_price'),
+            input_ctx.get('initial_highest_price'),
+        )
+        indicator_result = self._run_indicator_single(input_ctx, indicator_code)
+        if indicator_result is None:
+            logger.error("Strategy %s indicator execution failed", strategy_id)
+            return
+        pending_signals = indicator_result.get("pending_signals", [])
+        logger.info(
+            "Strategy %s initialized; pending_signals=%d",
+            strategy_id,
+            len(pending_signals),
+        )
+        if pending_signals:
+            logger.info("Initial signals: %s", pending_signals)
+
+        try:
+            tick_interval_sec = int(os.getenv("STRATEGY_TICK_INTERVAL_SEC", "10"))
+        except (ValueError, TypeError):
+            tick_interval_sec = 10
+        if tick_interval_sec < 1:
+            tick_interval_sec = 1
+        last_tick_time = 0.0
+        last_kline_update_time = time.time()
+        from app.data_sources.base import TIMEFRAME_SECONDS
+        timeframe_seconds = TIMEFRAME_SECONDS.get(timeframe, 3600)
+        kline_update_interval = timeframe_seconds
+
+        while True:
+            try:
+                if not self._is_strategy_running(strategy_id):
+                    logger.info("Strategy %s stopped", strategy_id)
+                    break
+                current_time = time.time()
+                if last_tick_time > 0:
+                    sleep_sec = (last_tick_time + tick_interval_sec) - current_time
+                    if sleep_sec > 0:
+                        time.sleep(min(sleep_sec, 1.0))
+                        continue
+                last_tick_time = current_time
+
+                current_price = self._fetch_current_price(
+                    exchange, symbol, market_type=market_type, market_category=market_category
+                )
+                if current_price is None:
+                    logger.warning(
+                        "Strategy %s failed to fetch current price for %s:%s",
+                        strategy_id,
+                        market_category,
+                        symbol,
+                    )
+                    continue
+
+                if current_time - last_kline_update_time >= kline_update_interval:
+                    kline_input = self._prepare_input_single(
+                        strategy_id, symbol, timeframe, trading_config, market_category,
+                        need_macro=include_macro, limit=history_limit,
+                    )
+                    if kline_input and kline_input.get("df") is not None and len(kline_input["df"]) > 0:
+                        df = kline_input["df"]
+                        current_pos_list = kline_input["positions"]
+                        indicator_result = self._run_indicator_single(kline_input, indicator_code)
+                        if indicator_result:
+                            pending_signals = indicator_result.get("pending_signals", [])
+                            new_hp = indicator_result.get("new_highest_price", 0)
+                            last_kline_update_time = current_time
+                            if new_hp > 0 and current_pos_list:
+                                current_close = float(df["close"].iloc[-1])
+                                for p in current_pos_list:
+                                    self._update_position(
+                                        strategy_id, p["symbol"], p["side"],
+                                        float(p["size"]), float(p["entry_price"]),
+                                        current_close, highest_price=new_hp,
+                                    )
+                else:
+                    if df is not None and len(df) > 0:
+                        try:
+                            realtime_df = self._update_dataframe_with_current_price(
+                                df.copy(), current_price, timeframe
+                            )
+                            realtime_ctx = self._prepare_input_single(
+                                strategy_id, symbol, timeframe, trading_config, market_category,
+                                need_macro=include_macro, df_override=realtime_df, limit=history_limit,
+                            )
+                            if realtime_ctx is not None and len(realtime_ctx["df"]) > 0:
+                                indicator_result = self._run_indicator_single(realtime_ctx, indicator_code)
+                                if indicator_result:
+                                    pending_signals = indicator_result.get("pending_signals", [])
+                                    new_hp = indicator_result.get("new_highest_price", 0)
+                                    current_pos_list = realtime_ctx["positions"]
+                                    if new_hp > 0 and current_pos_list:
+                                        for p in current_pos_list:
+                                            self._update_position(
+                                                strategy_id, p["symbol"], p["side"],
+                                                float(p["size"]), float(p["entry_price"]),
+                                                current_price, highest_price=new_hp,
+                                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Strategy %s realtime indicator recompute failed: %s",
+                                strategy_id,
+                                e,
+                            )
+
+                current_ts = int(time.time())
+                if pending_signals:
+                    expiration_threshold = timeframe_seconds * 2
+                    valid_signals = [
+                        s for s in pending_signals
+                        if s.get("timestamp", 0) == 0 or (current_ts - s.get("timestamp", 0)) < expiration_threshold
+                    ]
+                    for s in pending_signals:
+                        if s not in valid_signals:
+                            logger.warning("Signal expired and removed: %s", s)
+                    if len(valid_signals) != len(pending_signals):
+                        pending_signals = valid_signals
+                if pending_signals:
+                    logger.info(
+                        "[monitoring] strategy=%s price=%s, pending_signals=%d",
+                        strategy_id,
+                        current_price,
+                        len(pending_signals),
+                    )
+
+                triggered_signals = []
+                signals_to_remove = []
+                for signal_info in pending_signals:
+                    signal_type = signal_info.get("type")
+                    trigger_price = signal_info.get("trigger_price", 0)
+                    triggered = False
+                    exit_trigger_mode = trading_config.get("exit_trigger_mode", "immediate")
+                    if signal_type in ["close_long", "close_short"] and exit_trigger_mode == "immediate":
+                        triggered = True
+                    entry_trigger_mode = trading_config.get("entry_trigger_mode", "price")
+                    if signal_type in ["open_long", "open_short", "add_long", "add_short"] and entry_trigger_mode == "immediate":
+                        triggered = True
+                    if trigger_price > 0:
+                        if signal_type in ["open_long", "close_short", "add_long"]:
+                            if current_price >= trigger_price:
+                                triggered = True
+                        elif signal_type in ["open_short", "close_long", "add_short"]:
+                            if current_price <= trigger_price:
+                                triggered = True
+                    else:
+                        triggered = True
+                    if triggered:
+                        triggered_signals.append(signal_info)
+                        signals_to_remove.append(signal_info)
+
+                risk_tp = self._server_side_take_profit_or_trailing_signal(
+                    strategy_id=strategy_id, symbol=symbol, current_price=float(current_price),
+                    market_type=market_type, leverage=float(leverage), trading_config=trading_config,
+                    timeframe_seconds=int(timeframe_seconds or 60),
+                )
+                if risk_tp:
+                    triggered_signals.append(risk_tp)
+                risk_sl = self._server_side_stop_loss_signal(
+                    strategy_id=strategy_id, symbol=symbol, current_price=float(current_price),
+                    market_type=market_type, leverage=float(leverage), trading_config=trading_config,
+                    timeframe_seconds=int(timeframe_seconds or 60),
+                )
+                if risk_sl:
+                    triggered_signals.append(risk_sl)
+                for signal_info in signals_to_remove:
+                    if signal_info in pending_signals:
+                        pending_signals.remove(signal_info)
+
+                if triggered_signals:
+                    logger.info(
+                        "Strategy %s triggered signals: %s",
+                        strategy_id,
+                        triggered_signals,
+                    )
+                    current_positions = self._get_current_positions(strategy_id, symbol)
+                    state = self._position_state(current_positions)
+                    candidates = [s for s in triggered_signals if self._is_signal_allowed(state, s.get("type"))]
+                    if state == "flat" and candidates:
+                        td = (trade_direction or "both").strip().lower()
+                        if td == "long":
+                            candidates = [s for s in candidates if s.get("type") == "open_long"]
+                        elif td == "short":
+                            candidates = [s for s in candidates if s.get("type") == "open_short"]
+                    candidates = sorted(
+                        candidates,
+                        key=lambda s: (
+                            self._signal_priority(s.get("type")),
+                            int(s.get("timestamp") or 0),
+                            str(s.get("type") or ""),
+                        ),
+                    )
+                    selected = None
+                    now_i = int(time.time())
+                    for s in candidates:
+                        stype = s.get("type")
+                        sts = int(s.get("timestamp") or 0)
+                        if self._should_skip_signal_once_per_candle(
+                            strategy_id=strategy_id, symbol=symbol, signal_type=str(stype or ""),
+                            signal_ts=sts, timeframe_seconds=int(timeframe_seconds or 60), now_ts=now_i,
+                        ):
+                            continue
+                        selected = s
+                        break
+                    if selected:
+                        signal_type = selected.get("type")
+                        position_size = selected.get("position_size", 0)
+                        trigger_price = selected.get("trigger_price", current_price)
+                        execute_price = trigger_price if trigger_price > 0 else current_price
+                        signal_ts = int(selected.get("timestamp") or 0)
+                        ok = self._execute_signal(
+                            strategy_id=strategy_id, strategy_name=strategy_name, exchange=exchange,
+                            symbol=symbol, current_price=execute_price, signal_type=signal_type,
+                            position_size=position_size, signal_ts=signal_ts,
+                            current_positions=current_positions, trade_direction=trade_direction,
+                            leverage=leverage, initial_capital=initial_capital, market_type=market_type,
+                            market_category=market_category, execution_mode=execution_mode,
+                            notification_config=notification_config, trading_config=trading_config,
+                            ai_model_config=ai_model_config,
+                        )
+                        if ok:
+                            logger.info(
+                                "Strategy %s signal executed: %s @ %s",
+                                strategy_id,
+                                signal_type,
+                                execute_price,
+                            )
+                            try:
+                                from app.services.portfolio_monitor import notify_strategy_signal_for_positions
+                                notify_strategy_signal_for_positions(
+                                    market=market_type or "Crypto", symbol=symbol, signal_type=signal_type,
+                                    signal_detail=f"策略: {strategy_name}\n信号: {signal_type}\n价格: {execute_price:.4f}",
+                                )
+                            except Exception as link_e:
+                                logger.warning(
+                                    "Strategy signal linkage notification failed: %s",
+                                    link_e,
+                                )
+                        else:
+                            logger.warning(
+                                "Strategy %s signal rejected/failed: %s",
+                                strategy_id,
+                                signal_type,
+                            )
+
+                self._update_positions(strategy_id, symbol, current_price)
+                self._console_print(
+                    f"[strategy:{strategy_id}] tick price={float(current_price or 0.0):.8f} pending_signals={len(pending_signals or [])}"
+                )
+            except Exception as e:
+                logger.error("Strategy %s loop error: %s", strategy_id, e)
+                logger.error(traceback.format_exc())
+                self._console_print(f"[strategy:{strategy_id}] loop error: {e}")
+                time.sleep(5)
+
+    def _run_cross_sectional_strategy_loop(self, strategy_id: int, strategy: Dict[str, Any]):
         """
         截面策略执行循环
         """
-        logger.info(f"Starting cross-sectional strategy loop for strategy {strategy_id}")
-        
+        logger.info(
+            "Starting cross-sectional strategy loop for strategy %s",
+            strategy_id,
+        )
+        trading_config = strategy.get('trading_config') or {}
+        ai_model_config = strategy.get('ai_model_config') or {}
+        execution_mode = strategy['_execution_mode']
+        notification_config = strategy['_notification_config']
+        strategy_name = strategy['_strategy_name']
+        market_category = strategy['_market_category']
+        market_type = strategy['_market_type']
+        leverage = strategy['_leverage']
+        initial_capital = strategy['_initial_capital']
+        indicator_code = strategy['_indicator_code']
         symbol_list = trading_config.get('symbol_list', [])
         if not symbol_list:
-            logger.error(f"Strategy {strategy_id} has no symbol_list for cross-sectional strategy")
+            logger.error(
+                "Strategy %s has no symbol_list for cross-sectional strategy",
+                strategy_id,
+            )
             return
-        
+
         timeframe = trading_config.get('timeframe', '1H')
         rebalance_frequency = trading_config.get('rebalance_frequency', 'daily')
         tick_interval_sec = int(trading_config.get('decide_interval', 300))
-        
+
         last_tick_time = 0
-        last_rebalance_time = 0
-        
+
         while True:
             try:
                 # 检查策略状态
                 if not self._is_strategy_running(strategy_id):
-                    logger.info(f"Cross-sectional strategy {strategy_id} stopped")
+                    logger.info(
+                        "Cross-sectional strategy %s stopped",
+                        strategy_id,
+                    )
                     break
-                
+
                 current_time = time.time()
-                
+
                 # Sleep until next tick
                 if last_tick_time > 0:
                     sleep_sec = (last_tick_time + tick_interval_sec) - current_time
@@ -3003,34 +3155,51 @@ class TradingExecutor:
                         time.sleep(min(sleep_sec, 1.0))
                         continue
                 last_tick_time = current_time
-                
+
                 # 检查是否需要调仓
                 if not self._should_rebalance(strategy_id, rebalance_frequency):
                     continue
-                
-                logger.info(f"Cross-sectional strategy {strategy_id} rebalancing...")
-                
+
+                logger.info(
+                    "Cross-sectional strategy %s rebalancing...",
+                    strategy_id,
+                )
+
                 # 执行截面指标
-                result = self._execute_cross_sectional_indicator(
-                    indicator_code, symbol_list, trading_config, market_category, timeframe
+                need_macro = bool(trading_config.get('include_macro', False))
+                input_ctx = self._prepare_input_cross(
+                    strategy_id, symbol_list, timeframe, trading_config, market_category,
+                    need_macro=need_macro,
                 )
-                
-                if not result:
-                    logger.warning(f"Cross-sectional indicator returned no result")
+                if input_ctx is None:
+                    logger.warning(
+                        "Strategy %s failed to prepare cross-sectional input",
+                        strategy_id,
+                    )
                     continue
-                
-                # 生成信号
-                signals = self._generate_cross_sectional_signals(
-                    strategy_id, result['rankings'], result['scores'], trading_config
+                raw_output = self._run_indicator_cross(input_ctx, indicator_code)
+
+                if not raw_output:
+                    logger.warning("Cross-sectional indicator returned no result")
+                    continue
+                signals = self._generate_signals_cross(
+                    raw_output, input_ctx, strategy_id, trading_config
                 )
-                
+
                 if not signals:
-                    logger.info(f"No rebalancing needed for strategy {strategy_id}")
+                    logger.info(
+                        "No rebalancing needed for strategy %s",
+                        strategy_id,
+                    )
                     self._update_last_rebalance(strategy_id)
                     continue
-                
-                logger.info(f"Generated {len(signals)} signals for cross-sectional strategy {strategy_id}")
-                
+
+                logger.info(
+                    "Generated %d signals for cross-sectional strategy %s",
+                    len(signals),
+                    strategy_id,
+                )
+
                 # 批量执行交易
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 with ThreadPoolExecutor(max_workers=min(10, len(signals))) as executor:
@@ -3061,22 +3230,30 @@ class TradingExecutor:
                             signal_ts=int(current_time)
                         )
                         futures[future] = signal
-                    
+
                     # 等待所有交易完成
                     for future in as_completed(futures):
                         signal = futures[future]
                         try:
                             result = future.result(timeout=30)
                             if result:
-                                logger.info(f"Successfully executed signal: {signal['symbol']} {signal['type']}")
+                                logger.info(
+                                    "Successfully executed signal: %s %s",
+                                    signal['symbol'],
+                                    signal['type'],
+                                )
                         except Exception as e:
-                            logger.error(f"Failed to execute signal {signal['symbol']} {signal['type']}: {e}")
-                
+                            logger.error(
+                                "Failed to execute signal %s %s: %s",
+                                signal['symbol'],
+                                signal['type'],
+                                e,
+                            )
+
                 # 更新调仓时间
                 self._update_last_rebalance(strategy_id)
-                last_rebalance_time = current_time
-                
+
             except Exception as e:
-                logger.error(f"Cross-sectional strategy loop error: {e}")
+                logger.error("Cross-sectional strategy loop error: %s", e)
                 logger.error(traceback.format_exc())
-                time.sleep(5)  # Wait before retrying
+                time.sleep(5)  # 等待后重试，避免故障时打爆

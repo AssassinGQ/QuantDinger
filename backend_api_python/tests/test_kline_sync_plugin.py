@@ -14,7 +14,7 @@ class TestKlineSyncPlugin:
         assert hasattr(kline_sync, "INTERVAL_MINUTES")
         assert hasattr(kline_sync, "ENABLED")
         assert hasattr(kline_sync, "run")
-        assert kline_sync.ENABLED is False  # 首版不自动注册
+        assert kline_sync.ENABLED is True  # 默认启动
 
     @patch("app.services.scheduler_service.run_kline_sync_once")
     def test_run_delegates_to_scheduler_service(self, mock_run_once):
