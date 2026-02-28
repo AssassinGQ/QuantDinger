@@ -159,7 +159,7 @@ class TestTE01SingleSymbolFetchesKlineAndExecutesIndicator:
         with patch("app.services.data_handler.get_db_connection") as mock_db:
             mock_db.return_value = make_db_ctx(dict(SINGLE_SYMBOL_STRATEGY))
             with patch.object(TradingExecutor, "_is_strategy_running", side_effect=[True, False]), \
-                 patch.object(TradingExecutor, "_fetch_current_price", return_value=100.0), \
+                 patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
                  patch("app.strategies.single_symbol.run_single_indicator") as mock_exec_indicator:
                 mock_exec_indicator.return_value = (pd.DataFrame({"close": [1.0]}), {})
                 te = TradingExecutor()
@@ -304,7 +304,7 @@ class TestTE04SingleSymbolTickCadence:
              patch("time.sleep", MagicMock()) as mock_sleep, \
              patch.object(TradingExecutor, "_is_strategy_running",
                          side_effect=[True, True, True, False]), \
-             patch.object(TradingExecutor, "_fetch_current_price", return_value=100.0), \
+             patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
              patch("app.services.trading_executor.console_print"):
                 te = TradingExecutor()
                 te.data_handler.get_input_context_single = MagicMock(return_value=mock_ctx)
@@ -367,16 +367,16 @@ def _run_single_loop_with_pending(
                   return_value=indicator_result.get("pending_signals", [])), \
              patch.object(TradingExecutorCls, "_is_strategy_running",
                          side_effect=[True, False]), \
-             patch.object(TradingExecutorCls, "_fetch_current_price", return_value=100.0), \
+             patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
              patch.object(TradingExecutorCls, "_execute_signal") as mock_exec_signal, \
              patch.object(DataHandler, "update_positions_current_price"), \
              patch.object(DataHandler, "get_current_positions", return_value=pos_list), \
              patch("app.services.trading_executor.console_print"), \
              patch.object(TradingExecutorCls, "_should_skip_signal_once_per_candle",
                          return_value=False), \
-             patch("app.services.trading_executor.check_take_profit_or_trailing_signal",
+             patch("app.services.signal_processor.check_take_profit_or_trailing_signal",
                          return_value=None), \
-             patch("app.services.trading_executor.check_stop_loss_signal",
+             patch("app.services.signal_processor.check_stop_loss_signal",
                          return_value=None):
             mock_exec_signal.return_value = True
             te = TradingExecutorCls()
@@ -395,7 +395,7 @@ class TestTE05SingleSymbolExecuteSignalAfterIndicator:
             "type": "open_long", "trigger_price": 0, "position_size": 0.08, "timestamp": int(time.time()),
         }])
         mock_exec.assert_called()
-        assert mock_exec.call_args[1].get("signal_type") == "open_long"
+        assert mock_exec.call_args[1].get("signal", {}).get("type") == "open_long"
 
     def test_pending_open_short_triggers_execute_signal(self):
         """pending open_short 需 trade_direction=both 且 leverage>1(market_type=swap) 才能执行"""
@@ -404,7 +404,7 @@ class TestTE05SingleSymbolExecuteSignalAfterIndicator:
             "type": "open_short", "trigger_price": 0, "position_size": 0.08, "timestamp": int(time.time()),
         }], strategy_overrides={"trading_config": {"trade_direction": "both", "leverage": 2}})
         mock_exec.assert_called()
-        assert mock_exec.call_args[1].get("signal_type") == "open_short"
+        assert mock_exec.call_args[1].get("signal", {}).get("type") == "open_short"
 
     def test_pending_close_long_triggers_execute_signal(self):
         """pending close_long 需有持仓才能执行"""
@@ -414,7 +414,7 @@ class TestTE05SingleSymbolExecuteSignalAfterIndicator:
             "type": "close_long", "trigger_price": 0, "position_size": 0, "timestamp": int(time.time()),
         }], positions=positions)
         mock_exec.assert_called()
-        assert mock_exec.call_args[1].get("signal_type") == "close_long"
+        assert mock_exec.call_args[1].get("signal", {}).get("type") == "close_long"
 
     def test_pending_close_short_triggers_execute_signal(self):
         """pending close_short 需有空仓才能执行"""
@@ -424,7 +424,7 @@ class TestTE05SingleSymbolExecuteSignalAfterIndicator:
             "type": "close_short", "trigger_price": 0, "position_size": 0, "timestamp": int(time.time()),
         }], positions=positions)
         mock_exec.assert_called()
-        assert mock_exec.call_args[1].get("signal_type") == "close_short"
+        assert mock_exec.call_args[1].get("signal", {}).get("type") == "close_short"
 
     def test_meta_position_updates_calls_update_position(self):
         """meta 含 position_updates 时，update_position 被调用"""
@@ -452,12 +452,12 @@ class TestTE05SingleSymbolExecuteSignalAfterIndicator:
                 mock_extract.return_value = []
                 time_vals = [0] * 5 + [10] * 5 + [100] * 5  # 足够供两次 tick 使用
                 with patch.object(TradingExecutor, "_is_strategy_running", side_effect=[True, True, False]), \
-                     patch.object(TradingExecutor, "_fetch_current_price", return_value=100.0), \
+                     patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
                      patch.object(DataHandler, "update_positions_current_price"), \
                      patch.object(DataHandler, "update_position") as mock_update_pos, \
                      patch("app.services.trading_executor.console_print"), \
-                     patch("app.services.trading_executor.check_take_profit_or_trailing_signal", return_value=None), \
-                     patch("app.services.trading_executor.check_stop_loss_signal", return_value=None), \
+                     patch("app.services.signal_processor.check_take_profit_or_trailing_signal", return_value=None), \
+                     patch("app.services.signal_processor.check_stop_loss_signal", return_value=None), \
                      patch("time.sleep", MagicMock()), \
                      patch("time.time", side_effect=lambda: time_vals.pop(0) if time_vals else 200):
                     te = TradingExecutor()
@@ -533,7 +533,7 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
                 te._run_strategy_loop(2)
 
                 assert mock_exec_signal.call_count == 3
-                executed = {(c[1].get("symbol"), c[1].get("signal_type")) for c in mock_exec_signal.call_args_list}
+                executed = {(c[1].get("symbol"), c[1].get("signal", {}).get("type")) for c in mock_exec_signal.call_args_list}
                 assert executed == {("A", "open_long"), ("B", "open_short"), ("C", "open_short")}
 
     def test_rebalance_day_executes_close_and_open_signals_when_positions_exist(self):
@@ -569,7 +569,7 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
                 te._run_strategy_loop(2)
 
                 assert mock_exec_signal.call_count == 3
-                executed = {(c[1].get("symbol"), c[1].get("signal_type")) for c in mock_exec_signal.call_args_list}
+                executed = {(c[1].get("symbol"), c[1].get("signal", {}).get("type")) for c in mock_exec_signal.call_args_list}
                 assert ("D", "close_short") in executed
                 assert ("B", "open_short") in executed
                 assert ("C", "open_short") in executed
@@ -738,7 +738,7 @@ class TestTE06bCloseSignalReceivesCorrectPositions:
         mock_exec_signal.assert_called()
         call_kw = mock_exec_signal.call_args[1]
         assert call_kw.get("symbol") == "A"
-        assert call_kw.get("signal_type") == "close_long"
+        assert call_kw.get("signal", {}).get("type") == "close_long"
         assert call_kw.get("current_positions") == [pos_a]
 
 

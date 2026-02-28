@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 
 
 class KlineService:
+
     """K线数据服务：优先数据库历史缓存，缺则网络并回写。"""
 
     def __init__(self):

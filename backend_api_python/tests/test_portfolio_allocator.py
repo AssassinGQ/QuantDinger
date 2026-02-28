@@ -343,19 +343,8 @@ import sys
 import types
 
 
-def _import_trading_executor():
-    """Import TradingExecutor with heavy deps mocked out."""
-    mock_ccxt = types.ModuleType("ccxt")
-    mock_ccxt.Exchange = type("Exchange", (), {})
-    sys.modules.setdefault("ccxt", mock_ccxt)
-    for mod in ("pandas", "numpy", "ta"):
-        sys.modules.setdefault(mod, types.ModuleType(mod))
-    from app.services.trading_executor import TradingExecutor
-    return TradingExecutor
-
-
-class TestTradingExecutorIntegration:
-    """Test that TradingExecutor._get_available_capital uses allocator."""
+class TestSignalExecutorIntegration:
+    """Test that _get_available_capital uses allocator."""
 
     @patch("app.services.portfolio_allocator.get_portfolio_allocator")
     def test_uses_allocator_when_managed(self, mock_get_alloc):
@@ -363,9 +352,8 @@ class TestTradingExecutorIntegration:
         mock_alloc.get_allocated_capital.return_value = 5000.0
         mock_get_alloc.return_value = mock_alloc
 
-        TradingExecutor = _import_trading_executor()
-        te = TradingExecutor()
-        result = te._get_available_capital(101, 10000.0)
+        from app.services.signal_executor import _get_available_capital
+        result = _get_available_capital(101, 10000.0)
         assert result == 5000.0
 
     @patch("app.services.portfolio_allocator.get_portfolio_allocator")
@@ -374,15 +362,13 @@ class TestTradingExecutorIntegration:
         mock_alloc.get_allocated_capital.return_value = None
         mock_get_alloc.return_value = mock_alloc
 
-        TradingExecutor = _import_trading_executor()
-        te = TradingExecutor()
-        result = te._get_available_capital(999, 10000.0)
+        from app.services.signal_executor import _get_available_capital
+        result = _get_available_capital(999, 10000.0)
         assert result == 10000.0
 
     @patch("app.services.portfolio_allocator.get_portfolio_allocator",
            side_effect=Exception("allocator not available"))
     def test_falls_back_on_exception(self, mock_get_alloc):
-        TradingExecutor = _import_trading_executor()
-        te = TradingExecutor()
-        result = te._get_available_capital(101, 10000.0)
+        from app.services.signal_executor import _get_available_capital
+        result = _get_available_capital(101, 10000.0)
         assert result == 10000.0

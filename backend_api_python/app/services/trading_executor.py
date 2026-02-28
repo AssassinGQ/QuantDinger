@@ -12,13 +12,15 @@ from app.utils.logger import get_logger
 from app.strategies.factory import load_and_create
 from app.strategies.base import sleep_until_next_tick
 from app.services.data_handler import DataHandler
-from app.services.server_side_risk import (
-    check_stop_loss_signal,
-    check_take_profit_or_trailing_signal,
-    to_ratio,
+from app.services.server_side_risk import to_ratio
+from app.services.signal_processor import (
+    is_signal_allowed,
+    position_state,
+    process_signals,
 )
+from app.services.signal_executor import SignalExecutor
+from app.services.price_fetcher import get_price_fetcher
 from app.data_sources import DataSourceFactory
-from app.services.kline import KlineService
 from app.utils.console import console_print
 
 logger = get_logger(__name__)
@@ -31,19 +33,13 @@ class TradingExecutor:
         # 不再使用全局连接，改为每次使用时从连接池获取
         self.running_strategies = {}  # {strategy_id: thread}
         self.lock = threading.Lock()
-        # Local-only lightweight in-memory price cache (symbol -> (price, expiry_ts)).
-        # This replaces the old Redis-based PriceCache for local deployments.
-        self._price_cache = {}
-        self._price_cache_lock = threading.Lock()
-        # Default to 10s to match the unified tick cadence.
-        self._price_cache_ttl_sec = int(os.getenv("PRICE_CACHE_TTL_SEC", "10"))
-
         # In-memory signal de-dup cache to prevent repeated orders on the same candle signal.
         # Keyed by (strategy_id, symbol, signal_type, signal_timestamp).
         self._signal_dedup = {}  # type: Dict[int, Dict[str, float]]
         self._signal_dedup_lock = threading.Lock()
-        self.kline_service = KlineService()   # K线服务（带缓存）
-        self.data_handler = DataHandler(kline_service=self.kline_service)
+        self.data_handler = DataHandler()
+        self._price_fetcher = get_price_fetcher()
+        self._signal_executor = SignalExecutor()
 
         # 单实例线程上限，避免无限制创建线程导致 can't start new thread/OOM
         self.max_threads = int(os.getenv('STRATEGY_MAX_THREADS', '64'))
@@ -144,55 +140,6 @@ class TradingExecutor:
                 )
             except Exception:
                 pass
-
-    def _position_state(self, positions: List[Dict[str, Any]]) -> str:
-        """
-        Return current position state for a strategy+symbol in local single-position mode.
-
-        Returns: 'flat' | 'long' | 'short'
-        """
-        try:
-            if not positions:
-                return "flat"
-            # Local mode assumes single-direction position per symbol.
-            side = (positions[0].get("side") or "").strip().lower()
-            if side in ("long", "short"):
-                return side
-        except Exception:
-            pass
-        return "flat"
-
-    def _is_signal_allowed(self, state: str, signal_type: str) -> bool:
-        """
-        Enforce strict state machine:
-        - flat: only open_long/open_short
-        - long: only add_long/close_long
-        - short: only add_short/close_short
-        """
-        st = (state or "flat").strip().lower()
-        sig = (signal_type or "").strip().lower()
-        if st == "flat":
-            return sig in ("open_long", "open_short")
-        if st == "long":
-            return sig in ("add_long", "reduce_long", "close_long")
-        if st == "short":
-            return sig in ("add_short", "reduce_short", "close_short")
-        return False
-
-    def _signal_priority(self, signal_type: str) -> int:
-        """
-        Lower value = higher priority. We always close before (re)opening/adding.
-        """
-        sig = (signal_type or "").strip().lower()
-        if sig.startswith("close_"):
-            return 0
-        if sig.startswith("reduce_"):
-            return 1
-        if sig.startswith("open_"):
-            return 2
-        if sig.startswith("add_"):
-            return 3
-        return 99
 
     def _dedup_key(self, strategy_id: int, symbol: str, signal_type: str, signal_ts: int) -> str:
         sym = (symbol or "").strip().upper()
@@ -406,7 +353,7 @@ class TradingExecutor:
                 if should_continue:
                     continue
 
-                current_price = self._fetch_current_price(
+                current_price = self._price_fetcher.fetch_current_price(
                     exchange, symbol, market_type=market_type, market_category=market_category
                 )
                 if current_price is None:
@@ -449,27 +396,11 @@ class TradingExecutor:
                 if triggered_signals:
                     self._process_and_execute_signals(
                         strategy_id=strategy_id,
+                        strategy=strategy,
                         symbol=symbol,
                         triggered_signals=triggered_signals,
                         current_price=float(current_price),
-                        strategy_name=strategy["_strategy_name"],
                         exchange=exchange,
-                        trade_direction=(
-                            "long"
-                            if market_type == "spot"
-                            else (trading_config.get("trade_direction") or "long")
-                        ),
-                        leverage=strategy["_leverage"],
-                        initial_capital=strategy["_initial_capital"],
-                        market_type=market_type,
-                        market_category=market_category,
-                        execution_mode=strategy["_execution_mode"],
-                        notification_config=strategy.get("_notification_config"),
-                        trading_config=trading_config,
-                        ai_model_config=strategy.get("ai_model_config"),
-                        timeframe_seconds=self._get_timeframe_seconds(
-                            trading_config.get("timeframe", "1H")
-                        ),
                     )
 
                 self.data_handler.update_positions_current_price(strategy_id, symbol, current_price)
@@ -560,16 +491,7 @@ class TradingExecutor:
         """执行截面策略的批量信号（ThreadPoolExecutor）"""
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        trading_config = strategy.get("trading_config") or {}
         positions = self.data_handler.get_all_positions(strategy_id)
-        strategy_name = strategy["_strategy_name"]
-        leverage = strategy["_leverage"]
-        initial_capital = strategy["_initial_capital"]
-        market_type = strategy["_market_type"]
-        market_category = strategy["_market_category"]
-        execution_mode = strategy["_execution_mode"]
-        notification_config = strategy.get("_notification_config") or {}
-        ai_model_config = strategy.get("ai_model_config")
 
         with ThreadPoolExecutor(max_workers=min(10, len(signals))) as pool:
             futures = {}
@@ -579,29 +501,20 @@ class TradingExecutor:
                     p for p in positions
                     if (p.get("symbol") or "").split(":")[0] == sig_symbol.split(":")[0]
                 ]
+                
+                # Default timestamp if missing
+                if not signal.get("timestamp"):
+                    signal["timestamp"] = int(current_time)
+
                 future = pool.submit(
                     self._execute_signal,
                     strategy_id=strategy_id,
-                    strategy_name=strategy_name,
+                    strategy=strategy,
                     exchange=None,
                     symbol=signal["symbol"],
                     current_price=0.0,
-                    signal_type=signal["type"],
-                    position_size=None,
+                    signal=signal,
                     current_positions=symbol_positions,
-                    trade_direction="both",
-                    leverage=leverage,
-                    initial_capital=initial_capital,
-                    market_type=market_type,
-                    market_category=market_category,
-                    margin_mode="cross",
-                    stop_loss_price=None,
-                    take_profit_price=None,
-                    execution_mode=execution_mode,
-                    notification_config=notification_config,
-                    trading_config=trading_config,
-                    ai_model_config=ai_model_config,
-                    signal_ts=current_time,
                 )
                 futures[future] = signal
 
@@ -636,80 +549,14 @@ class TradingExecutor:
         status = self.data_handler.get_strategy_status(strategy_id)
         return status == "running"
 
-    def _fetch_current_price(
-        self,
-        exchange: Any,
-        symbol: str,
-        market_type: str = None,
-        market_category: str = 'Crypto',
-    ) -> Optional[float]:
-        """获取当前价格 (根据 market_category 选择正确的数据源)
-
-        Args:
-            exchange: 交易所实例（信号模式下为 None）
-            symbol: 交易对/代码
-            market_type: 交易类型 (swap/spot)
-            market_category: 市场类型 (Crypto, USStock, Forex, Futures, AShare, HShare)
-        """
-        # Local in-memory cache first
-        cache_key = f"{market_category}:{(symbol or '').strip().upper()}"
-        if cache_key and self._price_cache_ttl_sec > 0:
-            now = time.time()
-            try:
-                with self._price_cache_lock:
-                    item = self._price_cache.get(cache_key)
-                    if item:
-                        price, expiry = item
-                        if expiry > now:
-                            return float(price)
-                        # expired
-                        del self._price_cache[cache_key]
-            except Exception:
-                pass
-
-        try:
-            # 根据 market_category 选择正确的数据源
-            # 支持: Crypto, USStock, Forex, Futures, AShare, HShare
-            ticker = DataSourceFactory.get_ticker(market_category, symbol)
-            if ticker:
-                price = float(ticker.get('last') or ticker.get('close') or 0)
-                if price > 0:
-                    if cache_key and self._price_cache_ttl_sec > 0:
-                        try:
-                            with self._price_cache_lock:
-                                exp = time.time() + self._price_cache_ttl_sec
-                                self._price_cache[cache_key] = (float(price), exp)
-                        except Exception:
-                            pass
-                    return price
-        except Exception as e:
-            logger.warning(
-                "Failed to fetch price for %s:%s: %s",
-                market_category,
-                symbol,
-                e,
-            )
-
-        return None
-
     def _process_and_execute_signals(
         self,
         strategy_id: int,
+        strategy: Dict[str, Any],
         symbol: str,
         triggered_signals: List[Dict[str, Any]],
         current_price: float,
-        strategy_name: str,
-        exchange: Any,
-        trade_direction: str,
-        leverage: float,
-        initial_capital: float,
-        market_type: str,
-        market_category: str,
-        execution_mode: str,
-        notification_config: Optional[Dict[str, Any]],
-        trading_config: Dict[str, Any],
-        ai_model_config: Optional[Dict[str, Any]],
-        timeframe_seconds: int,
+        exchange: Any = None,
     ) -> None:
         """
         信号执行：由 Executor 负责。策略仅生成 triggered_signals，本方法负责：
@@ -718,81 +565,42 @@ class TradingExecutor:
         """
         if not triggered_signals:
             return
-        all_signals = list(triggered_signals)
-        risk_tp = check_take_profit_or_trailing_signal(
-            self.data_handler,
-            strategy_id=strategy_id,
-            symbol=symbol,
-            current_price=float(current_price),
-            market_type=market_type,
-            leverage=float(leverage),
-            trading_config=trading_config,
-            timeframe_seconds=int(timeframe_seconds or 60),
-        )
-        if risk_tp:
-            all_signals.append(risk_tp)
-        risk_sl = check_stop_loss_signal(
-            self.data_handler,
-            strategy_id=strategy_id,
-            symbol=symbol,
-            current_price=float(current_price),
-            market_type=market_type,
-            leverage=float(leverage),
-            trading_config=trading_config,
-            timeframe_seconds=int(timeframe_seconds or 60),
-        )
-        if risk_sl:
-            all_signals.append(risk_sl)
+            
+        leverage = float(strategy.get("_leverage", 1.0))
+        market_type = strategy.get("_market_type", "swap")
+        trading_config = strategy.get("trading_config") or {}
+        trade_direction = "long" if market_type == "spot" else trading_config.get("trade_direction", "long")
+        timeframe_seconds = self._get_timeframe_seconds(trading_config.get("timeframe", "1H"))
 
-        current_positions = self.data_handler.get_current_positions(strategy_id, symbol)
-        state = self._position_state(current_positions)
-        candidates = [
-            s for s in all_signals
-            if self._is_signal_allowed(state, s.get("type"))
-        ]
-        if state == "flat" and candidates:
-            td = (trade_direction or "both").strip().lower()
-            if td == "long":
-                candidates = [s for s in candidates if s.get("type") == "open_long"]
-            elif td == "short":
-                candidates = [s for s in candidates if s.get("type") == "open_short"]
-        candidates = sorted(
-            candidates,
-            key=lambda s: (
-                self._signal_priority(s.get("type")),
-                int(s.get("timestamp") or 0),
-                str(s.get("type") or ""),
-            ),
+        selected, current_positions = process_signals(
+            strategy_id=strategy_id,
+            symbol=symbol,
+            triggered_signals=triggered_signals,
+            current_price=current_price,
+            trade_direction=trade_direction,
+            leverage=leverage,
+            market_type=market_type,
+            trading_config=trading_config,
+            timeframe_seconds=timeframe_seconds,
+            dedup_check=self._should_skip_signal_once_per_candle,
+            now_ts=int(time.time()),
         )
-        selected = None
-        now_i = int(time.time())
-        for s in candidates:
-            stype = s.get("type")
-            sts = int(s.get("timestamp") or 0)
-            if self._should_skip_signal_once_per_candle(
-                strategy_id=strategy_id, symbol=symbol, signal_type=str(stype or ""),
-                signal_ts=sts, timeframe_seconds=int(timeframe_seconds or 60), now_ts=now_i,
-            ):
-                continue
-            selected = s
-            break
         if selected:
             sig_type = selected.get("type")
-            position_size = selected.get("position_size", 0)
             trigger_price = selected.get("trigger_price", current_price)
             execute_price = trigger_price if trigger_price > 0 else current_price
-            signal_ts = int(selected.get("timestamp") or 0)
+
             ok = self._execute_signal(
-                strategy_id=strategy_id, strategy_name=strategy_name, exchange=exchange,
-                symbol=symbol, current_price=execute_price, signal_type=sig_type,
-                position_size=position_size, signal_ts=signal_ts,
-                current_positions=current_positions, trade_direction=trade_direction,
-                leverage=leverage, initial_capital=initial_capital, market_type=market_type,
-                market_category=market_category, execution_mode=execution_mode,
-                notification_config=notification_config, trading_config=trading_config,
-                ai_model_config=ai_model_config,
+                strategy_id=strategy_id,
+                strategy=strategy,
+                exchange=exchange,
+                symbol=symbol,
+                current_price=execute_price,
+                signal=selected,
+                current_positions=current_positions,
             )
             if ok:
+                strategy_name = strategy.get("_strategy_name", "")
                 logger.info(
                     "Strategy %s signal executed: %s @ %s",
                     strategy_id, sig_type, execute_price,
@@ -817,39 +625,31 @@ class TradingExecutor:
     def _execute_signal(
         self,
         strategy_id: int,
-        strategy_name: str,
+        strategy: Dict[str, Any],
         exchange: Any,
         symbol: str,
         current_price: float,
-        signal_type: str,
-        position_size: float,
+        signal: Dict[str, Any],
         current_positions: List[Dict[str, Any]],
-        trade_direction: str,
-        leverage: int,
-        initial_capital: float,
-        market_type: str = 'swap',
-        market_category: str = 'Crypto',
-        margin_mode: str = 'cross',
-        stop_loss_price: float = None,
-        take_profit_price: float = None,
-        execution_mode: str = 'signal',
-        notification_config: Optional[Dict[str, Any]] = None,
-        trading_config: Optional[Dict[str, Any]] = None,
-        ai_model_config: Optional[Dict[str, Any]] = None,
-        signal_ts: int = 0,
     ):
-        """执行具体的交易信号"""
+        """执行具体的交易信号（保留 state machine、trade direction、AI filter；其余委托 signal_executor）"""
         try:
+            signal_type = signal.get("type", "")
+            
             # Hard state-machine guard (double safety in addition to loop-level filtering).
-            state = self._position_state(current_positions)
-            if not self._is_signal_allowed(state, signal_type):
+            state = position_state(current_positions)
+            if not is_signal_allowed(state, signal_type):
                 return False
 
+            market_type = strategy.get("_market_type", "swap")
             # 1. 检查交易方向限制
             if market_type == 'spot' and 'short' in signal_type:
                 return False
 
-            sig = (signal_type or "").strip().lower()
+            sig = signal_type.strip().lower()
+
+            ai_model_config = strategy.get("ai_model_config") or {}
+            trading_config = strategy.get("trading_config") or {}
 
             # 1.1 开仓 AI 过滤（仅 open_*）
             ai_enabled = self._is_entry_ai_filter_enabled(
@@ -881,184 +681,28 @@ class TradingExecutor:
                         payload={
                             "event": "qd.ai_filter",
                             "strategy_id": int(strategy_id),
-                            "strategy_name": str(strategy_name or ""),
+                            "strategy_name": str(strategy.get("_strategy_name", "")),
                             "symbol": str(symbol or ""),
                             "signal_type": str(sig),
                             "ai_decision": str(ai_decision),
                             "reason": str(reason),
-                            "signal_ts": int(signal_ts or 0),
+                            "signal_ts": int(signal.get("timestamp") or 0),
                         },
                     )
                     logger.info(
                         "AI entry filter rejected: strategy_id=%s symbol=%s signal=%s ai=%s reason=%s",
-                        strategy_id,
-                        symbol,
-                        sig,
-                        ai_decision,
-                        reason,
+                        strategy_id, symbol, sig, ai_decision, reason,
                     )
                     return False
 
-            # 2. 计算下单数量
-            available_capital = self._get_available_capital(strategy_id, initial_capital)
-
-            amount = 0.0
-
-            # Frontend position sizing alignment:
-            # - open_* uses entry_pct from trading_config if provided (0~1 or 0~100 are both accepted)
-            if sig in ("open_long", "open_short") and isinstance(trading_config, dict):
-                ep = trading_config.get("entry_pct")
-                if ep is not None:
-                    position_size = to_ratio(ep, default=position_size if position_size is not None else 0.0)
-
-            # Open / add sizing: position_size is treated as capital ratio in [0,1].
-            if ('open' in sig or 'add' in sig):
-                if position_size is None or float(position_size) <= 0:
-                    position_size = 0.05
-                position_ratio = to_ratio(position_size, default=0.05)
-                if market_type == 'spot':
-                    amount = available_capital * position_ratio / current_price
-                else:
-                    # Futures sizing: treat available_capital as margin budget.
-                    # Notional = margin * leverage, so base quantity = (margin * leverage) / price.
-                    amount = (available_capital * position_ratio * leverage) / current_price
-
-            # Reduce sizing: position_size is treated as a reduce ratio (close X% of current position).
-            if sig in ("reduce_long", "reduce_short"):
-                pos_side = "long" if "long" in sig else "short"
-                pos = next((p for p in current_positions if (p.get('side') or '').strip().lower() == pos_side), None)
-                if not pos:
-                    return False
-                cur_size = float(pos.get("size") or 0.0)
-                if cur_size <= 0:
-                    return False
-                reduce_ratio = to_ratio(position_size, default=0.1)
-                reduce_amount = cur_size * reduce_ratio
-                # If reduce is effectively full, treat as close_*.
-                if reduce_amount >= cur_size * 0.999:
-                    sig = "close_long" if pos_side == "long" else "close_short"
-                    signal_type = sig
-                    amount = cur_size
-                else:
-                    amount = reduce_amount
-
-            # 3. 检查反向持仓（单向持仓逻辑）
-            # ... (简化处理，假设无反向或由用户处理) ...
-
-            # 4. Execute order enqueue (PendingOrderWorker will dispatch notifications in signal mode)
-            if 'close' in sig:
-                # 平仓逻辑：找到对应持仓大小
-                pos = next((p for p in current_positions if p.get('side') and p['side'] in signal_type), None)
-                if not pos:
-                    return False
-                amount = float(pos['size'] or 0.0)
-                if amount <= 0:
-                    return False
-
-            if amount <= 0 and ('open' in signal_type or 'add' in signal_type):
-                return False
-
-            order_result = self._execute_exchange_order(
-                exchange=exchange,
-                strategy_id=strategy_id,
+            return self._signal_executor.execute(
+                strategy_ctx=strategy,
+                signal=signal,
                 symbol=symbol,
-                signal_type=signal_type,
-                amount=amount,
-                ref_price=float(current_price or 0.0),
-                market_type=market_type,
-                market_category=market_category,
-                leverage=leverage,
-                execution_mode=execution_mode,
-                notification_config=notification_config,
-                signal_ts=int(signal_ts or 0),
+                current_price=current_price,
+                current_positions=current_positions,
+                exchange=exchange,
             )
-
-            if order_result and order_result.get('success'):
-                # For live execution, the order is only enqueued here.
-                # The actual fill/trade/position updates are performed by PendingOrderWorker.
-                if str(execution_mode or "").strip().lower() == "live":
-                    return True
-
-                # 更新数据库状态 (signal mode / local simulation)
-                if 'open' in sig or 'add' in sig:
-                    self.data_handler.record_trade(
-                        strategy_id=strategy_id, symbol=symbol, trade_type=signal_type,
-                        price=current_price, amount=amount, value=amount*current_price
-                    )
-                    side = 'short' if 'short' in signal_type else 'long'
-
-                    # 查找现有持仓以计算均价
-                    old_pos = next((p for p in current_positions if p['side'] == side), None)
-                    new_size = amount
-                    new_entry = current_price
-                    if old_pos:
-                        old_size = float(old_pos['size'])
-                        old_entry = float(old_pos['entry_price'])
-                        new_size += old_size
-                        new_entry = ((old_size * old_entry) + (amount * current_price)) / new_size
-
-                    self.data_handler.update_position(
-                        strategy_id=strategy_id, symbol=symbol, side=side,
-                        size=new_size, entry_price=new_entry, current_price=current_price
-                    )
-                elif sig.startswith("reduce_"):
-                    # Partial scale-out: reduce position size, keep entry price unchanged.
-                    # 信号模式下计算部分平仓盈亏
-                    side = 'short' if 'short' in signal_type else 'long'
-                    old_pos = next((p for p in current_positions if p.get('side') == side), None)
-                    if not old_pos:
-                        return True
-                    old_size = float(old_pos.get('size') or 0.0)
-                    old_entry = float(old_pos.get('entry_price') or 0.0)
-
-                    # 计算减仓部分的盈亏（信号模式下，不含手续费）
-                    reduce_profit = None
-                    if old_entry > 0 and amount > 0:
-                        if side == 'long':
-                            reduce_profit = (current_price - old_entry) * amount
-                        else:
-                            reduce_profit = (old_entry - current_price) * amount
-
-                    self.data_handler.record_trade(
-                        strategy_id=strategy_id, symbol=symbol, trade_type=signal_type,
-                        price=current_price, amount=amount, value=amount*current_price,
-                        profit=reduce_profit
-                    )
-
-                    new_size = max(0.0, old_size - float(amount or 0.0))
-                    if new_size <= old_size * 0.001:
-                        self.data_handler.close_position(strategy_id, symbol, side)
-                    else:
-                        self.data_handler.update_position(
-                            strategy_id=strategy_id, symbol=symbol, side=side,
-                            size=new_size, entry_price=old_entry, current_price=current_price
-                        )
-                elif 'close' in sig:
-                    # 信号模式下计算平仓盈亏
-                    side = 'short' if 'short' in signal_type else 'long'
-                    old_pos = next((p for p in current_positions if p.get('side') == side), None)
-
-                    # 计算盈亏（信号模式下，不含手续费）
-                    close_profit = None
-                    if old_pos:
-                        entry_price = float(old_pos.get('entry_price') or 0)
-                        if entry_price > 0 and amount > 0:
-                            if side == 'long':
-                                close_profit = (current_price - entry_price) * amount
-                            else:
-                                close_profit = (entry_price - current_price) * amount
-
-                    self.data_handler.record_trade(
-                        strategy_id=strategy_id, symbol=symbol, trade_type=signal_type,
-                        price=current_price, amount=amount, value=amount*current_price,
-                        profit=close_profit
-                    )
-                    self.data_handler.close_position(strategy_id, symbol, side)
-
-                return True
-
-            return False
-
         except Exception as e:
             logger.error("Failed to execute signal: %s", e)
             return False
@@ -1206,198 +850,6 @@ class TradingExecutor:
         if "HOLD" in s or "WAIT" in s or "NEUTRAL" in s:
             return "HOLD"
         return s if s in ("BUY", "SELL", "HOLD") else ""
-
-    def _execute_exchange_order(
-        self,
-        exchange: Any,
-        strategy_id: int,
-        symbol: str,
-        signal_type: str,
-        amount: float,
-        ref_price: Optional[float] = None,
-        market_type: str = 'swap',
-        market_category: str = 'Crypto',
-        leverage: float = 1.0,
-        margin_mode: str = 'cross',
-        stop_loss_price: float = None,
-        take_profit_price: float = None,
-        # Order execution params (order_mode, maker_wait_sec, maker_offset_bps) are now
-        # configured via environment variables: ORDER_MODE, MAKER_WAIT_SEC, MAKER_OFFSET_BPS
-        # These parameters are kept for backward compatibility but will be ignored.
-        order_mode: str = None,
-        maker_wait_sec: float = None,
-        maker_retries: int = 3,
-        close_fallback_to_market: bool = True,
-        open_fallback_to_market: bool = True,
-        execution_mode: str = 'signal',
-        notification_config: Optional[Dict[str, Any]] = None,
-        signal_ts: int = 0,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Convert a signal into a concrete pending order and enqueue it into DB.
-
-        A separate worker will poll `pending_orders` and dispatch:
-        - execution_mode='signal': dispatch notifications (no real trading).
-        - execution_mode='live': reserved for future live trading execution (not implemented).
-
-        Note: Order execution settings (order_mode, maker_wait_sec, maker_offset_bps) are now
-        configured via environment variables and not passed from strategy config.
-        """
-        try:
-            # Reference price at enqueue time: use current tick price if provided to avoid extra fetch.
-            if ref_price is None:
-                ref_price = self._fetch_current_price(None, symbol, market_category=market_category) or 0.0
-            ref_price = float(ref_price or 0.0)
-
-            extra_payload = {
-                "ref_price": float(ref_price or 0.0),
-                "signal_ts": int(signal_ts or 0),
-                "stop_loss_price": float(stop_loss_price or 0.0) if stop_loss_price is not None else 0.0,
-                "take_profit_price": float(take_profit_price or 0.0) if take_profit_price is not None else 0.0,
-                "margin_mode": str(margin_mode or "cross"),
-                # Order execution params moved to env config (ORDER_MODE, MAKER_WAIT_SEC, MAKER_OFFSET_BPS)
-                "maker_retries": int(maker_retries or 0),
-                "close_fallback_to_market": bool(close_fallback_to_market),
-                "open_fallback_to_market": bool(open_fallback_to_market),
-            }
-            pending_id = self._enqueue_pending_order(
-                strategy_id=strategy_id,
-                symbol=symbol,
-                signal_type=signal_type,
-                amount=float(amount or 0.0),
-                price=float(ref_price or 0.0),
-                signal_ts=int(signal_ts or 0),
-                market_type=market_type,
-                leverage=float(leverage or 1.0),
-                execution_mode=execution_mode,
-                notification_config=notification_config,
-                extra_payload=extra_payload,
-            )
-
-            pending_flag = str(execution_mode or "").strip().lower() == "live"
-
-            # Local "signal provider mode": we keep the local state machine moving forward.
-            return {
-                'success': True,
-                'pending': bool(pending_flag),
-                'order_id': f"pending_{pending_id or int(time.time()*1000)}",
-                'filled_amount': 0 if pending_flag else amount,
-                'filled_base_amount': 0 if pending_flag else amount,
-                'filled_price': 0 if pending_flag else ref_price,
-                'total_cost': 0 if pending_flag else (float(amount or 0.0) * float(ref_price or 0.0) if ref_price else 0),
-                'fee': 0,
-                'message': 'Order enqueued to pending_orders'
-            }
-        except Exception as e:
-            logger.error("Signal execution failed: %s", e)
-            return {'success': False, 'error': str(e)}
-
-    def _enqueue_pending_order(
-        self,
-        strategy_id: int,
-        symbol: str,
-        signal_type: str,
-        amount: float,
-        price: float,
-        signal_ts: int,
-        market_type: str,
-        leverage: float,
-        execution_mode: str,
-        notification_config: Optional[Dict[str, Any]] = None,
-        extra_payload: Optional[Dict[str, Any]] = None,
-    ) -> Optional[int]:
-        """Insert a pending order record and return its id."""
-        try:
-            now = int(time.time())
-            # Local deployment supports both "signal" and "live" (live is executed by PendingOrderWorker).
-            mode = (execution_mode or "signal").strip().lower()
-            if mode not in ("signal", "live"):
-                mode = "signal"
-
-            payload: Dict[str, Any] = {
-                "strategy_id": int(strategy_id),
-                "symbol": symbol,
-                "signal_type": signal_type,
-                "market_type": market_type,
-                "amount": float(amount or 0.0),
-                "price": float(price or 0.0),
-                "leverage": float(leverage or 1.0),
-                "execution_mode": mode,
-                "notification_config": notification_config or {},
-                "signal_ts": int(signal_ts or 0),
-            }
-            if extra_payload and isinstance(extra_payload, dict):
-                payload.update(extra_payload)
-
-            stsig = int(signal_ts or 0)
-            sig_norm = str(signal_type or "").strip().lower()
-            strict_candle_dedup = stsig > 0 and sig_norm in ("open_long", "open_short", "close_long", "close_short")
-
-            last = self.data_handler.find_recent_pending_order(
-                strategy_id, symbol, signal_type, stsig if strict_candle_dedup else None
-            )
-            last_id = int((last or {}).get("id") or 0)
-            last_status = str((last or {}).get("status") or "").strip().lower()
-            last_created = int((last or {}).get("created_at") or 0)
-            cooldown_sec = 30
-
-            if last_id > 0:
-                if strict_candle_dedup:
-                    logger.info(
-                        "enqueue_pending_order skipped (same candle): id=%s sid=%s sym=%s "
-                        "sig=%s ts=%s status=%s",
-                        last_id, strategy_id, symbol, signal_type, stsig, last_status,
-                    )
-                    return None
-                if last_status in ("pending", "processing"):
-                    logger.info(
-                        "enqueue_pending_order skipped: existing_inflight id=%s strategy_id=%s symbol=%s signal=%s status=%s",
-                        last_id, strategy_id, symbol, signal_type, last_status,
-                    )
-                    return None
-                if last_created > 0 and (now - last_created) < cooldown_sec:
-                    logger.info(
-                        "enqueue_pending_order cooldown: last_id=%s status=%s age=%s (<%s) "
-                        "sid=%s sym=%s sig=%s",
-                        last_id, last_status, now - last_created, cooldown_sec,
-                        strategy_id, symbol, signal_type,
-                    )
-                    return None
-
-            user_id = self.data_handler.get_user_id(strategy_id)
-            pending_id = self.data_handler.insert_pending_order(
-                user_id=user_id,
-                strategy_id=strategy_id,
-                symbol=symbol,
-                signal_type=signal_type,
-                signal_ts=stsig,
-                market_type=market_type or "swap",
-                order_type="market",
-                amount=float(amount or 0.0),
-                price=float(price or 0.0),
-                execution_mode=mode,
-                status="pending",
-                priority=0,
-                attempts=0,
-                max_attempts=10,
-                payload_json=json.dumps(payload, ensure_ascii=False),
-            )
-            return int(pending_id) if pending_id is not None else None
-        except Exception as e:
-            logger.error("enqueue_pending_order failed: %s", e)
-            return None
-
-    def _get_available_capital(self, strategy_id: int, initial_capital: float) -> float:
-        """获取可用资金：优先从 PortfolioAllocator 获取动态分配，fallback 到 initial_capital。"""
-        try:
-            from app.services.portfolio_allocator import get_portfolio_allocator
-            allocator = get_portfolio_allocator()
-            allocated = allocator.get_allocated_capital(strategy_id)
-            if allocated is not None:
-                return allocated
-        except Exception:
-            pass
-        return initial_capital
 
     def _should_rebalance(self, strategy_id: int, rebalance_frequency: str) -> bool:
         """检查是否应该调仓（执行调度逻辑）。数据由 DataHandler 提供。"""

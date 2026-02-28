@@ -24,8 +24,8 @@ logger = get_logger(__name__)
 class DataHandler:
     """集中数据拉取与 InputContext 构造"""
 
-    def __init__(self, kline_service: Optional[KlineService] = None):
-        self.kline_service = kline_service or KlineService()
+    def __init__(self):
+        self.kline_service = KlineService()
 
     def get_input_context_single(
         self,
