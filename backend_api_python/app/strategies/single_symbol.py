@@ -41,7 +41,6 @@ class SingleSymbolStrategy(IStrategyLoop):
         trading_config = strategy.get("trading_config") or {}
         symbol = trading_config.get("symbol", "")
         timeframe = trading_config.get("timeframe", "1H")
-        include_macro = trading_config.get("include_macro", False)
         history_limit = int(os.getenv("K_LINE_HISTORY_GET_NUMBER", "500"))
         market_category = strategy.get("_market_category", "Crypto")
         timeframe_seconds = TIMEFRAME_SECONDS.get(timeframe, 3600)
@@ -59,7 +58,7 @@ class SingleSymbolStrategy(IStrategyLoop):
             "symbol": symbol,
             "timeframe": timeframe,
             "trading_config": trading_config,
-            "need_macro": include_macro,
+            "need_macro": self.need_macro_info(),
             "refresh_klines": refresh_klines,
             "df_override": df_override,
             "history_limit": history_limit,

@@ -34,7 +34,6 @@ class CrossSectionalStrategy(IStrategyLoop):
         trading_config = strategy.get("trading_config") or {}
         symbol_list = trading_config.get("symbol_list", [])
         timeframe = trading_config.get("timeframe", "1H")
-        need_macro = bool(trading_config.get("include_macro", False))
         rebalance_frequency = trading_config.get("rebalance_frequency", "daily")
         market_category = strategy.get("_market_category", "Crypto")
 
@@ -42,7 +41,7 @@ class CrossSectionalStrategy(IStrategyLoop):
             "symbol_list": symbol_list,
             "timeframe": timeframe,
             "trading_config": trading_config,
-            "need_macro": need_macro,
+            "need_macro": self.need_macro_info(),
             "rebalance_frequency": rebalance_frequency,
             "history_limit": 200,
             "market_category": market_category,

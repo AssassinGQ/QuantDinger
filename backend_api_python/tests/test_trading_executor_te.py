@@ -305,7 +305,7 @@ class TestTE04SingleSymbolTickCadence:
              patch.object(TradingExecutor, "_is_strategy_running",
                          side_effect=[True, True, True, False]), \
              patch.object(TradingExecutor, "_fetch_current_price", return_value=100.0), \
-             patch.object(TradingExecutor, "_console_print"):
+             patch("app.services.trading_executor.console_print"):
                 te = TradingExecutor()
                 te.data_handler.get_input_context_single = MagicMock(return_value=mock_ctx)
                 te.data_handler.update_positions_current_price = MagicMock()
@@ -371,12 +371,12 @@ def _run_single_loop_with_pending(
              patch.object(TradingExecutorCls, "_execute_signal") as mock_exec_signal, \
              patch.object(DataHandler, "update_positions_current_price"), \
              patch.object(DataHandler, "get_current_positions", return_value=pos_list), \
-             patch.object(TradingExecutorCls, "_console_print"), \
+             patch("app.services.trading_executor.console_print"), \
              patch.object(TradingExecutorCls, "_should_skip_signal_once_per_candle",
                          return_value=False), \
-             patch.object(TradingExecutorCls, "_server_side_take_profit_or_trailing_signal",
+             patch("app.services.trading_executor.check_take_profit_or_trailing_signal",
                          return_value=None), \
-             patch.object(TradingExecutorCls, "_server_side_stop_loss_signal",
+             patch("app.services.trading_executor.check_stop_loss_signal",
                          return_value=None):
             mock_exec_signal.return_value = True
             te = TradingExecutorCls()
@@ -455,9 +455,9 @@ class TestTE05SingleSymbolExecuteSignalAfterIndicator:
                      patch.object(TradingExecutor, "_fetch_current_price", return_value=100.0), \
                      patch.object(DataHandler, "update_positions_current_price"), \
                      patch.object(DataHandler, "update_position") as mock_update_pos, \
-                     patch.object(TradingExecutor, "_console_print"), \
-                     patch.object(TradingExecutor, "_server_side_take_profit_or_trailing_signal", return_value=None), \
-                     patch.object(TradingExecutor, "_server_side_stop_loss_signal", return_value=None), \
+                     patch("app.services.trading_executor.console_print"), \
+                     patch("app.services.trading_executor.check_take_profit_or_trailing_signal", return_value=None), \
+                     patch("app.services.trading_executor.check_stop_loss_signal", return_value=None), \
                      patch("time.sleep", MagicMock()), \
                      patch("time.time", side_effect=lambda: time_vals.pop(0) if time_vals else 200):
                     te = TradingExecutor()
@@ -796,7 +796,7 @@ class TestSS01SingleSymbolStrategyRun:
         with patch("app.strategies.single_symbol.run_single_indicator") as mock_run_indicator:
             signals, cont, _, meta = strat.get_signals(ctx)
         mock_run_indicator.assert_not_called()
-        assert signals == []
+        assert not signals
         assert cont is False
         assert meta is None
 
@@ -816,7 +816,7 @@ class TestSS01SingleSymbolStrategyRun:
         with patch("app.strategies.single_symbol.run_single_indicator") as mock_run_indicator:
             signals, cont, _, meta = strat.get_signals(ctx)
         mock_run_indicator.assert_not_called()
-        assert signals == []
+        assert not signals
         assert cont is False
         assert meta is None
 
@@ -841,7 +841,7 @@ class TestSS01SingleSymbolStrategyRun:
         with patch("app.strategies.single_symbol.run_single_indicator") as mock_run_indicator:
             mock_run_indicator.return_value = (None, {})
             signals, cont, _, meta = strat.get_signals(ctx)
-        assert signals == []
+        assert not signals
         assert cont is False
         assert meta is None
 
@@ -901,10 +901,12 @@ class TestTE07StartStopStrategy:
 # ── TE-08: server_side 风控真实逻辑 ───────────────────────────────────────────
 
 class TestTE08ServerSideRiskControlRealLogic:
-    """TE-08: _server_side_stop_loss / take_profit 未 mock 的真实逻辑用例"""
+    """TE-08: server_side 风控真实逻辑（check_stop_loss_signal / check_take_profit）"""
 
     def test_server_side_stop_loss_returns_close_long_when_price_below_stop_line(self):
         """持仓多头、价格跌破止损线时返回 close_long"""
+        from app.services.server_side_risk import check_stop_loss_signal
+
         TradingExecutor = _import_trading_executor()
         te = TradingExecutor()
         with patch.object(te.data_handler, "get_current_positions") as mock_pos:
@@ -912,7 +914,8 @@ class TestTE08ServerSideRiskControlRealLogic:
                 {"symbol": "BTC/USDT", "side": "long", "entry_price": 100.0, "size": 0.1},
             ]
             trading_config = {"stop_loss_pct": 5.0, "enable_server_side_stop_loss": True}
-            sig = te._server_side_stop_loss_signal(
+            sig = check_stop_loss_signal(
+                te.data_handler,
                 strategy_id=1, symbol="BTC/USDT", current_price=94.0,
                 market_type="swap", leverage=1.0, trading_config=trading_config,
                 timeframe_seconds=3600,
@@ -924,6 +927,8 @@ class TestTE08ServerSideRiskControlRealLogic:
 
     def test_server_side_stop_loss_returns_none_when_price_above_stop_line(self):
         """持仓多头、价格未跌破止损线时返回 None"""
+        from app.services.server_side_risk import check_stop_loss_signal
+
         TradingExecutor = _import_trading_executor()
         te = TradingExecutor()
         with patch.object(te.data_handler, "get_current_positions") as mock_pos:
@@ -931,7 +936,8 @@ class TestTE08ServerSideRiskControlRealLogic:
                 {"symbol": "BTC/USDT", "side": "long", "entry_price": 100.0, "size": 0.1},
             ]
             trading_config = {"stop_loss_pct": 5.0}
-            sig = te._server_side_stop_loss_signal(
+            sig = check_stop_loss_signal(
+                te.data_handler,
                 strategy_id=1, symbol="BTC/USDT", current_price=96.0,
                 market_type="swap", leverage=1.0, trading_config=trading_config,
                 timeframe_seconds=3600,
@@ -965,7 +971,7 @@ class TestCS01CrossSectionalStrategyRun:
         mock_gen.assert_called_once()
         assert cont is True
         assert update_reb is True
-        assert signals == []
+        assert not signals
 
 
 class TestCS02CrossSectionalStrategyBoundaries:
@@ -984,7 +990,7 @@ class TestCS02CrossSectionalStrategyBoundaries:
         with patch("app.strategies.cross_sectional.run_cross_sectional_indicator") as mock_run:
             signals, cont, update_reb, _ = strat.get_signals(ctx)
         mock_run.assert_not_called()
-        assert signals == []
+        assert not signals
         assert cont is False
         assert update_reb is False
 
@@ -1001,7 +1007,7 @@ class TestCS02CrossSectionalStrategyBoundaries:
         with patch("app.strategies.cross_sectional.run_cross_sectional_indicator") as mock_run:
             signals, cont, update_reb, _ = strat.get_signals(ctx)
         mock_run.assert_not_called()
-        assert signals == []
+        assert not signals
         assert cont is True
         assert update_reb is False
 
@@ -1019,7 +1025,7 @@ class TestCS02CrossSectionalStrategyBoundaries:
             mock_run.return_value = None
             signals, cont, update_reb, _ = strat.get_signals(ctx)
         mock_run.assert_called_once()
-        assert signals == []
+        assert not signals
         assert cont is True
         assert update_reb is False
 

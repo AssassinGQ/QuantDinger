@@ -12,6 +12,11 @@ from app.utils.logger import get_logger
 from app.strategies.factory import load_and_create
 from app.strategies.base import sleep_until_next_tick
 from app.services.data_handler import DataHandler
+from app.services.server_side_risk import (
+    check_stop_loss_signal,
+    check_take_profit_or_trailing_signal,
+    to_ratio,
+)
 from app.data_sources import DataSourceFactory
 from app.services.kline import KlineService
 from app.utils.console import console_print
@@ -140,10 +145,6 @@ class TradingExecutor:
             except Exception:
                 pass
 
-    def _console_print(self, msg: str) -> None:
-        """Local-only observability: 委托给公共 console_print"""
-        console_print(msg)
-
     def _position_state(self, positions: List[Dict[str, Any]]) -> str:
         """
         Return current position state for a strategy+symbol in local single-position mode.
@@ -250,23 +251,6 @@ class TradingExecutor:
         except Exception:
             return False
 
-    def _to_ratio(self, v: Any, default: float = 0.0) -> float:
-        """
-        Convert a percent-like value into ratio in [0, 1].
-        Accepts both 0~1 and 0~100 inputs.
-        """
-        try:
-            x = float(v if v is not None else default)
-        except (ValueError, TypeError):
-            x = float(default or 0.0)
-        if x > 1.0:
-            x = x / 100.0
-        if x < 0:
-            x = 0.0
-        if x > 1.0:
-            x = 1.0
-        return float(x)
-
     def start_strategy(self, strategy_id: int) -> bool:
         """
         启动策略
@@ -280,14 +264,17 @@ class TradingExecutor:
         try:
             with self.lock:
                 # 清理已退出的线程，防止计数膨胀
-                stale_ids = [sid for sid, th in self.running_strategies.items() if not th.is_alive()]
+                stale_ids = [
+                    sid for sid, th in self.running_strategies.items()
+                    if not th.is_alive()
+                ]
                 for sid in stale_ids:
                     del self.running_strategies[sid]
 
                 if len(self.running_strategies) >= self.max_threads:
                     logger.error(
                         "Thread limit reached (running=%d, max=%d); refuse to start strategy %d. "
-                        "Reduce running strategies or set STRATEGY_MAX_THREADS in backend_api_python/.env",
+                        "Reduce running strategies or set STRATEGY_MAX_THREADS in .env",
                         len(self.running_strategies), self.max_threads, strategy_id,
                     )
                     self._log_resource_status(prefix="start_denied: ")
@@ -312,7 +299,7 @@ class TradingExecutor:
                 self.running_strategies[strategy_id] = thread
 
                 logger.info("Strategy %s started", strategy_id)
-                self._console_print(f"[strategy:{strategy_id}] started")
+                console_print(f"[strategy:{strategy_id}] started")
                 return True
 
         except Exception as e:
@@ -343,7 +330,7 @@ class TradingExecutor:
                 del self.running_strategies[strategy_id]
 
                 logger.info("Strategy %s stopped", strategy_id)
-                self._console_print(f"[strategy:{strategy_id}] stopped (requested)")
+                console_print(f"[strategy:{strategy_id}] stopped (requested)")
                 return True
 
         except Exception as e:
@@ -359,7 +346,7 @@ class TradingExecutor:
             strategy_id: 策略ID
         """
         logger.info("Strategy %s loop starting", strategy_id)
-        self._console_print(f"[strategy:{strategy_id}] loop initializing")
+        console_print(f"[strategy:{strategy_id}] loop initializing")
 
         try:
             strat, strategy = load_and_create(strategy_id)
@@ -378,13 +365,13 @@ class TradingExecutor:
         except Exception as e:
             logger.error("Strategy %s crashed: %s", strategy_id, e)
             logger.error(traceback.format_exc())
-            self._console_print(f"[strategy:{strategy_id}] fatal error: {e}")
+            console_print(f"[strategy:{strategy_id}] fatal error: {e}")
         finally:
             # 清理
             with self.lock:
                 if strategy_id in self.running_strategies:
                     del self.running_strategies[strategy_id]
-            self._console_print(f"[strategy:{strategy_id}] loop exited")
+            console_print(f"[strategy:{strategy_id}] loop exited")
             logger.info("Strategy %s loop exited", strategy_id)
 
     def _run_single_symbol_loop(
@@ -403,8 +390,7 @@ class TradingExecutor:
             tick_interval_sec = int(os.getenv("STRATEGY_TICK_INTERVAL_SEC", "10"))
         except (ValueError, TypeError):
             tick_interval_sec = 10
-        if tick_interval_sec < 1:
-            tick_interval_sec = 1
+        tick_interval_sec = max(tick_interval_sec, 1)
 
         last_tick_time = 0.0
 
@@ -481,18 +467,22 @@ class TradingExecutor:
                         notification_config=strategy.get("_notification_config"),
                         trading_config=trading_config,
                         ai_model_config=strategy.get("ai_model_config"),
-                        timeframe_seconds=self._get_timeframe_seconds(trading_config.get("timeframe", "1H")),
+                        timeframe_seconds=self._get_timeframe_seconds(
+                            trading_config.get("timeframe", "1H")
+                        ),
                     )
 
                 self.data_handler.update_positions_current_price(strategy_id, symbol, current_price)
+                # SingleSymbolIndicator 内部 pending_signals，暂无公开 API，用于控制台输出
                 pending_count = len(strat._state.get("pending_signals", []))
-                self._console_print(
-                    f"[strategy:{strategy_id}] tick price={float(current_price or 0.0):.8f} pending_signals={pending_count}"
+                price_str = f"{float(current_price or 0.0):.8f}"
+                console_print(
+                    f"[strategy:{strategy_id}] tick price={price_str} pending_signals={pending_count}"
                 )
             except Exception as e:
                 logger.error("Strategy %s loop error: %s", strategy_id, e)
                 logger.error(traceback.format_exc())
-                self._console_print(f"[strategy:{strategy_id}] loop error: {e}")
+                console_print(f"[strategy:{strategy_id}] loop error: {e}")
                 time.sleep(5)
 
         logger.info("Strategy %s loop exited", strategy_id)
@@ -524,12 +514,15 @@ class TradingExecutor:
                     continue
 
                 request = strat.get_data_request(strategy_id, strategy, current_time)
-                if not self._should_rebalance(strategy_id, request.get("rebalance_frequency", "daily")):
+                reb_freq = request.get("rebalance_frequency", "daily")
+                if not self._should_rebalance(strategy_id, reb_freq):
                     continue
 
                 ctx = self.data_handler.get_input_context_cross(strategy_id, request)
                 if ctx is None:
-                    logger.warning("Strategy %s failed to get cross input context", strategy_id)
+                    logger.warning(
+                    "Strategy %s failed to get cross input context", strategy_id
+                )
                     continue
 
                 ctx["strategy_id"] = strategy_id
@@ -552,7 +545,7 @@ class TradingExecutor:
             except Exception as e:
                 logger.error("Cross-sectional strategy %s loop error: %s", strategy_id, e)
                 logger.error(traceback.format_exc())
-                self._console_print(f"[strategy:{strategy_id}] loop error: {e}")
+                console_print(f"[strategy:{strategy_id}] loop error: {e}")
                 time.sleep(5)
 
         logger.info("Cross-sectional strategy %s loop exited", strategy_id)
@@ -684,7 +677,8 @@ class TradingExecutor:
                     if cache_key and self._price_cache_ttl_sec > 0:
                         try:
                             with self._price_cache_lock:
-                                self._price_cache[cache_key] = (float(price), time.time() + self._price_cache_ttl_sec)
+                                exp = time.time() + self._price_cache_ttl_sec
+                                self._price_cache[cache_key] = (float(price), exp)
                         except Exception:
                             pass
                     return price
@@ -697,257 +691,6 @@ class TradingExecutor:
             )
 
         return None
-
-    def _server_side_stop_loss_signal(
-        self,
-        strategy_id: int,
-        symbol: str,
-        current_price: float,
-        market_type: str,
-        leverage: float,
-        trading_config: Dict[str, Any],
-        timeframe_seconds: int,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        服务端兜底止损：当价格穿透止损线时，直接生成 close_long/close_short 信号。
-
-        目的：防止“指标回放逻辑导致最后一根K线没有 close_* 信号”或“插针反弹导致二次触发条件不满足”时不止损。
-        """
-        try:
-            if trading_config is None:
-                return None
-
-            enabled = trading_config.get('enable_server_side_stop_loss', True)
-            if str(enabled).lower() in ['0', 'false', 'no', 'off']:
-                return None
-
-            # 获取当前持仓（使用本地数据库记录作为风控依据）
-            current_positions = self.data_handler.get_current_positions(strategy_id, symbol)
-            if not current_positions:
-                return None
-
-            pos = current_positions[0]
-            side = pos.get('side')
-            if side not in ['long', 'short']:
-                return None
-
-            entry_price = float(pos.get('entry_price', 0) or 0)
-            if entry_price <= 0 or current_price <= 0:
-                return None
-
-            # Stop-loss is config-driven: if stop_loss_pct is not set or <= 0, do NOT stop-loss.
-            sl_cfg = trading_config.get('stop_loss_pct', 0)
-            sl = 0.0
-            try:
-                sl_cfg = float(sl_cfg or 0)
-                if sl_cfg > 1:
-                    sl = sl_cfg / 100.0
-                else:
-                    sl = sl_cfg
-            except Exception:
-                sl = 0.0
-
-            if sl <= 0:
-                return None
-
-            # Align with backtest semantics: risk percentages are defined on margin PnL,
-            # so we convert to price move threshold by dividing by leverage.
-            lev = max(1.0, float(leverage or 1.0))
-            sl = sl / lev
-
-            # Use candle start timestamp to deduplicate exit attempts within a candle.
-            now_ts = int(time.time())
-            tf = int(timeframe_seconds or 60)
-            candle_ts = int(now_ts // tf) * tf
-
-            # 多头：跌破止损线
-            if side == 'long':
-                stop_line = entry_price * (1 - sl)
-                if current_price <= stop_line:
-                    return {
-                        'type': 'close_long',
-                        'trigger_price': 0,  # 立即触发（由 exit_trigger_mode 控制）
-                        'position_size': 0,
-                        'timestamp': candle_ts,
-                        'reason': 'server_stop_loss',
-                        'stop_loss_price': stop_line,
-                    }
-            # 空头：突破止损线
-            elif side == 'short':
-                stop_line = entry_price * (1 + sl)
-                if current_price >= stop_line:
-                    return {
-                        'type': 'close_short',
-                        'trigger_price': 0,
-                        'position_size': 0,
-                        'timestamp': candle_ts,
-                        'reason': 'server_stop_loss',
-                        'stop_loss_price': stop_line,
-                    }
-
-            return None
-        except Exception as e:
-            logger.warning(
-                "Strategy %s server-side stop-loss check failed: %s",
-                strategy_id,
-                e,
-            )
-            return None
-
-    def _server_side_take_profit_or_trailing_signal(
-        self,
-        strategy_id: int,
-        symbol: str,
-        current_price: float,
-        market_type: str,
-        leverage: float,
-        trading_config: Dict[str, Any],
-        timeframe_seconds: int,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Server-side exits driven by trading_config (no indicator script required):
-        - Fixed take-profit: take_profit_pct
-        - Trailing stop: trailing_enabled + trailing_stop_pct + trailing_activation_pct
-
-        Semantics align with BacktestService:
-        - Percentages are defined on margin PnL; effective price threshold = pct / leverage.
-        - When trailing is enabled, fixed take-profit is disabled to avoid ambiguity.
-        """
-        try:
-            if not trading_config:
-                return None
-
-            current_positions = self.data_handler.get_current_positions(strategy_id, symbol)
-            if not current_positions:
-                return None
-
-            pos = current_positions[0]
-            side = (pos.get('side') or '').strip().lower()
-            if side not in ['long', 'short']:
-                return None
-
-            entry_price = float(pos.get('entry_price', 0) or 0)
-            if entry_price <= 0 or current_price <= 0:
-                return None
-
-            lev = max(1.0, float(leverage or 1.0))
-
-            tp = self._to_ratio(trading_config.get('take_profit_pct'))
-            trailing_enabled = bool(trading_config.get('trailing_enabled'))
-            trailing_pct = self._to_ratio(trading_config.get('trailing_stop_pct'))
-            trailing_act = self._to_ratio(trading_config.get('trailing_activation_pct'))
-
-            tp_eff = (tp / lev) if tp > 0 else 0.0
-            trailing_pct_eff = (trailing_pct / lev) if trailing_pct > 0 else 0.0
-            trailing_act_eff = (trailing_act / lev) if trailing_act > 0 else 0.0
-
-            # Conflict rule: when trailing is enabled, fixed TP is disabled.
-            if trailing_enabled and trailing_pct_eff > 0:
-                tp_eff = 0.0
-                # If activationPct is missing, reuse take_profit_pct as activation threshold.
-                if trailing_act_eff <= 0 and tp > 0:
-                    trailing_act_eff = tp / lev
-
-            now_ts = int(time.time())
-            tf = int(timeframe_seconds or 60)
-            candle_ts = int(now_ts // tf) * tf
-
-            # Highest/lowest tracking (persisted in DB so restart continues trailing correctly)
-            try:
-                hp = float(pos.get('highest_price') or 0.0)
-            except Exception:
-                hp = 0.0
-            try:
-                lp = float(pos.get('lowest_price') or 0.0)
-            except Exception:
-                lp = 0.0
-
-            if hp <= 0:
-                hp = entry_price
-            hp = max(hp, float(current_price))
-
-            if lp <= 0:
-                lp = entry_price
-            lp = min(lp, float(current_price))
-
-            # Persist best-effort
-            try:
-                self.data_handler.update_position(
-                    strategy_id=strategy_id,
-                    symbol=pos.get('symbol') or symbol,
-                    side=side,
-                    size=float(pos.get('size') or 0.0),
-                    entry_price=entry_price,
-                    current_price=float(current_price),
-                    highest_price=hp,
-                    lowest_price=lp,
-                )
-            except Exception:
-                pass
-
-            # 1) Trailing stop
-            if trailing_enabled and trailing_pct_eff > 0:
-                if side == 'long':
-                    active = True
-                    if trailing_act_eff > 0:
-                        active = hp >= entry_price * (1 + trailing_act_eff)
-                    if active:
-                        stop_line = hp * (1 - trailing_pct_eff)
-                        if current_price <= stop_line:
-                            return {
-                                'type': 'close_long',
-                                'trigger_price': 0,
-                                'position_size': 0,
-                                'timestamp': candle_ts,
-                                'reason': 'server_trailing_stop',
-                                'trailing_stop_price': stop_line,
-                                'highest_price': hp,
-                            }
-                else:
-                    active = True
-                    if trailing_act_eff > 0:
-                        active = lp <= entry_price * (1 - trailing_act_eff)
-                    if active:
-                        stop_line = lp * (1 + trailing_pct_eff)
-                        if current_price >= stop_line:
-                            return {
-                                'type': 'close_short',
-                                'trigger_price': 0,
-                                'position_size': 0,
-                                'timestamp': candle_ts,
-                                'reason': 'server_trailing_stop',
-                                'trailing_stop_price': stop_line,
-                                'lowest_price': lp,
-                            }
-
-            # 2) Fixed take-profit (only when trailing is disabled)
-            if tp_eff > 0:
-                if side == 'long':
-                    tp_line = entry_price * (1 + tp_eff)
-                    if current_price >= tp_line:
-                        return {
-                            'type': 'close_long',
-                            'trigger_price': 0,
-                            'position_size': 0,
-                            'timestamp': candle_ts,
-                            'reason': 'server_take_profit',
-                            'take_profit_price': tp_line,
-                        }
-                else:
-                    tp_line = entry_price * (1 - tp_eff)
-                    if current_price <= tp_line:
-                        return {
-                            'type': 'close_short',
-                            'trigger_price': 0,
-                            'position_size': 0,
-                            'timestamp': candle_ts,
-                            'reason': 'server_take_profit',
-                            'take_profit_price': tp_line,
-                        }
-
-            return None
-        except Exception:
-            return None
 
     def _process_and_execute_signals(
         self,
@@ -976,16 +719,26 @@ class TradingExecutor:
         if not triggered_signals:
             return
         all_signals = list(triggered_signals)
-        risk_tp = self._server_side_take_profit_or_trailing_signal(
-            strategy_id=strategy_id, symbol=symbol, current_price=float(current_price),
-            market_type=market_type, leverage=float(leverage), trading_config=trading_config,
+        risk_tp = check_take_profit_or_trailing_signal(
+            self.data_handler,
+            strategy_id=strategy_id,
+            symbol=symbol,
+            current_price=float(current_price),
+            market_type=market_type,
+            leverage=float(leverage),
+            trading_config=trading_config,
             timeframe_seconds=int(timeframe_seconds or 60),
         )
         if risk_tp:
             all_signals.append(risk_tp)
-        risk_sl = self._server_side_stop_loss_signal(
-            strategy_id=strategy_id, symbol=symbol, current_price=float(current_price),
-            market_type=market_type, leverage=float(leverage), trading_config=trading_config,
+        risk_sl = check_stop_loss_signal(
+            self.data_handler,
+            strategy_id=strategy_id,
+            symbol=symbol,
+            current_price=float(current_price),
+            market_type=market_type,
+            leverage=float(leverage),
+            trading_config=trading_config,
             timeframe_seconds=int(timeframe_seconds or 60),
         )
         if risk_sl:
@@ -1099,7 +852,10 @@ class TradingExecutor:
             sig = (signal_type or "").strip().lower()
 
             # 1.1 开仓 AI 过滤（仅 open_*）
-            if sig in ("open_long", "open_short") and self._is_entry_ai_filter_enabled(ai_model_config=ai_model_config, trading_config=trading_config):
+            ai_enabled = self._is_entry_ai_filter_enabled(
+                ai_model_config=ai_model_config, trading_config=trading_config
+            )
+            if sig in ("open_long", "open_short") and ai_enabled:
                 ok_ai, ai_info = self._entry_ai_filter_allows(
                     strategy_id=strategy_id,
                     symbol=symbol,
@@ -1112,7 +868,10 @@ class TradingExecutor:
                     reason = (ai_info or {}).get("reason") or "ai_filter_rejected"
                     ai_decision = (ai_info or {}).get("ai_decision") or ""
                     title = f"AI过滤拦截开仓 | {symbol}"
-                    msg = f"策略信号={sig}，AI决策={ai_decision or 'UNKNOWN'}，原因={reason}；已HOLD（不下单）"
+                    msg = (
+                        f"策略信号={sig}，AI决策={ai_decision or 'UNKNOWN'}，"
+                        f"原因={reason}；已HOLD（不下单）"
+                    )
                     self.data_handler.persist_notification(
                         strategy_id=strategy_id,
                         symbol=symbol,
@@ -1150,13 +909,13 @@ class TradingExecutor:
             if sig in ("open_long", "open_short") and isinstance(trading_config, dict):
                 ep = trading_config.get("entry_pct")
                 if ep is not None:
-                    position_size = self._to_ratio(ep, default=position_size if position_size is not None else 0.0)
+                    position_size = to_ratio(ep, default=position_size if position_size is not None else 0.0)
 
             # Open / add sizing: position_size is treated as capital ratio in [0,1].
             if ('open' in sig or 'add' in sig):
                 if position_size is None or float(position_size) <= 0:
                     position_size = 0.05
-                position_ratio = self._to_ratio(position_size, default=0.05)
+                position_ratio = to_ratio(position_size, default=0.05)
                 if market_type == 'spot':
                     amount = available_capital * position_ratio / current_price
                 else:
@@ -1173,7 +932,7 @@ class TradingExecutor:
                 cur_size = float(pos.get("size") or 0.0)
                 if cur_size <= 0:
                     return False
-                reduce_ratio = self._to_ratio(position_size, default=0.1)
+                reduce_ratio = to_ratio(position_size, default=0.1)
                 reduce_amount = cur_size * reduce_ratio
                 # If reduce is effectively full, treat as close_*.
                 if reduce_amount >= cur_size * 0.999:
@@ -1304,7 +1063,12 @@ class TradingExecutor:
             logger.error("Failed to execute signal: %s", e)
             return False
 
-    def _is_entry_ai_filter_enabled(self, *, ai_model_config: Optional[Dict[str, Any]], trading_config: Optional[Dict[str, Any]]) -> bool:
+    def _is_entry_ai_filter_enabled(
+        self,
+        *,
+        ai_model_config: Optional[Dict[str, Any]],
+        trading_config: Optional[Dict[str, Any]],
+    ) -> bool:
         """Detect whether the strategy enabled 'AI filter on entry (open positions only)'."""
         amc = ai_model_config if isinstance(ai_model_config, dict) else {}
         tc = trading_config if isinstance(trading_config, dict) else {}
@@ -1355,14 +1119,22 @@ class TradingExecutor:
         tc = trading_config if isinstance(trading_config, dict) else {}
 
         # Market for AnalysisService. Live trading executor is Crypto-focused.
-        market = str(amc.get("market") or amc.get("analysis_market") or "Crypto").strip() or "Crypto"
+        market = str(
+            amc.get("market") or amc.get("analysis_market") or "Crypto"
+        ).strip() or "Crypto"
 
         # Optional model override (OpenRouter model id)
-        model = amc.get("model") or amc.get("openrouter_model") or amc.get("openrouterModel") or None
+        model = (
+            amc.get("model") or amc.get("openrouter_model")
+            or amc.get("openrouterModel") or None
+        )
         model = str(model).strip() if model else None
 
         # Prefer zh-CN for local UI; can be overridden.
-        language = amc.get("language") or amc.get("lang") or tc.get("language") or "zh-CN"
+        language = (
+            amc.get("language") or amc.get("lang")
+            or tc.get("language") or "zh-CN"
+        )
         language = str(language or "zh-CN")
 
         try:
@@ -1373,7 +1145,12 @@ class TradingExecutor:
             result = service.analyze(market, symbol, language, model=model)
 
             if isinstance(result, dict) and result.get("error"):
-                return False, {"ai_decision": "", "reason": "analysis_error", "analysis_error": str(result.get("error") or "")}
+                err_msg = str(result.get("error") or "")
+                return False, {
+                    "ai_decision": "",
+                    "reason": "analysis_error",
+                    "analysis_error": err_msg,
+                }
 
             # FastAnalysisService 直接返回 decision 字段
             ai_dec = str(result.get("decision", "")).strip().upper()
@@ -1384,11 +1161,12 @@ class TradingExecutor:
             confidence = result.get("confidence", 50)
             summary = result.get("summary", "")
 
+            info = {"ai_decision": ai_dec, "confidence": confidence, "summary": summary}
             if ai_dec == expected:
-                return True, {"ai_decision": ai_dec, "reason": "match", "confidence": confidence, "summary": summary}
+                return True, {**info, "reason": "match"}
             if ai_dec == "HOLD":
-                return False, {"ai_decision": ai_dec, "reason": "ai_hold", "confidence": confidence, "summary": summary}
-            return False, {"ai_decision": ai_dec, "reason": "direction_mismatch", "confidence": confidence, "summary": summary}
+                return False, {**info, "reason": "ai_hold"}
+            return False, {**info, "reason": "direction_mismatch"}
         except Exception as e:
             return False, {"ai_decision": "", "reason": "analysis_exception", "analysis_error": str(e)}
 
@@ -1566,7 +1344,8 @@ class TradingExecutor:
             if last_id > 0:
                 if strict_candle_dedup:
                     logger.info(
-                        "enqueue_pending_order skipped (same candle): existing id=%s strategy_id=%s symbol=%s signal=%s signal_ts=%s status=%s",
+                        "enqueue_pending_order skipped (same candle): id=%s sid=%s sym=%s "
+                        "sig=%s ts=%s status=%s",
                         last_id, strategy_id, symbol, signal_type, stsig, last_status,
                     )
                     return None
@@ -1578,8 +1357,10 @@ class TradingExecutor:
                     return None
                 if last_created > 0 and (now - last_created) < cooldown_sec:
                     logger.info(
-                        "enqueue_pending_order cooldown: last_id=%s last_status=%s age_sec=%s (<%s) strategy_id=%s symbol=%s signal=%s",
-                        last_id, last_status, now - last_created, cooldown_sec, strategy_id, symbol, signal_type,
+                        "enqueue_pending_order cooldown: last_id=%s status=%s age=%s (<%s) "
+                        "sid=%s sym=%s sig=%s",
+                        last_id, last_status, now - last_created, cooldown_sec,
+                        strategy_id, symbol, signal_type,
                     )
                     return None
 
