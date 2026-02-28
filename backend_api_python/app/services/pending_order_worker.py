@@ -36,6 +36,7 @@ from app.services.live_trading.bitfinex import BitfinexClient
 from app.services.live_trading.bitfinex import BitfinexDerivativesClient
 from app.services.live_trading.symbols import to_okx_swap_inst_id
 from app.services.live_trading.symbols import to_gate_currency_pair
+from app.utils.console import console_print
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 
@@ -816,18 +817,12 @@ class PendingOrderWorker:
             except Exception as e:
                 logger.info(f"live notify skipped/failed: pending_id={order_id}, strategy_id={strategy_id}, err={e}")
 
-        def _console_print(msg: str) -> None:
-            try:
-                print(str(msg or ""), flush=True)
-            except Exception:
-                pass
-
         signal_type = payload.get("signal_type") or order_row.get("signal_type")
         symbol = payload.get("symbol") or order_row.get("symbol")
         amount = float(payload.get("amount") or order_row.get("amount") or 0.0)
         if not symbol or not signal_type:
             self._mark_failed(order_id=order_id, error="missing_symbol_or_signal_type")
-            _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} missing symbol/signal_type")
+            console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} missing symbol/signal_type")
             _notify_live_best_effort(status="failed", error="missing_symbol_or_signal_type")
             return
 
@@ -841,7 +836,7 @@ class PendingOrderWorker:
         # AShare and Futures do not support live trading
         if market_category in ("AShare", "Futures"):
             self._mark_failed(order_id=order_id, error=f"live_trading_not_supported_for_{market_category.lower()}")
-            _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {market_category} does not support live trading")
+            console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {market_category} does not support live trading")
             _notify_live_best_effort(status="failed", error=f"live_trading_not_supported_for_{market_category.lower()}")
             return
 
@@ -849,7 +844,7 @@ class PendingOrderWorker:
         if exchange_id == "ibkr":
             if market_category not in ("USStock", "HShare"):
                 self._mark_failed(order_id=order_id, error=f"ibkr_only_supports_usstock_hshare_got_{market_category.lower()}")
-                _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} IBKR only supports USStock/HShare, got {market_category}")
+                console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} IBKR only supports USStock/HShare, got {market_category}")
                 _notify_live_best_effort(status="failed", error=f"ibkr_only_supports_usstock_hshare_got_{market_category.lower()}")
                 return
 
@@ -857,7 +852,7 @@ class PendingOrderWorker:
         if exchange_id == "mt5":
             if market_category != "Forex":
                 self._mark_failed(order_id=order_id, error=f"mt5_only_supports_forex_got_{market_category.lower()}")
-                _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} MT5 only supports Forex, got {market_category}")
+                console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} MT5 only supports Forex, got {market_category}")
                 _notify_live_best_effort(status="failed", error=f"mt5_only_supports_forex_got_{market_category.lower()}")
                 return
 
@@ -866,7 +861,7 @@ class PendingOrderWorker:
         if exchange_id in crypto_exchanges:
             if market_category != "Crypto":
                 self._mark_failed(order_id=order_id, error=f"crypto_exchange_only_supports_crypto_got_{market_category.lower()}")
-                _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {exchange_id} only supports Crypto, got {market_category}")
+                console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {exchange_id} only supports Crypto, got {market_category}")
                 _notify_live_best_effort(status="failed", error=f"crypto_exchange_only_supports_crypto_got_{market_category.lower()}")
                 return
 
@@ -880,7 +875,7 @@ class PendingOrderWorker:
             client = create_client(exchange_config, market_type=market_type)
         except Exception as e:
             self._mark_failed(order_id=order_id, error=f"create_client_failed:{e}")
-            _console_print(f"[worker] create_client_failed: strategy_id={strategy_id} pending_id={order_id} err={e}")
+            console_print(f"[worker] create_client_failed: strategy_id={strategy_id} pending_id={order_id} err={e}")
             _notify_live_best_effort(status="failed", error=f"create_client_failed:{e}")
             return
 
@@ -903,7 +898,7 @@ class PendingOrderWorker:
                 strategy_id=strategy_id,
                 exchange_config=exchange_config,
                 _notify_live_best_effort=_notify_live_best_effort,
-                _console_print=_console_print,
+                console_print=console_print,
             )
             return
 
@@ -926,7 +921,7 @@ class PendingOrderWorker:
                 strategy_id=strategy_id,
                 exchange_config=exchange_config,
                 _notify_live_best_effort=_notify_live_best_effort,
-                _console_print=_console_print,
+                console_print=console_print,
             )
             return
 
@@ -955,7 +950,7 @@ class PendingOrderWorker:
         # Spot does not support short signals in this system.
         if market_type == "spot" and "short" in sig:
             self._mark_failed(order_id=order_id, error="spot_market_does_not_support_short_signals")
-            _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} spot short not supported")
+            console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} spot short not supported")
             _notify_live_best_effort(status="failed", error="spot_market_does_not_support_short_signals")
             return
 
@@ -1071,7 +1066,7 @@ class PendingOrderWorker:
                 err = f"binance_set_leverage_failed:{e}"
                 logger.warning(f"live leverage set failed: pending_id={order_id}, strategy_id={strategy_id}, cfg={safe_cfg}, err={e}")
                 self._mark_failed(order_id=order_id, error=err)
-                _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {err}")
+                console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {err}")
                 _notify_live_best_effort(status="failed", error=err, amount_hint=amount, price_hint=ref_price)
                 return
 
@@ -1824,19 +1819,19 @@ class PendingOrderWorker:
                 phases["market_error"] = str(e)
                 # If we already got any fills in the limit phase, treat as partial success instead of failing the whole order.
                 if float(total_base or 0.0) > 0:
-                    _console_print(
+                    console_print(
                         f"[worker] market tail failed but partial filled: strategy_id={strategy_id} pending_id={order_id} filled={total_base} err={e}"
                     )
                     remaining = 0.0
                 else:
                     self._mark_failed(order_id=order_id, error=str(e))
-                    _console_print(f"[worker] order failed: strategy_id={strategy_id} pending_id={order_id} err={e}")
+                    console_print(f"[worker] order failed: strategy_id={strategy_id} pending_id={order_id} err={e}")
                     _notify_live_best_effort(status="failed", error=str(e), amount_hint=amount, price_hint=ref_price)
                     return
             except Exception as e:
                 logger.warning(f"live market phase unexpected error: pending_id={order_id}, strategy_id={strategy_id}, cfg={safe_cfg}, err={e}")
                 self._mark_failed(order_id=order_id, error=str(e))
-                _console_print(f"[worker] order unexpected error: strategy_id={strategy_id} pending_id={order_id} err={e}")
+                console_print(f"[worker] order unexpected error: strategy_id={strategy_id} pending_id={order_id} err={e}")
                 _notify_live_best_effort(status="failed", error=str(e), amount_hint=amount, price_hint=ref_price)
                 return
 
@@ -1866,7 +1861,7 @@ class PendingOrderWorker:
                 avg_price=avg_price,
                 executed_at=executed_at,
             )
-            _console_print(f"[worker] order sent: strategy_id={strategy_id} pending_id={order_id} exchange={res.exchange_id} order_id={res.exchange_order_id} filled={filled} avg={avg_price}")
+            console_print(f"[worker] order sent: strategy_id={strategy_id} pending_id={order_id} exchange={res.exchange_id} order_id={res.exchange_order_id} filled={filled} avg={avg_price}")
         except Exception as e:
             logger.warning(f"mark_sent failed: pending_id={order_id}, err={e}")
 
@@ -1922,7 +1917,7 @@ class PendingOrderWorker:
         strategy_id: int,
         exchange_config: Dict[str, Any],
         _notify_live_best_effort,
-        _console_print,
+        console_print,
     ) -> None:
         """
         Execute order via Interactive Brokers for US/HK stocks.
@@ -1942,7 +1937,7 @@ class PendingOrderWorker:
         # Stocks: no short selling in basic implementation
         if "short" in sig:
             self._mark_failed(order_id=order_id, error="ibkr_stock_short_not_supported")
-            _console_print(f"[worker] IBKR order rejected: strategy_id={strategy_id} pending_id={order_id} short not supported")
+            console_print(f"[worker] IBKR order rejected: strategy_id={strategy_id} pending_id={order_id} short not supported")
             _notify_live_best_effort(status="failed", error="ibkr_stock_short_not_supported")
             return
 
@@ -1953,7 +1948,7 @@ class PendingOrderWorker:
             action = "sell"
         else:
             self._mark_failed(order_id=order_id, error=f"ibkr_unsupported_signal:{signal_type}")
-            _console_print(f"[worker] IBKR order rejected: strategy_id={strategy_id} pending_id={order_id} unsupported signal {signal_type}")
+            console_print(f"[worker] IBKR order rejected: strategy_id={strategy_id} pending_id={order_id} unsupported signal {signal_type}")
             _notify_live_best_effort(status="failed", error=f"ibkr_unsupported_signal:{signal_type}")
             return
 
@@ -1977,7 +1972,7 @@ class PendingOrderWorker:
 
             if not result.success:
                 self._mark_failed(order_id=order_id, error=f"ibkr_order_failed:{result.message}")
-                _console_print(f"[worker] IBKR order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
+                console_print(f"[worker] IBKR order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
                 _notify_live_best_effort(status="failed", error=f"ibkr_order_failed:{result.message}")
                 return
 
@@ -2004,7 +1999,7 @@ class PendingOrderWorker:
                 avg_price=avg_price,
                 executed_at=executed_at,
             )
-            _console_print(f"[worker] IBKR order sent: strategy_id={strategy_id} pending_id={order_id} order_id={exchange_order_id} filled={filled} avg={avg_price}")
+            console_print(f"[worker] IBKR order sent: strategy_id={strategy_id} pending_id={order_id} order_id={exchange_order_id} filled={filled} avg={avg_price}")
 
             # Record trade and update position
             try:
@@ -2046,7 +2041,7 @@ class PendingOrderWorker:
         except Exception as e:
             logger.error(f"IBKR order execution failed: pending_id={order_id}, strategy_id={strategy_id}, err={e}")
             self._mark_failed(order_id=order_id, error=f"ibkr_exception:{e}")
-            _console_print(f"[worker] IBKR order exception: strategy_id={strategy_id} pending_id={order_id} err={e}")
+            console_print(f"[worker] IBKR order exception: strategy_id={strategy_id} pending_id={order_id} err={e}")
             _notify_live_best_effort(status="failed", error=str(e))
 
     def _execute_mt5_order(
@@ -2059,7 +2054,7 @@ class PendingOrderWorker:
         strategy_id: int,
         exchange_config: Dict[str, Any],
         _notify_live_best_effort,
-        _console_print,
+        console_print,
     ) -> None:
         """
         Execute order via MetaTrader 5 for forex trading.
@@ -2087,7 +2082,7 @@ class PendingOrderWorker:
             action = "buy"
         else:
             self._mark_failed(order_id=order_id, error=f"mt5_unsupported_signal:{signal_type}")
-            _console_print(f"[worker] MT5 order rejected: strategy_id={strategy_id} pending_id={order_id} unsupported signal {signal_type}")
+            console_print(f"[worker] MT5 order rejected: strategy_id={strategy_id} pending_id={order_id} unsupported signal {signal_type}")
             _notify_live_best_effort(status="failed", error=f"mt5_unsupported_signal:{signal_type}")
             return
 
@@ -2102,7 +2097,7 @@ class PendingOrderWorker:
 
             if not result.success:
                 self._mark_failed(order_id=order_id, error=f"mt5_order_failed:{result.message}")
-                _console_print(f"[worker] MT5 order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
+                console_print(f"[worker] MT5 order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
                 _notify_live_best_effort(status="failed", error=f"mt5_order_failed:{result.message}")
                 return
 
@@ -2129,7 +2124,7 @@ class PendingOrderWorker:
                 avg_price=avg_price,
                 executed_at=executed_at,
             )
-            _console_print(f"[worker] MT5 order sent: strategy_id={strategy_id} pending_id={order_id} order_id={exchange_order_id} filled={filled} avg={avg_price}")
+            console_print(f"[worker] MT5 order sent: strategy_id={strategy_id} pending_id={order_id} order_id={exchange_order_id} filled={filled} avg={avg_price}")
 
             # Record trade and update position
             try:
@@ -2171,7 +2166,7 @@ class PendingOrderWorker:
         except Exception as e:
             logger.error(f"MT5 order execution failed: pending_id={order_id}, strategy_id={strategy_id}, err={e}")
             self._mark_failed(order_id=order_id, error=f"mt5_exception:{e}")
-            _console_print(f"[worker] MT5 order exception: strategy_id={strategy_id} pending_id={order_id} err={e}")
+            console_print(f"[worker] MT5 order exception: strategy_id={strategy_id} pending_id={order_id} err={e}")
             _notify_live_best_effort(status="failed", error=str(e))
 
     def _mark_sent(

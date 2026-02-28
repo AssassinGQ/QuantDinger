@@ -35,7 +35,9 @@ def _ensure_backend_on_syspath() -> None:
 
 _ensure_backend_on_syspath()
 
+from app.services.data_handler import DataHandler  # noqa: E402
 from app.services.trading_executor import TradingExecutor  # noqa: E402
+from app.strategies.single_symbol_indicator import run_single_indicator  # noqa: E402
 from app.utils.db import get_db_connection  # noqa: E402
 
 
@@ -88,20 +90,19 @@ def _make_klines_1m(base: float = 3000.0, n: int = 200) -> List[Dict[str, Any]]:
 
 
 def _count_signals_for_klines(
-    ex: TradingExecutor,
     indicator_code: str,
     klines: List[Dict[str, Any]],
     trade_direction: str,
     leverage: int,
     initial_capital: float,
 ) -> Dict[str, int]:
-    df = ex._klines_to_dataframe(klines)
+    df = DataHandler()._klines_to_dataframe(klines)
     tc = {
         "trade_direction": trade_direction,
         "leverage": leverage,
         "initial_capital": initial_capital,
     }
-    executed_df, _env = ex._execute_indicator_df(indicator_code, df, tc)
+    executed_df, _env = run_single_indicator(indicator_code, df, tc)
     if executed_df is None:
         return {"buy": 0, "sell": 0}
     buy = int(executed_df.get("buy", False).fillna(False).astype(bool).sum()) if "buy" in executed_df.columns else 0
@@ -110,7 +111,6 @@ def _count_signals_for_klines(
 
 
 def _trim_klines_to_last_signal(
-    ex: TradingExecutor,
     indicator_code: str,
     klines: List[Dict[str, Any]],
     keep_before: int = 220,
@@ -120,9 +120,9 @@ def _trim_klines_to_last_signal(
     Trim klines so the last buy/sell signal falls within the last 1~2 bars,
     which is what TradingExecutor evaluates.
     """
-    df = ex._klines_to_dataframe(klines)
+    df = DataHandler()._klines_to_dataframe(klines)
     tc = {"trade_direction": "both", "leverage": 5, "initial_capital": 1000.0}
-    executed_df, _env = ex._execute_indicator_df(indicator_code, df, tc)
+    executed_df, _env = run_single_indicator(indicator_code, df, tc)
     if executed_df is None or "buy" not in executed_df.columns or "sell" not in executed_df.columns:
         return klines
 
@@ -157,7 +157,7 @@ def _trim_klines_to_last_signal(
     return out
 
 
-def _find_klines_with_signal(ex: TradingExecutor, indicator_code: str) -> List[Dict[str, Any]]:
+def _find_klines_with_signal(indicator_code: str) -> List[Dict[str, Any]]:
     """
     Try a few synthetic patterns until SuperTrend produces at least one buy/sell.
     This makes the simulation deterministic.
@@ -188,10 +188,10 @@ def _find_klines_with_signal(ex: TradingExecutor, indicator_code: str) -> List[D
             row["low"] = float(l)
             row["close"] = float(c)
 
-        cnt = _count_signals_for_klines(ex, indicator_code, kl, "both", 5, 1000.0)
+        cnt = _count_signals_for_klines(indicator_code, kl, "both", 5, 1000.0)
         if cnt["buy"] > 0 or cnt["sell"] > 0:
-            kl2 = _trim_klines_to_last_signal(ex, indicator_code, kl, keep_before=220, keep_after=0)
-            cnt2 = _count_signals_for_klines(ex, indicator_code, kl2, "both", 5, 1000.0)
+            kl2 = _trim_klines_to_last_signal(indicator_code, kl, keep_before=220, keep_after=0)
+            cnt2 = _count_signals_for_klines(indicator_code, kl2, "both", 5, 1000.0)
             print(f"[OK] Found signals with pattern down={down_mult}, up={up_mult}, split={split}: {cnt} -> trimmed={cnt2}, bars={len(kl2)}")
             return kl2
         print(f"[MISS] Pattern down={down_mult}, up={up_mult}, split={split}: {cnt}")
@@ -309,7 +309,7 @@ def main() -> None:
     indicator_code = _read_indicator_code()
 
     ex = TradingExecutor()
-    klines = _find_klines_with_signal(ex, indicator_code)
+    klines = _find_klines_with_signal(indicator_code)
 
     # Your requested config (note: risk percentages are margin-based, executor divides by leverage).
     strategy_id = _insert_strategy(
@@ -348,7 +348,7 @@ def main() -> None:
     feed = _SimPriceFeed(prices)
 
     # Monkeypatch market data methods (no network).
-    ex._fetch_latest_kline = lambda _symbol, _tf, limit=500: klines  # type: ignore[assignment]
+    ex.data_handler._fetch_latest_kline = lambda *a, **kw: klines  # type: ignore[assignment]
     ex._fetch_current_price = lambda _exchange, _symbol, market_type=None: feed.next()  # type: ignore[assignment]
 
     ok = ex.start_strategy(strategy_id)
