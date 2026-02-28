@@ -81,3 +81,43 @@ class TestPendingOrderEnqueuer:
         # Should return early with success: True (simulating successful skip)
         assert result["success"] is True
         enqueuer.data_handler.insert_pending_order.assert_not_called()
+
+    def test_enqueue_pending_order_exception(self, enqueuer):
+        enqueuer.data_handler.find_recent_pending_order.side_effect = Exception("DB Error")
+        result = enqueuer.enqueue_pending_order(
+            strategy_id=1, symbol="BTC/USDT", signal_type="open_long",
+            amount=0.1, price=100.0, execution_mode="signal", extra_payload={},
+            signal_ts=0, market_type="swap", leverage=1.0
+        )
+        assert result is None
+
+    def test_enqueue_pending_order_skip_inflight(self, enqueuer):
+        enqueuer.data_handler.find_recent_pending_order.return_value = {
+            "id": 1, "status": "pending", "created_at": time.time()
+        }
+        result = enqueuer.enqueue_pending_order(
+            strategy_id=1, symbol="BTC/USDT", signal_type="open_long",
+            amount=0.1, price=100.0, execution_mode="signal", extra_payload={},
+            signal_ts=0, market_type="swap", leverage=1.0
+        )
+        assert result is None
+
+    def test_enqueue_pending_order_cooldown(self, enqueuer):
+        enqueuer.data_handler.find_recent_pending_order.return_value = {
+            "id": 1, "status": "completed", "created_at": time.time() - 2
+        }
+        # cooldown is hardcoded to 10 in the method
+        result = enqueuer.enqueue_pending_order(
+            strategy_id=1, symbol="BTC/USDT", signal_type="open_long",
+            amount=0.1, price=100.0, execution_mode="signal", extra_payload={},
+            signal_ts=0, market_type="swap", leverage=1.0
+        )
+        assert result is None
+
+    def test_execute_exchange_order_exception(self, enqueuer):
+        enqueuer.enqueue_pending_order = MagicMock(side_effect=Exception("Enqueue Error"))
+        result = enqueuer.execute_exchange_order(
+            exchange=None, strategy_id=1, symbol="BTC/USDT", signal_type="open_long", amount=0.5
+        )
+        assert result["success"] is False
+        assert "Enqueue Error" in result["error"]

@@ -27,6 +27,46 @@ class DataHandler:
     def __init__(self):
         self.kline_service = KlineService()
 
+    def _execute_query(self, query: str, args: tuple = ()) -> Optional[int]:
+        """执行写操作，返回最后插入的 ID 或 None"""
+        try:
+            with get_db_connection() as db:
+                cursor = db.cursor()
+                cursor.execute(query, args)
+                lastrowid = getattr(cursor, "lastrowid", 0)
+                db.commit()
+                cursor.close()
+                return lastrowid
+        except Exception as e:
+            logger.error("DB Execute Error: %s", e)
+            return None
+
+    def _fetch_one(self, query: str, args: tuple = ()) -> Optional[Dict[str, Any]]:
+        """执行查操作，返回单行字典"""
+        try:
+            with get_db_connection() as db:
+                cursor = db.cursor()
+                cursor.execute(query, args)
+                row = cursor.fetchone()
+                cursor.close()
+                return row
+        except Exception as e:
+            logger.error("DB FetchOne Error: %s", e)
+            return None
+
+    def _fetch_all(self, query: str, args: tuple = ()) -> List[Dict[str, Any]]:
+        """执行查操作，返回多行字典列表"""
+        try:
+            with get_db_connection() as db:
+                cursor = db.cursor()
+                cursor.execute(query, args)
+                rows = cursor.fetchall()
+                cursor.close()
+                return rows or []
+        except Exception as e:
+            logger.error("DB FetchAll Error: %s", e)
+            return []
+
     def get_input_context_single(
         self,
         strategy_id: int,
@@ -197,84 +237,41 @@ class DataHandler:
 
     def update_strategy_status(self, strategy_id: int, status: str) -> None:
         """更新策略状态"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    "UPDATE qd_strategies_trading SET status = %s WHERE id = %s",
-                    (status, strategy_id),
-                )
-                db.commit()
-                cursor.close()
-        except Exception as e:
-            logger.error("Failed to update strategy status: %s", e)
+        self._execute_query(
+            "UPDATE qd_strategies_trading SET status = %s WHERE id = %s",
+            (status, strategy_id),
+        )
 
     def get_strategy_row(self, strategy_id: int) -> Optional[Dict[str, Any]]:
         """从 qd_strategies_trading 获取策略原始行"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    """
-                    SELECT
-                        id, strategy_name, strategy_type, status,
-                        initial_capital, leverage, decide_interval,
-                        execution_mode, notification_config,
-                        indicator_config, exchange_config, trading_config, ai_model_config,
-                        market_category
-                    FROM qd_strategies_trading
-                    WHERE id = %s
-                    """,
-                    (strategy_id,),
-                )
-                row = cursor.fetchone()
-                cursor.close()
-                return row
-        except Exception as e:
-            logger.warning("Failed to get strategy row for %s: %s", strategy_id, e)
-            return None
+        return self._fetch_one(
+            """
+            SELECT
+                id, strategy_name, strategy_type, status,
+                initial_capital, leverage, decide_interval,
+                execution_mode, notification_config,
+                indicator_config, exchange_config, trading_config, ai_model_config,
+                market_category
+            FROM qd_strategies_trading
+            WHERE id = %s
+            """,
+            (strategy_id,),
+        )
 
     def get_indicator_code(self, indicator_id: int) -> Optional[str]:
         """从 qd_indicator_codes 获取指标代码"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    "SELECT code FROM qd_indicator_codes WHERE id = %s",
-                    (indicator_id,),
-                )
-                result = cursor.fetchone()
-                cursor.close()
-                return result["code"] if result else None
-        except Exception as e:
-            logger.warning("Failed to get indicator code for %s: %s", indicator_id, e)
-            return None
+        result = self._fetch_one("SELECT code FROM qd_indicator_codes WHERE id = %s", (indicator_id,))
+        return result["code"] if result else None
 
     def get_strategy_status(self, strategy_id: int) -> Optional[str]:
         """获取策略状态"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute("SELECT status FROM qd_strategies_trading WHERE id = %s", (strategy_id,))
-                result = cursor.fetchone()
-                cursor.close()
-                return result.get("status") if result else None
-        except Exception as e:
-            logger.warning("Failed to get strategy status for %s: %s", strategy_id, e)
-            return None
+        result = self._fetch_one("SELECT status FROM qd_strategies_trading WHERE id = %s", (strategy_id,))
+        return result.get("status") if result else None
 
     def get_user_id(self, strategy_id: int) -> int:
         """获取策略所属 user_id"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute("SELECT user_id FROM qd_strategies_trading WHERE id = %s", (strategy_id,))
-                row = cursor.fetchone()
-                cursor.close()
-                return int((row or {}).get("user_id") or 1)
-        except Exception as e:
-            logger.warning("Failed to get user_id for strategy %s: %s", strategy_id, e)
-            return 1
+        result = self._fetch_one("SELECT user_id FROM qd_strategies_trading WHERE id = %s", (strategy_id,))
+        return int((result or {}).get("user_id") or 1)
 
     def get_current_positions(self, strategy_id: int, symbol: str) -> List[Dict[str, Any]]:
         """获取当前持仓（支持 symbol 匹配）"""
@@ -295,32 +292,26 @@ class DataHandler:
         user_id: Optional[int] = None,
     ) -> None:
         """持久化通知到 qd_strategy_notifications"""
-        try:
-            if user_id is None:
-                user_id = self.get_user_id(strategy_id)
-            with get_db_connection() as db:
-                cur = db.cursor()
-                cur.execute(
-                    """
-                    INSERT INTO qd_strategy_notifications
-                    (user_id, strategy_id, symbol, signal_type, channels, title, message, payload_json, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    """,
-                    (
-                        int(user_id),
-                        int(strategy_id),
-                        str(symbol or ""),
-                        str(signal_type or ""),
-                        "browser",
-                        str(title or ""),
-                        str(message or ""),
-                        json.dumps(payload or {}, ensure_ascii=False),
-                    ),
-                )
-                db.commit()
-                cur.close()
-        except Exception as e:
-            logger.warning("persist_notification failed: %s", e)
+        if user_id is None:
+            user_id = self.get_user_id(strategy_id)
+        
+        self._execute_query(
+            """
+            INSERT INTO qd_strategy_notifications
+            (user_id, strategy_id, symbol, signal_type, channels, title, message, payload_json, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            """,
+            (
+                int(user_id),
+                int(strategy_id),
+                str(symbol or ""),
+                str(signal_type or ""),
+                "browser",
+                str(title or ""),
+                str(message or ""),
+                json.dumps(payload or {}, ensure_ascii=False),
+            ),
+        )
 
     def record_trade(
         self,
@@ -334,32 +325,25 @@ class DataHandler:
         commission: Optional[float] = None,
     ) -> None:
         """记录交易到 qd_strategy_trades"""
-        try:
-            user_id = self.get_user_id(strategy_id)
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO qd_strategy_trades
-                    (user_id, strategy_id, symbol, type, price, amount, value, commission, profit, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    """,
-                    (
-                        user_id,
-                        strategy_id,
-                        symbol,
-                        trade_type,
-                        price,
-                        amount,
-                        value,
-                        commission or 0,
-                        profit,
-                    ),
-                )
-                db.commit()
-                cursor.close()
-        except Exception as e:
-            logger.error("Failed to record trade: %s", e)
+        user_id = self.get_user_id(strategy_id)
+        self._execute_query(
+            """
+            INSERT INTO qd_strategy_trades
+            (user_id, strategy_id, symbol, type, price, amount, value, commission, profit, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            """,
+            (
+                user_id,
+                strategy_id,
+                symbol,
+                trade_type,
+                price,
+                amount,
+                value,
+                commission or 0,
+                profit,
+            ),
+        )
 
     def update_position(
         self,
@@ -373,76 +357,45 @@ class DataHandler:
         lowest_price: float = 0.0,
     ) -> None:
         """更新持仓"""
-        try:
-            user_id = self.get_user_id(strategy_id)
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO qd_strategy_positions
-                    (user_id, strategy_id, symbol, side, size, entry_price, current_price, highest_price, lowest_price, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT(strategy_id, symbol, side) DO UPDATE SET
-                        size = excluded.size,
-                        entry_price = excluded.entry_price,
-                        current_price = excluded.current_price,
-                        highest_price = CASE WHEN excluded.highest_price > 0 THEN excluded.highest_price ELSE qd_strategy_positions.highest_price END,
-                        lowest_price = CASE WHEN excluded.lowest_price > 0 THEN excluded.lowest_price ELSE qd_strategy_positions.lowest_price END,
-                        updated_at = NOW()
-                    """,
-                    (user_id, strategy_id, symbol, side, size, entry_price, current_price, highest_price, lowest_price),
-                )
-                db.commit()
-                cursor.close()
-        except Exception as e:
-            logger.error("Failed to update position: %s", e)
+        user_id = self.get_user_id(strategy_id)
+        self._execute_query(
+            """
+            INSERT INTO qd_strategy_positions
+            (user_id, strategy_id, symbol, side, size, entry_price, current_price, highest_price, lowest_price, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT(strategy_id, symbol, side) DO UPDATE SET
+                size = excluded.size,
+                entry_price = excluded.entry_price,
+                current_price = excluded.current_price,
+                highest_price = CASE WHEN excluded.highest_price > 0 THEN excluded.highest_price ELSE qd_strategy_positions.highest_price END,
+                lowest_price = CASE WHEN excluded.lowest_price > 0 THEN excluded.lowest_price ELSE qd_strategy_positions.lowest_price END,
+                updated_at = NOW()
+            """,
+            (user_id, strategy_id, symbol, side, size, entry_price, current_price, highest_price, lowest_price),
+        )
 
     def close_position(self, strategy_id: int, symbol: str, side: str) -> None:
         """平仓：删除持仓记录"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    "DELETE FROM qd_strategy_positions WHERE strategy_id = %s AND symbol = %s AND side = %s",
-                    (strategy_id, symbol, side),
-                )
-                db.commit()
-                cursor.close()
-        except Exception as e:
-            logger.error("Failed to close position: %s", e)
+        self._execute_query(
+            "DELETE FROM qd_strategy_positions WHERE strategy_id = %s AND symbol = %s AND side = %s",
+            (strategy_id, symbol, side),
+        )
 
     def update_positions_current_price(
         self, strategy_id: int, symbol: str, current_price: float
     ) -> None:
         """更新持仓的当前价格"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    "UPDATE qd_strategy_positions SET current_price = %s WHERE strategy_id = %s AND symbol = %s",
-                    (current_price, strategy_id, symbol),
-                )
-                db.commit()
-                cursor.close()
-        except Exception:
-            pass
+        self._execute_query(
+            "UPDATE qd_strategy_positions SET current_price = %s WHERE strategy_id = %s AND symbol = %s",
+            (current_price, strategy_id, symbol),
+        )
 
     def update_last_rebalance(self, strategy_id: int) -> None:
         """更新上次调仓时间"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                try:
-                    cursor.execute(
-                        "UPDATE qd_strategies_trading SET last_rebalance_at = NOW() WHERE id = %s",
-                        (strategy_id,),
-                    )
-                    db.commit()
-                except Exception:
-                    pass
-                cursor.close()
-        except Exception as e:
-            logger.warning("Failed to update last_rebalance_at: %s", e)
+        self._execute_query(
+            "UPDATE qd_strategies_trading SET last_rebalance_at = NOW() WHERE id = %s",
+            (strategy_id,),
+        )
 
     def find_recent_pending_order(
         self,
@@ -452,32 +405,24 @@ class DataHandler:
         signal_ts: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """查找最近的 pending_order 记录（用于去重）"""
-        try:
-            with get_db_connection() as db:
-                cur = db.cursor()
-                if signal_ts:
-                    cur.execute(
-                        """
-                        SELECT id, status, created_at FROM pending_orders
-                        WHERE strategy_id = %s AND symbol = %s AND signal_type = %s AND signal_ts = %s
-                        ORDER BY id DESC LIMIT 1
-                        """,
-                        (strategy_id, symbol, signal_type, signal_ts),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT id, status, created_at FROM pending_orders
-                        WHERE strategy_id = %s AND symbol = %s AND signal_type = %s
-                        ORDER BY id DESC LIMIT 1
-                        """,
-                        (strategy_id, symbol, signal_type),
-                    )
-                row = cur.fetchone()
-                cur.close()
-                return row
-        except Exception:
-            return None
+        if signal_ts:
+            return self._fetch_one(
+                """
+                SELECT id, status, created_at FROM pending_orders
+                WHERE strategy_id = %s AND symbol = %s AND signal_type = %s AND signal_ts = %s
+                ORDER BY id DESC LIMIT 1
+                """,
+                (strategy_id, symbol, signal_type, signal_ts),
+            )
+        else:
+            return self._fetch_one(
+                """
+                SELECT id, status, created_at FROM pending_orders
+                WHERE strategy_id = %s AND symbol = %s AND signal_type = %s
+                ORDER BY id DESC LIMIT 1
+                """,
+                (strategy_id, symbol, signal_type),
+            )
 
     def insert_pending_order(
         self,
@@ -498,65 +443,48 @@ class DataHandler:
         payload_json: str,
     ) -> Optional[int]:
         """插入 pending_order，返回 id"""
-        try:
-            with get_db_connection() as db:
-                cur = db.cursor()
-                cur.execute(
-                    """
-                    INSERT INTO pending_orders
-                    (user_id, strategy_id, symbol, signal_type, signal_ts, market_type, order_type, amount, price,
-                     execution_mode, status, priority, attempts, max_attempts, last_error, payload_json,
-                     created_at, updated_at, processed_at, sent_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NULL, NULL)
-                    """,
-                    (
-                        user_id,
-                        strategy_id,
-                        symbol,
-                        signal_type,
-                        signal_ts,
-                        market_type,
-                        order_type,
-                        amount,
-                        price,
-                        execution_mode,
-                        status,
-                        priority,
-                        attempts,
-                        max_attempts,
-                        "",
-                        payload_json,
-                    ),
-                )
-                pending_id = cur.lastrowid
-                db.commit()
-                cur.close()
-                return int(pending_id) if pending_id is not None else None
-        except Exception as e:
-            logger.error("Failed to insert pending_order: %s", e)
-            return None
+        return self._execute_query(
+            """
+            INSERT INTO pending_orders
+            (user_id, strategy_id, symbol, signal_type, signal_ts, market_type, order_type, amount, price,
+             execution_mode, status, priority, attempts, max_attempts, last_error, payload_json,
+             created_at, updated_at, processed_at, sent_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NULL, NULL)
+            """,
+            (
+                user_id,
+                strategy_id,
+                symbol,
+                signal_type,
+                signal_ts,
+                market_type,
+                order_type,
+                amount,
+                price,
+                execution_mode,
+                status,
+                priority,
+                attempts,
+                max_attempts,
+                "",
+                payload_json,
+            ),
+        )
 
     def get_last_rebalance_at(self, strategy_id: int) -> Optional[datetime]:
         """查询策略上次调仓时间，供 Executor 判断是否调仓日。无记录或异常时返回 None。"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    "SELECT last_rebalance_at FROM qd_strategies_trading WHERE id = %s",
-                    (strategy_id,),
-                )
-                result = cursor.fetchone()
-                if not result or not result.get("last_rebalance_at"):
-                    return None
-                val = result["last_rebalance_at"]
-                if isinstance(val, datetime):
-                    return val
-                if isinstance(val, str):
-                    return datetime.fromisoformat(val.replace("Z", "+00:00"))
-                return None
-        except Exception as e:
-            logger.error("Failed to get last_rebalance_at: %s", e)
+        result = self._fetch_one(
+            "SELECT last_rebalance_at FROM qd_strategies_trading WHERE id = %s",
+            (strategy_id,),
+        )
+        if not result or not result.get("last_rebalance_at"):
             return None
+        val = result["last_rebalance_at"]
+        if isinstance(val, datetime):
+            return val
+        if isinstance(val, str):
+            return datetime.fromisoformat(val.replace("Z", "+00:00"))
+        return None
 
     def _fetch_latest_kline(
         self,
@@ -653,45 +581,30 @@ class DataHandler:
         self, strategy_id: int, symbol: str
     ) -> List[Dict[str, Any]]:
         """获取当前持仓（支持 symbol 规范化匹配）"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    """
-                    SELECT id, symbol, side, size, entry_price, highest_price, lowest_price
-                    FROM qd_strategy_positions
-                    WHERE strategy_id = %s
-                """,
-                    (strategy_id,),
-                )
-                all_positions = cursor.fetchall() or []
-
-                matched = []
-                sym_upper = (symbol or "").strip().upper()
-                for pos in all_positions:
-                    p_symbol = (pos.get("symbol") or "").strip().upper()
-                    if sym_upper in p_symbol or p_symbol in sym_upper:
-                        matched.append(pos)
-                return matched
-        except Exception as e:
-            logger.error("Failed to get current positions: %s", e)
-            return []
+        all_positions = self._fetch_all(
+            """
+            SELECT id, symbol, side, size, entry_price, highest_price, lowest_price
+            FROM qd_strategy_positions
+            WHERE strategy_id = %s
+            """,
+            (strategy_id,),
+        )
+        matched = []
+        sym_upper = (symbol or "").strip().upper()
+        for pos in all_positions:
+            p_symbol = (pos.get("symbol") or "").strip().upper()
+            if sym_upper in p_symbol or p_symbol in sym_upper:
+                matched.append(pos)
+        return matched
 
     def _get_all_positions(self, strategy_id: int) -> List[Dict[str, Any]]:
         """获取策略的所有持仓"""
-        try:
-            with get_db_connection() as db:
-                cursor = db.cursor()
-                cursor.execute(
-                    """
-                    SELECT id, symbol, side, size, entry_price, current_price,
-                           highest_price, lowest_price
-                    FROM qd_strategy_positions
-                    WHERE strategy_id = %s
-                """,
-                    (strategy_id,),
-                )
-                return cursor.fetchall() or []
-        except Exception as e:
-            logger.error("Failed to get all positions: %s", e)
-            return []
+        return self._fetch_all(
+            """
+            SELECT id, symbol, side, size, entry_price, current_price,
+                   highest_price, lowest_price
+            FROM qd_strategy_positions
+            WHERE strategy_id = %s
+            """,
+            (strategy_id,),
+        )

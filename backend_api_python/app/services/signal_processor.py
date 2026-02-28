@@ -30,13 +30,12 @@ def position_state(positions: List[Dict[str, Any]]) -> str:
         pass
     return "flat"
 
-
 def is_signal_allowed(state: str, signal_type: str) -> bool:
     """
     Enforce strict state machine:
     - flat: only open_long/open_short
-    - long: only add_long/close_long
-    - short: only add_short/close_short
+    - long: only add_long/reduce_long/close_long
+    - short: only add_short/reduce_short/close_short
     """
     st = (state or "flat").strip().lower()
     sig = (signal_type or "").strip().lower()
