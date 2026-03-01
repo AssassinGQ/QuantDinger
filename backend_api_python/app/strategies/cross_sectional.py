@@ -5,6 +5,7 @@
 - get_signals(ctx): 基于 InputContext 生成调仓信号，纯计算
 """
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.strategies.base import DataRequest, IStrategyLoop, InputContext
@@ -23,6 +24,26 @@ class CrossSectionalStrategy(IStrategyLoop):
 
     def need_macro_info(self) -> bool:
         return False
+
+    def should_execute(
+        self,
+        strategy_id: int,
+        strategy: Dict[str, Any],
+        last_execute_time: Optional[datetime],
+    ) -> bool:
+        """检查是否应该调仓（执行调度逻辑）。"""
+        if last_execute_time is None:
+            return True
+        trading_config = strategy.get("trading_config") or {}
+        rebalance_frequency = trading_config.get("rebalance_frequency", "daily")
+        delta = datetime.now() - last_execute_time
+        if rebalance_frequency == "daily":
+            return delta.days >= 1
+        if rebalance_frequency == "weekly":
+            return delta.days >= 7
+        if rebalance_frequency == "monthly":
+            return delta.days >= 30
+        return True
 
     def get_data_request(
         self,

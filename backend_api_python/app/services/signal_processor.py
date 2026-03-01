@@ -4,9 +4,10 @@
 返回选中的信号，由调用方执行。便于单独测试信号处理逻辑。
 """
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import threading
 
+from app.data_sources.base import TIMEFRAME_SECONDS
 from app.services.server_side_risk import (
     check_stop_loss_signal,
     check_take_profit_or_trailing_signal,
@@ -106,7 +107,7 @@ def position_state(positions: List[Dict[str, Any]]) -> str:
         side = (positions[0].get("side") or "").strip().lower()
         if side in ("long", "short"):
             return side
-    except Exception:
+    except (KeyError, TypeError, AttributeError):
         pass
     return "flat"
 
@@ -149,7 +150,7 @@ def process_signals(
     symbol: str,
     triggered_signals: List[Dict[str, Any]],
     current_price: float,
-) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     信号处理：叠加风控、过滤、排序、去重，返回选中的一个信号及当前持仓。
 
@@ -170,12 +171,11 @@ def process_signals(
     leverage = float(strategy_ctx.get("_leverage", 1.0))
     market_type = strategy_ctx.get("_market_type", "swap")
     trading_config = strategy_ctx.get("trading_config") or {}
-    
+
     # Extract trade direction and timeframe from config
     trade_direction = "long" if market_type == "spot" else trading_config.get("trade_direction", "long")
-    
+
     # Calculate timeframe seconds based on strategy configuration
-    from app.data_sources.base import TIMEFRAME_SECONDS
     tf_str = str(trading_config.get("timeframe", "1H")).strip()
     if tf_str not in TIMEFRAME_SECONDS:
         tf_str = tf_str.upper() if tf_str.islower() else tf_str.lower()

@@ -14,6 +14,7 @@
 """
 
 import time
+from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, TypedDict
 
@@ -109,6 +110,18 @@ class IStrategyLoop(ABC):
     def need_macro_info(self) -> bool:
         """是否需要在 prepare 时拉取宏观数据"""
         pass
+
+    def should_execute(
+        self,
+        strategy_id: int,
+        strategy: Dict[str, Any],
+        last_execute_time: Optional[datetime],
+    ) -> bool:
+        """
+        是否需要执行策略计算（如检查调仓周期）。
+        默认返回 True，子类（如截面策略）可根据 last_execute_time 和配置重写。
+        """
+        return True
 
     @abstractmethod
     def get_data_request(

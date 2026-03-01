@@ -5,6 +5,7 @@ Signal executor: 执行交易信号（状态机校验、下单、持仓更新）
 从而简化每次执行信号时的传参。
 """
 from typing import Any, Dict, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.services.server_side_risk import to_ratio
 from app.services.signal_processor import is_signal_allowed, position_state
@@ -13,313 +14,383 @@ from app.services.pending_order_enqueuer import PendingOrderEnqueuer
 from app.services.data_handler import DataHandler
 from app.utils.logger import get_logger
 
+try:
+    from app.services.portfolio_allocator import get_portfolio_allocator
+except ImportError:
+    get_portfolio_allocator = None
+
 logger = get_logger(__name__)
 
 
 def _get_available_capital(strategy_id: int, initial_capital: float) -> float:
     """获取可用资金：优先从 PortfolioAllocator 获取动态分配，fallback 到 initial_capital。"""
-    try:
-        from app.services.portfolio_allocator import get_portfolio_allocator
-        allocator = get_portfolio_allocator()
-        allocated = allocator.get_allocated_capital(strategy_id)
-        if allocated is not None:
-            return allocated
-    except Exception:
-        pass
+    if get_portfolio_allocator:
+        try:
+            allocator = get_portfolio_allocator()
+            allocated = allocator.get_allocated_capital(strategy_id)
+            if allocated is not None:
+                return allocated
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError):
+            pass
     return initial_capital
 
 
 class SignalExecutor:
+    """信号执行器，负责将交易信号转化为实际的订单或模拟持仓更新。"""
     def __init__(self):
         self.data_handler = DataHandler()
         self.pending_order_enqueuer = PendingOrderEnqueuer()
+
+    def _check_ai_filter(
+        self, strategy_ctx: Dict[str, Any], symbol: str, sig: str, signal_ts: int
+    ) -> bool:
+        """检查 AI 过滤是否允许开仓。返回 False 表示被拦截。"""
+        ai_model_config = strategy_ctx.get("ai_model_config") or {}
+        trading_config = strategy_ctx.get("trading_config") or {}
+        strategy_id = int(strategy_ctx.get("id") or 0)
+
+        ai_enabled = is_entry_ai_filter_enabled(
+            ai_model_config=ai_model_config, trading_config=trading_config
+        )
+        if not ai_enabled or sig not in ("open_long", "open_short"):
+            return True
+
+        ok_ai, ai_info = entry_ai_filter_allows(
+            symbol=symbol,
+            signal_type=sig,
+            ai_model_config=ai_model_config,
+            trading_config=trading_config,
+        )
+        if ok_ai:
+            return True
+
+        reason = (ai_info or {}).get("reason") or "ai_filter_rejected"
+        ai_decision = (ai_info or {}).get("ai_decision") or ""
+        title = f"AI过滤拦截开仓 | {symbol}"
+        msg = (
+            f"策略信号={sig}，AI决策={ai_decision or 'UNKNOWN'}，"
+            f"原因={reason}；已HOLD（不下单）"
+        )
+        self.data_handler.persist_notification(
+            strategy_id=strategy_id,
+            symbol=symbol,
+            signal_type="ai_filter_hold",
+            title=title,
+            message=msg,
+            payload={
+                "event": "qd.ai_filter",
+                "strategy_id": strategy_id,
+                "strategy_name": strategy_ctx.get("_strategy_name", ""),
+                "symbol": symbol,
+                "signal_type": sig,
+                "ai_decision": ai_decision,
+                "reason": reason,
+                "signal_ts": signal_ts,
+            },
+        )
+        logger.info(
+            "AI entry filter rejected: strategy_id=%s symbol=%s signal=%s ai=%s reason=%s",
+            strategy_id, symbol, sig, ai_decision, reason,
+        )
+        return False
+
+    def _calculate_order_amount(
+        self,
+        strategy_ctx: Dict[str, Any],
+        signal: Dict[str, Any],
+        sig: str,
+        current_price: float,
+        current_positions: List[Dict[str, Any]],
+    ) -> tuple[float, str]:
+        """计算下单数量。返回 (amount, 调整后的sig)"""
+        strategy_id = int(strategy_ctx.get("id") or 0)
+        leverage = float(strategy_ctx.get("_leverage", 1.0))
+        initial_capital = float(strategy_ctx.get("_initial_capital", 10000.0))
+        market_type = strategy_ctx.get("_market_type", "swap")
+        trading_config = strategy_ctx.get("trading_config") or {}
+
+        position_size = signal.get("position_size")
+        signal_type = signal.get("type", "")
+
+        # Frontend position sizing alignment
+        if sig in ("open_long", "open_short") and isinstance(trading_config, dict):
+            ep = trading_config.get("entry_pct")
+            if ep is not None:
+                position_size = to_ratio(
+                    ep, default=position_size if position_size is not None else 0.0
+                )
+
+        available_capital = _get_available_capital(strategy_id, initial_capital)
+
+        if "open" in sig or "add" in sig:
+            if position_size is None or float(position_size) <= 0:
+                position_size = 0.05
+            position_ratio = to_ratio(position_size, default=0.05)
+            if market_type == "spot":
+                amount = available_capital * position_ratio / current_price
+            else:
+                amount = (available_capital * position_ratio * leverage) / current_price
+            return amount, signal_type
+
+        if sig in ("reduce_long", "reduce_short"):
+            pos_side = "long" if "long" in sig else "short"
+            pos = next(
+                (p for p in current_positions if (p.get("side") or "").strip().lower() == pos_side),
+                None,
+            )
+            if not pos:
+                return 0.0, signal_type
+
+            cur_size = float(pos.get("size") or 0.0)
+            if cur_size <= 0:
+                return 0.0, signal_type
+
+            reduce_ratio = to_ratio(position_size, default=0.1)
+            reduce_amount = cur_size * reduce_ratio
+            if reduce_amount >= cur_size * 0.999:
+                return cur_size, "close_long" if pos_side == "long" else "close_short"
+            return reduce_amount, signal_type
+
+        if "close" in sig:
+            pos = next(
+                (p for p in current_positions if p.get("side") and p["side"] in signal_type),
+                None,
+            )
+            if not pos:
+                return 0.0, signal_type
+            return float(pos.get("size") or 0.0), signal_type
+
+        return 0.0, signal_type
+
+    def _handle_open_or_add_position(
+        self, strategy_id: int, symbol: str, signal_type: str,
+        amount: float, current_price: float, current_positions: List[Dict[str, Any]]
+    ) -> None:
+        self.data_handler.record_trade(
+            strategy_id=strategy_id, symbol=symbol, trade_type=signal_type,
+            price=current_price, amount=amount, value=amount * current_price,
+        )
+        side = "short" if "short" in signal_type else "long"
+        old_pos = next((p for p in current_positions if p.get("side") == side), None)
+        new_size = amount
+        new_entry = current_price
+        if old_pos:
+            old_size = float(old_pos.get("size", 0.0))
+            old_entry = float(old_pos.get("entry_price", 0.0))
+            new_size += old_size
+            if new_size > 0:
+                new_entry = ((old_size * old_entry) + (amount * current_price)) / new_size
+
+        self.data_handler.update_position(
+            strategy_id=strategy_id, symbol=symbol, side=side,
+            size=new_size, entry_price=new_entry, current_price=current_price,
+        )
+
+    def _handle_reduce_position(
+        self, strategy_id: int, symbol: str, signal_type: str,
+        amount: float, current_price: float, current_positions: List[Dict[str, Any]]
+    ) -> None:
+        side = "short" if "short" in signal_type else "long"
+        old_pos = next((p for p in current_positions if p.get("side") == side), None)
+        if not old_pos:
+            return
+
+        old_size = float(old_pos.get("size", 0.0))
+        old_entry = float(old_pos.get("entry_price", 0.0))
+
+        reduce_profit = None
+        if old_entry > 0 and amount > 0:
+            if side == "long":
+                reduce_profit = (current_price - old_entry) * amount
+            else:
+                reduce_profit = (old_entry - current_price) * amount
+
+        self.data_handler.record_trade(
+            strategy_id=strategy_id, symbol=symbol, trade_type=signal_type,
+            price=current_price, amount=amount, value=amount * current_price,
+            profit=reduce_profit,
+        )
+
+        new_size = max(0.0, old_size - float(amount or 0.0))
+        if new_size <= old_size * 0.001:
+            self.data_handler.close_position(strategy_id, symbol, side)
+        else:
+            self.data_handler.update_position(
+                strategy_id=strategy_id, symbol=symbol, side=side,
+                size=new_size, entry_price=old_entry, current_price=current_price,
+            )
+
+    def _handle_close_position(
+        self, strategy_id: int, symbol: str, signal_type: str,
+        amount: float, current_price: float, current_positions: List[Dict[str, Any]]
+    ) -> None:
+        side = "short" if "short" in signal_type else "long"
+        old_pos = next((p for p in current_positions if p.get("side") == side), None)
+        if not old_pos:
+            return
+
+        close_profit = None
+        entry_price = float(old_pos.get("entry_price", 0.0))
+        if entry_price > 0 and amount > 0:
+            if side == "long":
+                close_profit = (current_price - entry_price) * amount
+            else:
+                close_profit = (entry_price - current_price) * amount
+
+        self.data_handler.record_trade(
+            strategy_id=strategy_id, symbol=symbol, trade_type=signal_type,
+            price=current_price, amount=amount, value=amount * current_price,
+            profit=close_profit,
+        )
+        self.data_handler.close_position(strategy_id, symbol, side)
+
+    def _update_local_position(
+        self,
+        strategy_id: int,
+        symbol: str,
+        sig: str,
+        signal_type: str,
+        amount: float,
+        current_price: float,
+        current_positions: List[Dict[str, Any]],
+    ) -> None:
+        """更新本地模拟持仓状态"""
+        if "open" in sig or "add" in sig:
+            self._handle_open_or_add_position(
+                strategy_id, symbol, signal_type, amount, current_price, current_positions
+            )
+            return
+
+        if sig.startswith("reduce_"):
+            self._handle_reduce_position(
+                strategy_id, symbol, signal_type, amount, current_price, current_positions
+            )
+            return
+
+        if "close" in sig:
+            self._handle_close_position(
+                strategy_id, symbol, signal_type, amount, current_price, current_positions
+            )
+            return
 
     def execute(
         self,
         strategy_ctx: Dict[str, Any],
         signal: Dict[str, Any],
-        symbol: str,
-        current_price: float,
-        current_positions: List[Dict[str, Any]],
-        exchange: Any = None,
+        **exec_kwargs
     ) -> bool:
         """
         执行具体的交易信号（不含 AI 过滤，调用方需在调用前完成 AI 过滤）。
-
-        Args:
-            strategy_ctx: 包含策略全量配置的字典（来自 DB 行，含内部提取的 _ 属性）。
-            signal: 信号内容字典。
-            symbol: 交易对。
-            current_price: 当前触发价格或最新市价。
-            current_positions: 当前的持仓列表。
-            exchange: 交易所实例（可选）。
-
-        Returns:
-            True 表示执行成功，False 表示被拒绝或失败。
         """
         try:
-            # 1. 提取策略配置
+            symbol = exec_kwargs.get("symbol", "")
+            current_price = exec_kwargs.get("current_price", 0.0)
+            current_positions = exec_kwargs.get("current_positions", [])
+            exchange = exec_kwargs.get("exchange")
+
             strategy_id = int(strategy_ctx.get("id") or 0)
             leverage = float(strategy_ctx.get("_leverage", 1.0))
-            initial_capital = float(strategy_ctx.get("_initial_capital", 10000.0))
             market_type = strategy_ctx.get("_market_type", "swap")
             market_category = strategy_ctx.get("_market_category", "Crypto")
             execution_mode = strategy_ctx.get("_execution_mode", "signal")
             notification_config = strategy_ctx.get("_notification_config") or {}
-            trading_config = strategy_ctx.get("trading_config") or {}
-            margin_mode = "cross"  # 固定为 cross，如需可放入配置
 
-            # 2. 提取信号内容
             signal_type = signal.get("type", "")
-            position_size = signal.get("position_size")
             signal_ts = int(signal.get("timestamp") or 0)
             stop_loss_price = signal.get("stop_loss_price")
             take_profit_price = signal.get("take_profit_price")
 
-            # Hard state-machine guard
             state = position_state(current_positions)
             if not is_signal_allowed(state, signal_type):
                 return False
 
-            # 检查交易方向限制
             if market_type == "spot" and "short" in signal_type:
                 return False
 
             sig = signal_type.strip().lower()
 
-            ai_model_config = strategy_ctx.get("ai_model_config") or {}
-            
-            # AI 过滤（仅对开仓信号）
-            ai_enabled = is_entry_ai_filter_enabled(
-                ai_model_config=ai_model_config, trading_config=trading_config
-            )
-            if sig in ("open_long", "open_short") and ai_enabled:
-                ok_ai, ai_info = entry_ai_filter_allows(
-                    symbol=symbol,
-                    signal_type=sig,
-                    ai_model_config=ai_model_config,
-                    trading_config=trading_config,
-                )
-                if not ok_ai:
-                    reason = (ai_info or {}).get("reason") or "ai_filter_rejected"
-                    ai_decision = (ai_info or {}).get("ai_decision") or ""
-                    title = f"AI过滤拦截开仓 | {symbol}"
-                    msg = (
-                        f"策略信号={sig}，AI决策={ai_decision or 'UNKNOWN'}，"
-                        f"原因={reason}；已HOLD（不下单）"
-                    )
-                    self.data_handler.persist_notification(
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        signal_type="ai_filter_hold",
-                        title=title,
-                        message=msg,
-                        payload={
-                            "event": "qd.ai_filter",
-                            "strategy_id": strategy_id,
-                            "strategy_name": strategy_ctx.get("_strategy_name", ""),
-                            "symbol": symbol,
-                            "signal_type": sig,
-                            "ai_decision": ai_decision,
-                            "reason": reason,
-                            "signal_ts": signal_ts,
-                        },
-                    )
-                    logger.info(
-                        "AI entry filter rejected: strategy_id=%s symbol=%s signal=%s ai=%s reason=%s",
-                        strategy_id, symbol, sig, ai_decision, reason,
-                    )
-                    return False
-
-            # 计算下单数量
-            available_capital = _get_available_capital(strategy_id, initial_capital)
-            amount = 0.0
-
-            # Frontend position sizing alignment: open_* uses entry_pct from trading_config
-            if sig in ("open_long", "open_short") and isinstance(trading_config, dict):
-                ep = trading_config.get("entry_pct")
-                if ep is not None:
-                    position_size = to_ratio(
-                        ep, default=position_size if position_size is not None else 0.0
-                    )
-
-            # Open / add sizing
-            if "open" in sig or "add" in sig:
-                if position_size is None or float(position_size) <= 0:
-                    position_size = 0.05
-                position_ratio = to_ratio(position_size, default=0.05)
-                if market_type == "spot":
-                    amount = available_capital * position_ratio / current_price
-                else:
-                    amount = (available_capital * position_ratio * leverage) / current_price
-
-            # Reduce sizing
-            if sig in ("reduce_long", "reduce_short"):
-                pos_side = "long" if "long" in sig else "short"
-                pos = next(
-                    (
-                        p
-                        for p in current_positions
-                        if (p.get("side") or "").strip().lower() == pos_side
-                    ),
-                    None,
-                )
-                if not pos:
-                    return False
-                cur_size = float(pos.get("size") or 0.0)
-                if cur_size <= 0:
-                    return False
-                reduce_ratio = to_ratio(position_size, default=0.1)
-                reduce_amount = cur_size * reduce_ratio
-                if reduce_amount >= cur_size * 0.999:
-                    sig = "close_long" if pos_side == "long" else "close_short"
-                    signal_type = sig
-                    amount = cur_size
-                else:
-                    amount = reduce_amount
-
-            # Close sizing
-            if "close" in sig:
-                pos = next(
-                    (
-                        p
-                        for p in current_positions
-                        if p.get("side") and p["side"] in signal_type
-                    ),
-                    None,
-                )
-                if not pos:
-                    return False
-                amount = float(pos["size"] or 0.0)
-                if amount <= 0:
-                    return False
-
-            if amount <= 0 and ("open" in signal_type or "add" in signal_type):
+            if not self._check_ai_filter(strategy_ctx, symbol, sig, signal_ts):
                 return False
 
-            # Execute order enqueue
+            amount, signal_type = self._calculate_order_amount(
+                strategy_ctx, signal, sig, current_price, current_positions
+            )
+
+            if amount <= 0:
+                return False
+
             order_result = self.pending_order_enqueuer.execute_exchange_order(
-                exchange=exchange,
-                strategy_id=strategy_id,
-                symbol=symbol,
-                signal_type=signal_type,
-                amount=amount,
-                ref_price=float(current_price or 0.0),
-                market_type=market_type,
-                market_category=market_category,
-                leverage=leverage,
-                margin_mode=margin_mode,
-                stop_loss_price=stop_loss_price,
-                take_profit_price=take_profit_price,
-                execution_mode=execution_mode,
-                notification_config=notification_config,
+                exchange=exchange, strategy_id=strategy_id, symbol=symbol,
+                signal_type=signal_type, amount=amount,
+                ref_price=float(current_price or 0.0), market_type=market_type,
+                market_category=market_category, leverage=leverage, margin_mode="cross",
+                stop_loss_price=stop_loss_price, take_profit_price=take_profit_price,
+                execution_mode=execution_mode, notification_config=notification_config,
                 signal_ts=signal_ts,
             )
 
-            if order_result and order_result.get("success"):
-                if str(execution_mode or "").strip().lower() == "live":
-                    return True
+            if not order_result or not order_result.get("success"):
+                return False
 
-                # 更新数据库状态 (signal mode / local simulation)
-                if "open" in sig or "add" in sig:
-                    self.data_handler.record_trade(
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        trade_type=signal_type,
-                        price=current_price,
-                        amount=amount,
-                        value=amount * current_price,
-                    )
-                    side = "short" if "short" in signal_type else "long"
-
-                    old_pos = next((p for p in current_positions if p["side"] == side), None)
-                    new_size = amount
-                    new_entry = current_price
-                    if old_pos:
-                        old_size = float(old_pos["size"])
-                        old_entry = float(old_pos["entry_price"])
-                        new_size += old_size
-                        new_entry = (
-                            (old_size * old_entry) + (amount * current_price)
-                        ) / new_size
-
-                    self.data_handler.update_position(
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        side=side,
-                        size=new_size,
-                        entry_price=new_entry,
-                        current_price=current_price,
-                    )
-                elif sig.startswith("reduce_"):
-                    side = "short" if "short" in signal_type else "long"
-                    old_pos = next(
-                        (p for p in current_positions if p.get("side") == side), None
-                    )
-                    if not old_pos:
-                        return True
-                    old_size = float(old_pos.get("size") or 0.0)
-                    old_entry = float(old_pos.get("entry_price") or 0.0)
-
-                    reduce_profit = None
-                    if old_entry > 0 and amount > 0:
-                        if side == "long":
-                            reduce_profit = (current_price - old_entry) * amount
-                        else:
-                            reduce_profit = (old_entry - current_price) * amount
-
-                    self.data_handler.record_trade(
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        trade_type=signal_type,
-                        price=current_price,
-                        amount=amount,
-                        value=amount * current_price,
-                        profit=reduce_profit,
-                    )
-
-                    new_size = max(0.0, old_size - float(amount or 0.0))
-                    if new_size <= old_size * 0.001:
-                        self.data_handler.close_position(strategy_id, symbol, side)
-                    else:
-                        self.data_handler.update_position(
-                            strategy_id=strategy_id,
-                            symbol=symbol,
-                            side=side,
-                            size=new_size,
-                            entry_price=old_entry,
-                            current_price=current_price,
-                        )
-                elif "close" in sig:
-                    side = "short" if "short" in signal_type else "long"
-                    old_pos = next(
-                        (p for p in current_positions if p.get("side") == side), None
-                    )
-
-                    close_profit = None
-                    if old_pos:
-                        entry_price = float(old_pos.get("entry_price") or 0)
-                        if entry_price > 0 and amount > 0:
-                            if side == "long":
-                                close_profit = (current_price - entry_price) * amount
-                            else:
-                                close_profit = (entry_price - current_price) * amount
-
-                    self.data_handler.record_trade(
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        trade_type=signal_type,
-                        price=current_price,
-                        amount=amount,
-                        value=amount * current_price,
-                        profit=close_profit,
-                    )
-                    self.data_handler.close_position(strategy_id, symbol, side)
-
+            if str(execution_mode or "").strip().lower() == "live":
                 return True
 
-            return False
+            self._update_local_position(
+                strategy_id, symbol, sig, signal_type, amount,
+                current_price, current_positions
+            )
+            return True
 
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError) as e:
             logger.error("Failed to execute signal: %s", e)
             return False
+
+    def execute_batch(
+        self,
+        strategy_ctx: Dict[str, Any],
+        signals: List[Dict[str, Any]],
+        all_positions: List[Dict[str, Any]],
+        current_time: int,
+    ) -> None:
+        """并发执行批量信号"""
+        with ThreadPoolExecutor(max_workers=min(10, len(signals))) as pool:
+            futures = {}
+            for signal in signals:
+                sig_symbol = (signal.get("symbol") or "")
+                symbol_positions = [
+                    p for p in all_positions
+                    if (p.get("symbol") or "").split(":")[0] == sig_symbol.split(":")[0]
+                ]
+
+                # Default timestamp if missing
+                if not signal.get("timestamp"):
+                    signal["timestamp"] = int(current_time)
+
+                future = pool.submit(
+                    self.execute,
+                    strategy_ctx=strategy_ctx,
+                    signal=signal,
+                    symbol=signal["symbol"],
+                    current_price=0.0,
+                    current_positions=symbol_positions,
+                    exchange=None,
+                )
+                futures[future] = signal
+
+            for future in as_completed(futures):
+                signal = futures[future]
+                try:
+                    result = future.result(timeout=30)
+                    if result:
+                        logger.info(
+                            "Successfully executed signal: %s %s",
+                            signal["symbol"],
+                            signal["type"],
+                        )
+                except (ValueError, TypeError, KeyError, RuntimeError, OSError, TimeoutError) as e:
+                    logger.error(
+                        "Failed to execute signal %s %s: %s",
+                        signal["symbol"],
+                        signal["type"],
+                        e,
+                    )

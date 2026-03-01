@@ -1,20 +1,22 @@
 """
 实时交易执行服务
 """
-import time
 import threading
 import traceback
 import os
-from typing import Dict, List, Any, Optional
-from datetime import datetime
+from typing import Any
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 from app.utils.logger import get_logger
 from app.strategies.factory import load_and_create
-from app.strategies.base import sleep_until_next_tick
 from app.services.data_handler import DataHandler
-from app.services.signal_processor import process_signals
 from app.services.signal_executor import SignalExecutor
 from app.services.price_fetcher import get_price_fetcher
 from app.utils.console import console_print
+from app.strategies.runners.factory import create_runner
 
 logger = get_logger(__name__)
 
@@ -62,7 +64,7 @@ class TradingExecutor:
                 m = exchange.market(symbol)
                 if m and (m.get('swap') or m.get('future') or m.get('contract')):
                     return symbol
-            except Exception:
+            except (KeyError, ValueError, AttributeError):
                 pass
 
             # OKX/部分交易所：永续常见为 BASE/QUOTE:QUOTE 或 BASE/QUOTE:USDT
@@ -89,46 +91,49 @@ class TradingExecutor:
                         return cand
 
             return symbol
-        except Exception:
+        except (KeyError, ValueError, AttributeError, TypeError):
             return symbol
 
     def _log_resource_status(self, prefix: str = ""):
         """调试：记录线程/内存使用，便于定位 can't start new thread 根因"""
-        try:
-            import psutil  # 如果有安装则使用更精确的指标
-            p = psutil.Process()
-            mem = p.memory_info().rss / 1024 / 1024
-            th = p.num_threads()
-            logger.warning(
-                "%sresource status: memory=%.1fMB, threads=%s, running_strategies=%d",
-                prefix,
-                mem,
-                th,
-                len(self.running_strategies),
-            )
-        except Exception:
+        if psutil:
             try:
-                th = threading.active_count()
-                # 从 /proc/self/status 读取 VmRSS（适用于 Linux 容器）
-                vmrss = None
-                try:
-                    with open('/proc/self/status', encoding='utf-8') as f:
-                        for line in f:
-                            if line.startswith('VmRSS:'):
-                                vmrss = line.split()[1:3]  # e.g. ['123456', 'kB']
-                                break
-                except Exception:
-                    pass
-                vmrss_str = f"{vmrss[0]}{vmrss[1]}" if vmrss else "N/A"
+                p = psutil.Process()
+                mem = p.memory_info().rss / 1024 / 1024
+                th = p.num_threads()
                 logger.warning(
-                    "%sresource status: VmRSS=%s, active_threads=%s, running_strategies=%d",
+                    "%sresource status: memory=%.1fMB, threads=%s, running_strategies=%d",
                     prefix,
-                    vmrss_str,
+                    mem,
                     th,
                     len(self.running_strategies),
                 )
-            except Exception:
+                return
+            except (OSError, RuntimeError, AttributeError):
                 pass
+
+        try:
+            th = threading.active_count()
+            # 从 /proc/self/status 读取 VmRSS（适用于 Linux 容器）
+            vmrss = None
+            try:
+                with open('/proc/self/status', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith('VmRSS:'):
+                            vmrss = line.split()[1:3]  # e.g. ['123456', 'kB']
+                            break
+            except OSError:
+                pass
+            vmrss_str = f"{vmrss[0]}{vmrss[1]}" if vmrss else "N/A"
+            logger.warning(
+                "%sresource status: VmRSS=%s, active_threads=%s, running_strategies=%d",
+                prefix,
+                vmrss_str,
+                th,
+                len(self.running_strategies),
+            )
+        except (RuntimeError, OSError):
+            pass
 
     def start_strategy(self, strategy_id: int) -> bool:
         """
@@ -171,7 +176,7 @@ class TradingExecutor:
                 )
                 try:
                     thread.start()
-                except Exception as e:
+                except RuntimeError as e:
                     # 捕获 can't start new thread 等异常，记录资源状态
                     self._log_resource_status(prefix="启动异常")
                     raise e
@@ -181,7 +186,7 @@ class TradingExecutor:
                 console_print(f"[strategy:{strategy_id}] started")
                 return True
 
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError) as e:
             logger.error("Failed to start strategy %s: %s", strategy_id, e)
             logger.error(traceback.format_exc())
             return False
@@ -212,7 +217,7 @@ class TradingExecutor:
                 console_print(f"[strategy:{strategy_id}] stopped (requested)")
                 return True
 
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError) as e:
             logger.error("Failed to stop strategy %s: %s", strategy_id, e)
             logger.error(traceback.format_exc())
             return False
@@ -232,16 +237,21 @@ class TradingExecutor:
             if not strat or not strategy:
                 logger.error("Strategy %s not found or invalid", strategy_id)
                 return
-
             exchange = None  # 信号模式下无需真实连接
-
             cs_type = (strategy.get("trading_config") or {}).get("cs_strategy_type", "single")
-            if cs_type == "cross_sectional":
-                self._run_cross_sectional_loop(strat, strategy_id, strategy, exchange)
-            else:
-                self._run_single_symbol_loop(strat, strategy_id, strategy, exchange)
 
-        except Exception as e:
+            runner = create_runner(
+                cs_type=cs_type,
+                data_handler=self.data_handler,
+                signal_executor=self._signal_executor,
+            )
+            runner.run(
+                strategy_id=strategy_id,
+                strategy=strategy,
+                strat_instance=strat,
+                exchange=exchange,
+            )
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError, ImportError) as e:
             logger.error("Strategy %s crashed: %s", strategy_id, e)
             logger.error(traceback.format_exc())
             console_print(f"[strategy:{strategy_id}] fatal error: {e}")
@@ -252,295 +262,3 @@ class TradingExecutor:
                     del self.running_strategies[strategy_id]
             console_print(f"[strategy:{strategy_id}] loop exited")
             logger.info("Strategy %s loop exited", strategy_id)
-
-    def _run_single_symbol_loop(
-        self,
-        strat: Any,
-        strategy_id: int,
-        strategy: Dict[str, Any],
-        exchange: Any,
-    ) -> None:
-        """Executor 驱动的单标策略循环：调用 strategy.get_signals 获取信号，再执行"""
-        trading_config = strategy.get("trading_config") or {}
-        symbol = trading_config.get("symbol", "")
-        market_type = strategy["_market_type"]
-        market_category = strategy["_market_category"]
-        try:
-            tick_interval_sec = int(os.getenv("STRATEGY_TICK_INTERVAL_SEC", "10"))
-        except (ValueError, TypeError):
-            tick_interval_sec = 10
-        tick_interval_sec = max(tick_interval_sec, 1)
-
-        last_tick_time = 0.0
-
-        while True:
-            try:
-                if not self._is_strategy_running(strategy_id):
-                    logger.info("Strategy %s stopped", strategy_id)
-                    break
-                current_time = time.time()
-                should_continue, last_tick_time = sleep_until_next_tick(
-                    current_time, last_tick_time, tick_interval_sec
-                )
-                if should_continue:
-                    continue
-
-                current_price = self._price_fetcher.fetch_current_price(
-                    exchange, symbol, market_type=market_type, market_category=market_category
-                )
-                if current_price is None:
-                    logger.warning(
-                        "Strategy %s failed to fetch current price for %s:%s",
-                        strategy_id, market_category, symbol,
-                    )
-                    continue
-
-                request = strat.get_data_request(strategy_id, strategy, current_time)
-                ctx = self.data_handler.get_input_context_single(
-                    strategy_id, request, current_price=float(current_price)
-                )
-                if ctx is None:
-                    logger.warning("Strategy %s failed to get input context", strategy_id)
-                    continue
-
-                ctx["strategy_id"] = strategy_id
-                ctx["indicator_code"] = strategy.get("_indicator_code", "")
-                ctx["current_time"] = current_time
-                ctx["current_price"] = float(current_price)
-
-                triggered_signals, keep_running, _, meta = strat.get_signals(ctx)
-                if not keep_running:
-                    logger.warning("Strategy %s get_signals returned stop", strategy_id)
-                    break
-
-                if meta and meta.get("position_updates"):
-                    for pu in meta["position_updates"]:
-                        self.data_handler.update_position(
-                            strategy_id=strategy_id,
-                            symbol=pu["symbol"],
-                            side=pu["side"],
-                            size=pu["size"],
-                            entry_price=pu["entry_price"],
-                            current_price=pu["current_close"],
-                            highest_price=pu["highest_price"],
-                        )
-
-                if triggered_signals:
-                    self._process_and_execute_signals(
-                        strategy_id=strategy_id,
-                        strategy=strategy,
-                        symbol=symbol,
-                        triggered_signals=triggered_signals,
-                        current_price=float(current_price),
-                        exchange=exchange,
-                    )
-
-                self.data_handler.update_positions_current_price(strategy_id, symbol, current_price)
-                # SingleSymbolIndicator 内部 pending_signals，暂无公开 API，用于控制台输出
-                pending_count = len(strat._state.get("pending_signals", []))
-                price_str = f"{float(current_price or 0.0):.8f}"
-                console_print(
-                    f"[strategy:{strategy_id}] tick price={price_str} pending_signals={pending_count}"
-                )
-            except Exception as e:
-                logger.error("Strategy %s loop error: %s", strategy_id, e)
-                logger.error(traceback.format_exc())
-                console_print(f"[strategy:{strategy_id}] loop error: {e}")
-                time.sleep(5)
-
-        logger.info("Strategy %s loop exited", strategy_id)
-
-    def _run_cross_sectional_loop(
-        self,
-        strat: Any,
-        strategy_id: int,
-        strategy: Dict[str, Any],
-        exchange: Any,
-    ) -> None:
-        """Executor 驱动的截面策略循环：调用 strategy.get_signals 获取信号，再执行"""
-        trading_config = strategy.get("trading_config") or {}
-        tick_interval_sec = int(trading_config.get("decide_interval", 300))
-        if tick_interval_sec < 1:
-            tick_interval_sec = 300
-        last_tick_time = 0.0
-
-        while True:
-            try:
-                if not self._is_strategy_running(strategy_id):
-                    logger.info("Cross-sectional strategy %s stopped", strategy_id)
-                    break
-                current_time = time.time()
-                should_continue, last_tick_time = sleep_until_next_tick(
-                    current_time, last_tick_time, tick_interval_sec
-                )
-                if should_continue:
-                    continue
-
-                request = strat.get_data_request(strategy_id, strategy, current_time)
-                reb_freq = request.get("rebalance_frequency", "daily")
-                if not self._should_rebalance(strategy_id, reb_freq):
-                    continue
-
-                ctx = self.data_handler.get_input_context_cross(strategy_id, request)
-                if ctx is None:
-                    logger.warning(
-                    "Strategy %s failed to get cross input context", strategy_id
-                )
-                    continue
-
-                ctx["strategy_id"] = strategy_id
-                ctx["indicator_code"] = strategy.get("_indicator_code", "")
-                ctx["current_time"] = current_time
-
-                signals, keep_running, update_rebalance, _ = strat.get_signals(ctx)
-                if not keep_running:
-                    break
-                if signals:
-                    self._execute_cross_sectional_signals(
-                        strategy_id=strategy_id,
-                        strategy=strategy,
-                        signals=signals,
-                        current_time=int(current_time),
-                    )
-                if update_rebalance:
-                    self.data_handler.update_last_rebalance(strategy_id)
-
-            except Exception as e:
-                logger.error("Cross-sectional strategy %s loop error: %s", strategy_id, e)
-                logger.error(traceback.format_exc())
-                console_print(f"[strategy:{strategy_id}] loop error: {e}")
-                time.sleep(5)
-
-        logger.info("Cross-sectional strategy %s loop exited", strategy_id)
-
-    def _execute_cross_sectional_signals(
-        self,
-        strategy_id: int,
-        strategy: Dict[str, Any],
-        signals: List[Dict[str, Any]],
-        current_time: int,
-    ) -> None:
-        """执行截面策略的批量信号（ThreadPoolExecutor）"""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        positions = self.data_handler.get_all_positions(strategy_id)
-
-        with ThreadPoolExecutor(max_workers=min(10, len(signals))) as pool:
-            futures = {}
-            for signal in signals:
-                sig_symbol = (signal.get("symbol") or "")
-                symbol_positions = [
-                    p for p in positions
-                    if (p.get("symbol") or "").split(":")[0] == sig_symbol.split(":")[0]
-                ]
-                
-                # Default timestamp if missing
-                if not signal.get("timestamp"):
-                    signal["timestamp"] = int(current_time)
-
-                future = pool.submit(
-                    self._signal_executor.execute,
-                    strategy_ctx=strategy,
-                    signal=signal,
-                    symbol=signal["symbol"],
-                    current_price=0.0,
-                    current_positions=symbol_positions,
-                    exchange=None,
-                )
-                futures[future] = signal
-
-            for future in as_completed(futures):
-                signal = futures[future]
-                try:
-                    result = future.result(timeout=30)
-                    if result:
-                        logger.info(
-                            "Successfully executed signal: %s %s",
-                            signal["symbol"],
-                            signal["type"],
-                        )
-                except Exception as e:
-                    logger.error(
-                        "Failed to execute signal %s %s: %s",
-                        signal["symbol"],
-                        signal["type"],
-                        e,
-                    )
-
-    def _is_strategy_running(self, strategy_id: int) -> bool:
-        """检查策略是否在运行"""
-        status = self.data_handler.get_strategy_status(strategy_id)
-        return status == "running"
-
-    def _process_and_execute_signals(
-        self,
-        strategy_id: int,
-        strategy: Dict[str, Any],
-        symbol: str,
-        triggered_signals: List[Dict[str, Any]],
-        current_price: float,
-        exchange: Any = None,
-    ) -> None:
-        """
-        信号执行：由 Executor 负责。策略仅生成 triggered_signals，本方法负责：
-        - 添加服务端风控信号（止盈/止损/追踪止盈）
-        - 过滤、排序、选择、执行
-        """
-        if not triggered_signals:
-            return
-            
-        selected, current_positions = process_signals(
-            strategy_ctx=strategy,
-            symbol=symbol,
-            triggered_signals=triggered_signals,
-            current_price=current_price,
-        )
-        if selected:
-            sig_type = selected.get("type")
-            trigger_price = selected.get("trigger_price", current_price)
-            execute_price = trigger_price if trigger_price > 0 else current_price
-
-            ok = self._signal_executor.execute(
-                strategy_ctx=strategy,
-                signal=selected,
-                symbol=symbol,
-                current_price=execute_price,
-                current_positions=current_positions,
-                exchange=exchange,
-            )
-            if ok:
-                strategy_name = strategy.get("_strategy_name", "")
-                logger.info(
-                    "Strategy %s signal executed: %s @ %s",
-                    strategy_id, sig_type, execute_price,
-                )
-                try:
-                    from app.services.portfolio_monitor import notify_strategy_signal_for_positions
-                    notify_strategy_signal_for_positions(
-                        market=market_type or "Crypto", symbol=symbol, signal_type=sig_type,
-                        signal_detail=f"策略: {strategy_name}\n信号: {sig_type}\n价格: {execute_price:.4f}",
-                    )
-                except Exception as link_e:
-                    logger.warning(
-                        "Strategy signal linkage notification failed: %s",
-                        link_e,
-                    )
-            else:
-                logger.warning(
-                    "Strategy %s signal rejected/failed: %s",
-                    strategy_id, sig_type,
-                )
-
-    def _should_rebalance(self, strategy_id: int, rebalance_frequency: str) -> bool:
-        """检查是否应该调仓（执行调度逻辑）。数据由 DataHandler 提供。"""
-        last_rebalance = self.data_handler.get_last_rebalance_at(strategy_id)
-        if last_rebalance is None:
-            return True
-        delta = datetime.now() - last_rebalance
-        if rebalance_frequency == "daily":
-            return delta.days >= 1
-        if rebalance_frequency == "weekly":
-            return delta.days >= 7
-        if rebalance_frequency == "monthly":
-            return delta.days >= 30
-        return True

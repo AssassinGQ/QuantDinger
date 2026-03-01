@@ -24,9 +24,9 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"_market_type": "swap"}
         signal = {"type": "open_short"}
         current_positions = [{"side": "long", "size": 0.1}]
-        
+
         result = signal_executor.execute(
-            strategy_ctx, signal, "BTC/USDT", 100.0, current_positions
+            strategy_ctx, signal, symbol="BTC/USDT", current_price=100.0, current_positions=current_positions
         )
         assert result is False
         signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
@@ -35,9 +35,9 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"_market_type": "spot"}
         signal = {"type": "open_short"}
         current_positions = []
-        
+
         result = signal_executor.execute(
-            strategy_ctx, signal, "BTC/USDT", 100.0, current_positions
+            strategy_ctx, signal, symbol="BTC/USDT", current_price=100.0, current_positions=current_positions
         )
         assert result is False
 
@@ -50,14 +50,14 @@ class TestSignalExecutorExecute:
             "trading_config": {"entry_pct": 0.1}
         }
         signal = {"type": "open_long"}
-        
+
         # execution_mode defaults to signal if not present
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         result = signal_executor.execute(
-            strategy_ctx, signal, "BTC/USDT", 50000.0, []
+            strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=[]
         )
-        
+
         assert result is True
         # amount = 10000.0 * 0.1 * 2.0 / 50000.0 = 0.04
         signal_executor.pending_order_enqueuer.execute_exchange_order.assert_called_once()
@@ -70,13 +70,13 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"id": 1, "_execution_mode": "live"}
         signal = {"type": "reduce_long", "position_size": 0.5}  # 50% reduction
         current_positions = [{"side": "long", "size": 0.8, "entry_price": 40000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         result = signal_executor.execute(
-            strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+            strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
         )
-        
+
         assert result is True
         call_kwargs = signal_executor.pending_order_enqueuer.execute_exchange_order.call_args[1]
         assert call_kwargs["amount"] == 0.4
@@ -86,13 +86,13 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"id": 1, "_execution_mode": "live"}
         signal = {"type": "close_long"}
         current_positions = [{"side": "long", "size": 0.8, "entry_price": 40000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         result = signal_executor.execute(
-            strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+            strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
         )
-        
+
         assert result is True
         call_kwargs = signal_executor.pending_order_enqueuer.execute_exchange_order.call_args[1]
         assert call_kwargs["amount"] == 0.8
@@ -107,12 +107,12 @@ class TestSignalExecutorExecute:
         }
         signal = {"type": "open_long"}
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, []
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=[]
             )
-            
+
         assert result is True
         call_kwargs = signal_executor.pending_order_enqueuer.execute_exchange_order.call_args[1]
         assert call_kwargs["amount"] == 10000.0 * 0.1 / 50000.0
@@ -122,14 +122,14 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"id": 1, "_execution_mode": "live"}
         signal = {"type": "reduce_long", "position_size": 1.0}  # 100% reduction -> close
         current_positions = [{"side": "long", "size": 0.8, "entry_price": 40000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is True
         call_kwargs = signal_executor.pending_order_enqueuer.execute_exchange_order.call_args[1]
         assert call_kwargs["amount"] == 0.8
@@ -139,94 +139,94 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"id": 1}
         signal = {"type": "reduce_long", "position_size": 0.5}
         current_positions = []
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is False
 
     def test_reduce_long_zero_size(self, signal_executor):
         strategy_ctx = {"id": 1}
         signal = {"type": "reduce_long", "position_size": 0.5}
         current_positions = [{"side": "long", "size": 0.0}]
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is False
 
     def test_close_long_missing_position(self, signal_executor):
         strategy_ctx = {"id": 1}
         signal = {"type": "close_long"}
         current_positions = []
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is False
 
     def test_close_long_zero_size(self, signal_executor):
         strategy_ctx = {"id": 1}
         signal = {"type": "close_long"}
         current_positions = [{"side": "long", "size": 0.0}]
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is False
 
     def test_open_long_signal_mode_update_db(self, signal_executor):
         strategy_ctx = {"id": 1, "_execution_mode": "signal"}
         signal = {"type": "open_long"}
         current_positions = []
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.update_position.assert_called_once()
-        
+
     def test_add_long_signal_mode_update_db(self, signal_executor):
         strategy_ctx = {"id": 1, "_execution_mode": "signal"}
         signal = {"type": "add_long"}
         current_positions = [{"side": "long", "size": 0.1, "entry_price": 40000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.update_position.assert_called_once()
-        
+
     def test_reduce_long_signal_mode_update_db(self, signal_executor):
         strategy_ctx = {"id": 1, "_execution_mode": "signal"}
         signal = {"type": "reduce_long", "position_size": 0.5}
         current_positions = [{"side": "long", "size": 0.2, "entry_price": 40000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.update_position.assert_called_once()
@@ -235,14 +235,14 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"id": 1, "_execution_mode": "signal"}
         signal = {"type": "reduce_long", "position_size": 1.0}
         current_positions = [{"side": "long", "size": 0.2, "entry_price": 40000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.close_position.assert_called_once()
@@ -251,14 +251,14 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"id": 1, "_execution_mode": "signal"}
         signal = {"type": "close_long"}
         current_positions = [{"side": "long", "size": 0.2, "entry_price": 40000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.close_position.assert_called_once()
@@ -266,26 +266,26 @@ class TestSignalExecutorExecute:
     def test_execute_exception(self, signal_executor):
         strategy_ctx = {"id": 1}
         signal = {"type": "open_long"}
-        
-        with patch("app.services.signal_executor._get_available_capital", side_effect=Exception("Error")):
+
+        with patch("app.services.signal_executor._get_available_capital", side_effect=RuntimeError("Error")):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, []
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=[]
             )
-            
+
         assert result is False
 
     def test_reduce_short_signal_mode_update_db(self, signal_executor):
         strategy_ctx = {"id": 1, "_execution_mode": "signal"}
         signal = {"type": "reduce_short", "position_size": 0.5}
         current_positions = [{"side": "short", "size": 0.2, "entry_price": 60000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.update_position.assert_called_once()
@@ -294,19 +294,19 @@ class TestSignalExecutorExecute:
         strategy_ctx = {"id": 1, "_execution_mode": "signal"}
         signal = {"type": "close_short"}
         current_positions = [{"side": "short", "size": 0.2, "entry_price": 60000.0}]
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
             result = signal_executor.execute(
-                strategy_ctx, signal, "BTC/USDT", 50000.0, current_positions
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=current_positions
             )
-            
+
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.close_position.assert_called_once()
         from app.services.signal_executor import _get_available_capital
-        with patch("app.services.portfolio_allocator.get_portfolio_allocator", side_effect=Exception("Error")):
+        with patch("app.services.portfolio_allocator.get_portfolio_allocator", side_effect=RuntimeError("Error")):
             assert _get_available_capital(1, 1000.0) == 1000.0
 
     def test_get_available_capital_none(self):
@@ -324,13 +324,13 @@ class TestSignalExecutorExecute:
             "trading_config": {"entry_pct": 0.1}
         }
         signal = {"type": "open_long"}
-        
+
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         result = signal_executor.execute(
-            strategy_ctx, signal, "BTC/USDT", 50000.0, []
+            strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=[]
         )
-        
+
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.update_position.assert_called_once()
@@ -347,18 +347,18 @@ class TestSignalExecutorExecute:
             "ai_model_config": {"entry_ai_filter_enabled": True}
         }
         signal = {"type": "open_long"}
-        
+
         mock_enabled.return_value = True
         mock_allows.return_value = (False, {"reason": "direction_mismatch", "ai_decision": "SELL"})
-        
+
         result = signal_executor.execute(
-            strategy_ctx, signal, "BTC/USDT", 50000.0, []
+            strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=[]
         )
-        
+
         assert result is False
         signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
         signal_executor.data_handler.persist_notification.assert_called_once()
-        
+
         call_kwargs = signal_executor.data_handler.persist_notification.call_args[1]
         assert call_kwargs["signal_type"] == "ai_filter_hold"
         assert "direction_mismatch" in call_kwargs["message"]
@@ -375,16 +375,68 @@ class TestSignalExecutorExecute:
             "ai_model_config": {"entry_ai_filter_enabled": True}
         }
         signal = {"type": "open_long"}
-        
+
         mock_enabled.return_value = True
         mock_allows.return_value = (True, {"reason": "match", "ai_decision": "BUY"})
         signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
-        
+
         result = signal_executor.execute(
-            strategy_ctx, signal, "BTC/USDT", 50000.0, []
+            strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=[]
         )
-        
+
         assert result is True
         signal_executor.pending_order_enqueuer.execute_exchange_order.assert_called_once()
         signal_executor.data_handler.persist_notification.assert_not_called()
+
+    def test_execute_order_result_none(self, signal_executor):
+        strategy_ctx = {"id": 1, "_execution_mode": "live"}
+        signal = {"type": "open_long"}
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = None
+
+        with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
+            result = signal_executor.execute(
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=[]
+            )
+
+        assert result is False
+
+    def test_execute_order_result_not_success(self, signal_executor):
+        strategy_ctx = {"id": 1, "_execution_mode": "live"}
+        signal = {"type": "open_long"}
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": False, "error": "insufficient margin"}
+
+        with patch("app.services.signal_executor._get_available_capital", return_value=10000.0):
+            result = signal_executor.execute(
+                strategy_ctx, signal, symbol="BTC/USDT", current_price=50000.0, current_positions=[]
+            )
+
+        assert result is False
+
+    def test_handle_reduce_position_no_pos(self, signal_executor):
+        # pylint: disable=protected-access
+        signal_executor._handle_reduce_position(1, "BTC/USDT", "reduce_long", 0.5, 50000.0, [])
+        signal_executor.data_handler.record_trade.assert_not_called()
+
+    def test_handle_reduce_position_zero_entry_price(self, signal_executor):
+        # pylint: disable=protected-access
+        current_positions = [{"side": "long", "size": 1.0, "entry_price": 0.0}]
+        signal_executor._handle_reduce_position(1, "BTC/USDT", "reduce_long", 0.5, 50000.0, current_positions)
+
+        signal_executor.data_handler.record_trade.assert_called_once()
+        call_kwargs = signal_executor.data_handler.record_trade.call_args[1]
+        assert call_kwargs.get("profit") is None
+
+    def test_handle_close_position_no_pos(self, signal_executor):
+        # pylint: disable=protected-access
+        signal_executor._handle_close_position(1, "BTC/USDT", "close_long", 1.0, 50000.0, [])
+        signal_executor.data_handler.record_trade.assert_not_called()
+
+    def test_handle_close_position_zero_entry_price(self, signal_executor):
+        # pylint: disable=protected-access
+        current_positions = [{"side": "long", "size": 1.0, "entry_price": 0.0}]
+        signal_executor._handle_close_position(1, "BTC/USDT", "close_long", 1.0, 50000.0, current_positions)
+
+        signal_executor.data_handler.record_trade.assert_called_once()
+        call_kwargs = signal_executor.data_handler.record_trade.call_args[1]
+        assert call_kwargs.get("profit") is None
 

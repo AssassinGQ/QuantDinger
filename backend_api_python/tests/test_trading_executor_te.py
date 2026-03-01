@@ -158,7 +158,7 @@ class TestTE01SingleSymbolFetchesKlineAndExecutesIndicator:
 
         with patch("app.services.data_handler.get_db_connection") as mock_db:
             mock_db.return_value = make_db_ctx(dict(SINGLE_SYMBOL_STRATEGY))
-            with patch.object(TradingExecutor, "_is_strategy_running", side_effect=[True, False]), \
+            with patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running", side_effect=[True, False]), \
                  patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
                  patch("app.strategies.single_symbol.run_single_indicator") as mock_exec_indicator:
                 mock_exec_indicator.return_value = (pd.DataFrame({"close": [1.0]}), {})
@@ -231,8 +231,10 @@ class TestTE03CrossSectionalNonRebalanceDaySkipsIndicator:
     """TE-03: 断言 _should_rebalance=False 时 run_cross_sectional_indicator 未被调用"""
 
     @patch("app.services.data_handler.get_db_connection")
-    def test_non_rebalance_day_skips_indicator(self, mock_db):
-        """当 _should_rebalance 返回 False 时，不调用 run_cross_sectional_indicator"""
+    @patch("app.strategies.cross_sectional.CrossSectionalStrategy.should_execute")
+    def test_non_rebalance_day_skips_indicator(self, mock_should_exec, mock_db):
+        """当 should_execute 返回 False 时，不调用 run_cross_sectional_indicator"""
+        mock_should_exec.return_value = False
         TradingExecutor = _import_trading_executor()
         mock_db.return_value = make_db_ctx(
             fetchone_side_effect=[
@@ -241,15 +243,14 @@ class TestTE03CrossSectionalNonRebalanceDaySkipsIndicator:
             ]
         )
 
-        with patch.object(
-            TradingExecutor, "_is_strategy_running"
+        with patch(
+            "app.strategies.runners.base_runner.BaseStrategyRunner.is_running"
         ) as mock_running, patch(
             "app.strategies.cross_sectional.run_cross_sectional_indicator"
         ) as mock_run_indicator:
             mock_running.side_effect = [True, False]
 
             te = TradingExecutor()
-            te._should_rebalance = MagicMock(return_value=False)
             te._run_strategy_loop(2)
 
             mock_run_indicator.assert_not_called()
@@ -302,7 +303,7 @@ class TestTE04SingleSymbolTickCadence:
                   return_value=mock_indicator_result.get("pending_signals", [])), \
              patch("time.time", side_effect=mock_time), \
              patch("time.sleep", MagicMock()) as mock_sleep, \
-             patch.object(TradingExecutor, "_is_strategy_running",
+             patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running",
                          side_effect=[True, True, True, False]), \
              patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
              patch("app.services.trading_executor.console_print"):
@@ -365,7 +366,7 @@ def _run_single_loop_with_pending(
                   return_value=(MagicMock(), {"highest_price": 0})), \
              patch("app.strategies.single_symbol.extract_pending_signals_from_df",
                   return_value=indicator_result.get("pending_signals", [])), \
-             patch.object(TradingExecutorCls, "_is_strategy_running",
+             patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running",
                          side_effect=[True, False]), \
              patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
              patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
@@ -449,7 +450,7 @@ class TestTE05SingleSymbolExecuteSignalAfterIndicator:
                 ]
                 mock_extract.return_value = []
                 time_vals = [0] * 5 + [10] * 5 + [100] * 5  # 足够供两次 tick 使用
-                with patch.object(TradingExecutor, "_is_strategy_running", side_effect=[True, True, False]), \
+                with patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running", side_effect=[True, True, False]), \
                      patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
                      patch.object(DataHandler, "update_positions_current_price"), \
                      patch.object(DataHandler, "update_position") as mock_update_pos, \
@@ -487,7 +488,7 @@ class TestTE04bCrossSectionalTickCadence:
             mock_db.return_value = make_db_ctx(strategy)
             with patch("time.time", side_effect=mock_time), \
                  patch("time.sleep", MagicMock()) as mock_sleep, \
-                 patch.object(TradingExecutor, "_is_strategy_running",
+                 patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running",
                              side_effect=[True, True, True, False]):
                 te = TradingExecutor()
                 te._should_rebalance = MagicMock(return_value=False)
@@ -518,15 +519,15 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
         from app.services.data_handler import DataHandler
         with patch("app.services.data_handler.get_db_connection") as mock_db:
             mock_db.return_value = make_db_ctx(strategy)
-            with patch.object(TradingExecutor, "_is_strategy_running",
+            with patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running",
                              side_effect=[True, False]), \
                  patch("app.strategies.cross_sectional.run_cross_sectional_indicator",
                        return_value=indicator_result), \
                  patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
+                 patch("app.strategies.cross_sectional.CrossSectionalStrategy.should_execute", return_value=True), \
                  patch.object(DataHandler, "update_last_rebalance"):
                 mock_exec_signal.return_value = True
                 te = TradingExecutor()
-                te._should_rebalance = MagicMock(return_value=True)
                 te.data_handler.get_input_context_cross = MagicMock(return_value=input_ctx)
                 te._run_strategy_loop(2)
 
@@ -554,15 +555,15 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
         from app.services.data_handler import DataHandler
         with patch("app.services.data_handler.get_db_connection") as mock_db:
             mock_db.return_value = make_db_ctx(strategy)
-            with patch.object(TradingExecutor, "_is_strategy_running",
+            with patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running",
                              side_effect=[True, False]), \
                  patch("app.strategies.cross_sectional.run_cross_sectional_indicator",
                        return_value=indicator_result), \
                  patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
+                 patch("app.strategies.cross_sectional.CrossSectionalStrategy.should_execute", return_value=True), \
                  patch.object(DataHandler, "update_last_rebalance"):
                 mock_exec_signal.return_value = True
                 te = TradingExecutor()
-                te._should_rebalance = MagicMock(return_value=True)
                 te.data_handler.get_input_context_cross = MagicMock(return_value=input_ctx)
                 te._run_strategy_loop(2)
 
@@ -718,7 +719,7 @@ class TestTE06bCloseSignalReceivesCorrectPositions:
         from app.services.data_handler import DataHandler
         with patch("app.services.data_handler.get_db_connection") as mock_db:
             mock_db.return_value = make_db_ctx(strategy)
-            with patch.object(TradingExecutor, "_is_strategy_running", side_effect=[True, False]), \
+            with patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running", side_effect=[True, False]), \
                  patch("app.strategies.cross_sectional.run_cross_sectional_indicator",
                        return_value=raw_output), \
                  patch("app.strategies.cross_sectional.generate_cross_sectional_signals",
@@ -854,7 +855,7 @@ class TestTE07StartStopStrategy:
         mock_db.return_value = make_db_ctx(dict(SINGLE_SYMBOL_STRATEGY))
         TradingExecutor = _import_trading_executor()
         with patch.object(TradingExecutor, "_run_strategy_loop"), \
-             patch.object(TradingExecutor, "_is_strategy_running", side_effect=[False]):
+             patch("app.strategies.runners.base_runner.BaseStrategyRunner.is_running", side_effect=[False]):
             te = TradingExecutor()
             ok = te.start_strategy(1)
             assert ok is True
