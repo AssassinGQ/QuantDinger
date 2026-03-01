@@ -4,15 +4,95 @@
 返回选中的信号，由调用方执行。便于单独测试信号处理逻辑。
 """
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
+import threading
 
 from app.services.server_side_risk import (
     check_stop_loss_signal,
     check_take_profit_or_trailing_signal,
 )
-
-
 from app.services.data_handler import DataHandler
+
+
+class SignalDeduplicator:
+    """
+    In-memory signal de-dup cache to prevent repeated orders on the same candle signal.
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super(SignalDeduplicator, cls).__new__(cls)
+                cls._instance._signal_dedup = {}
+                cls._instance._signal_dedup_lock = threading.Lock()
+            return cls._instance
+
+    def __init__(self):
+        # Pylint needs these definitions
+        if not hasattr(self, '_signal_dedup'):
+            self._signal_dedup = {}
+            self._signal_dedup_lock = threading.Lock()
+
+    def _dedup_key(self, strategy_id: int, symbol: str, signal_type: str, signal_ts: int) -> str:
+        sym = (symbol or "").strip().upper()
+        if ":" in sym:
+            sym = sym.split(":", 1)[0]
+        return f"{int(strategy_id)}|{sym}|{(signal_type or '').strip().lower()}|{int(signal_ts or 0)}"
+
+    def should_skip_signal_once_per_candle(
+        self,
+        strategy_id: int,
+        symbol: str,
+        signal_type: str,
+        signal_ts: int,
+        timeframe_seconds: int,
+        now_ts: Optional[int] = None,
+    ) -> bool:
+        """Check if a signal should be skipped to avoid duplication within the same candle."""
+        try:
+            now = int(now_ts or time.time())
+            tf = int(timeframe_seconds or 0)
+            if tf <= 0:
+                tf = 60
+            # Keep keys long enough to cover at least the next candle.
+            ttl_sec = max(tf * 2, 120)
+            expiry = float(now + ttl_sec)
+            key = self._dedup_key(strategy_id, symbol, signal_type, int(signal_ts or 0))
+
+            with self._signal_dedup_lock:
+                bucket = self._signal_dedup.get(int(strategy_id))
+                if bucket is None:
+                    bucket = {}
+                    self._signal_dedup[int(strategy_id)] = bucket
+
+                # Opportunistic cleanup
+                stale = [k for k, exp in bucket.items() if float(exp) <= now]
+                for k in stale[:512]:
+                    try:
+                        del bucket[k]
+                    except (KeyError, TypeError):
+                        pass
+
+                exp = bucket.get(key)
+                if exp is not None and float(exp) > now:
+                    return True
+
+                bucket[key] = expiry
+                return False
+        except (ValueError, TypeError, KeyError):
+            return False
+
+    def clear(self):
+        """Clear all deduplication records. Useful for testing."""
+        with self._signal_dedup_lock:
+            self._signal_dedup.clear()
+
+def get_signal_deduplicator() -> SignalDeduplicator:
+    """Get the singleton instance of SignalDeduplicator."""
+    return SignalDeduplicator()
+
 
 def position_state(positions: List[Dict[str, Any]]) -> str:
     """
@@ -65,26 +145,19 @@ def signal_priority(signal_type: str) -> int:
 
 
 def process_signals(
-    strategy_id: int,
+    strategy_ctx: Dict[str, Any],
     symbol: str,
     triggered_signals: List[Dict[str, Any]],
     current_price: float,
-    trade_direction: str,
-    leverage: float,
-    market_type: str,
-    trading_config: Dict[str, Any],
-    timeframe_seconds: int,
-    *,
-    dedup_check: Optional[
-        Callable[[int, str, str, int, int], bool]
-    ] = None,
-    now_ts: Optional[int] = None,
 ) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     信号处理：叠加风控、过滤、排序、去重，返回选中的一个信号及当前持仓。
 
     Args:
-        dedup_check: 可选，(strategy_id, symbol, signal_type, signal_ts, tf_sec) -> True 表示跳过
+        strategy_ctx: 策略上下文(包含 ID, config 等)
+        symbol: 交易对
+        triggered_signals: 指标产生的原始信号列表
+        current_price: 当前价格
         now_ts: 可选，当前时间戳
 
     Returns:
@@ -93,7 +166,23 @@ def process_signals(
     if not triggered_signals:
         return (None, [])
 
+    strategy_id = int(strategy_ctx.get("id") or 0)
+    leverage = float(strategy_ctx.get("_leverage", 1.0))
+    market_type = strategy_ctx.get("_market_type", "swap")
+    trading_config = strategy_ctx.get("trading_config") or {}
+    
+    # Extract trade direction and timeframe from config
+    trade_direction = "long" if market_type == "spot" else trading_config.get("trade_direction", "long")
+    
+    # Calculate timeframe seconds based on strategy configuration
+    from app.data_sources.base import TIMEFRAME_SECONDS
+    tf_str = str(trading_config.get("timeframe", "1H")).strip()
+    if tf_str not in TIMEFRAME_SECONDS:
+        tf_str = tf_str.upper() if tf_str.islower() else tf_str.lower()
+    timeframe_seconds = int(TIMEFRAME_SECONDS.get(tf_str, 3600))
+
     data_handler = DataHandler()
+    deduplicator = get_signal_deduplicator()
     all_signals = list(triggered_signals)
     risk_tp = check_take_profit_or_trailing_signal(
         data_handler,
@@ -142,14 +231,12 @@ def process_signals(
         ),
     )
 
-    now_i = int(now_ts or time.time())
-    tf = int(timeframe_seconds or 60)
-
     for s in candidates:
         stype = s.get("type")
         sts = int(s.get("timestamp") or 0)
-        if dedup_check is not None and dedup_check(
-            strategy_id, symbol, str(stype or ""), sts, tf
+        # timeframe_seconds defines the candle period for dedup TTL
+        if deduplicator.should_skip_signal_once_per_candle(
+            strategy_id, symbol, str(stype or ""), sts, timeframe_seconds
         ):
             continue
         return (s, current_positions)

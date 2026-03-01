@@ -334,3 +334,57 @@ class TestSignalExecutorExecute:
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.update_position.assert_called_once()
+
+    @patch("app.services.signal_executor.is_entry_ai_filter_enabled")
+    @patch("app.services.signal_executor.entry_ai_filter_allows")
+    @patch("app.services.signal_executor._get_available_capital", return_value=10000.0)
+    def test_ai_filter_rejection(self, mock_capital, mock_allows, mock_enabled, signal_executor):
+        """Test that AI filter rejection prevents order execution."""
+        strategy_ctx = {
+            "id": 1,
+            "_market_type": "swap",
+            "trading_config": {},
+            "ai_model_config": {"entry_ai_filter_enabled": True}
+        }
+        signal = {"type": "open_long"}
+        
+        mock_enabled.return_value = True
+        mock_allows.return_value = (False, {"reason": "direction_mismatch", "ai_decision": "SELL"})
+        
+        result = signal_executor.execute(
+            strategy_ctx, signal, "BTC/USDT", 50000.0, []
+        )
+        
+        assert result is False
+        signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
+        signal_executor.data_handler.persist_notification.assert_called_once()
+        
+        call_kwargs = signal_executor.data_handler.persist_notification.call_args[1]
+        assert call_kwargs["signal_type"] == "ai_filter_hold"
+        assert "direction_mismatch" in call_kwargs["message"]
+
+    @patch("app.services.signal_executor.is_entry_ai_filter_enabled")
+    @patch("app.services.signal_executor.entry_ai_filter_allows")
+    @patch("app.services.signal_executor._get_available_capital", return_value=10000.0)
+    def test_ai_filter_approval(self, mock_capital, mock_allows, mock_enabled, signal_executor):
+        """Test that AI filter approval allows order execution."""
+        strategy_ctx = {
+            "id": 1,
+            "_market_type": "swap",
+            "trading_config": {},
+            "ai_model_config": {"entry_ai_filter_enabled": True}
+        }
+        signal = {"type": "open_long"}
+        
+        mock_enabled.return_value = True
+        mock_allows.return_value = (True, {"reason": "match", "ai_decision": "BUY"})
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
+        
+        result = signal_executor.execute(
+            strategy_ctx, signal, "BTC/USDT", 50000.0, []
+        )
+        
+        assert result is True
+        signal_executor.pending_order_enqueuer.execute_exchange_order.assert_called_once()
+        signal_executor.data_handler.persist_notification.assert_not_called()
+

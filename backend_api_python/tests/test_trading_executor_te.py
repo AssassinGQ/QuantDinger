@@ -368,12 +368,10 @@ def _run_single_loop_with_pending(
              patch.object(TradingExecutorCls, "_is_strategy_running",
                          side_effect=[True, False]), \
              patch("app.services.price_fetcher.PriceFetcher.fetch_current_price", return_value=100.0), \
-             patch.object(TradingExecutorCls, "_execute_signal") as mock_exec_signal, \
+             patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
              patch.object(DataHandler, "update_positions_current_price"), \
              patch.object(DataHandler, "get_current_positions", return_value=pos_list), \
              patch("app.services.trading_executor.console_print"), \
-             patch.object(TradingExecutorCls, "_should_skip_signal_once_per_candle",
-                         return_value=False), \
              patch("app.services.signal_processor.check_take_profit_or_trailing_signal",
                          return_value=None), \
              patch("app.services.signal_processor.check_stop_loss_signal",
@@ -524,7 +522,7 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
                              side_effect=[True, False]), \
                  patch("app.strategies.cross_sectional.run_cross_sectional_indicator",
                        return_value=indicator_result), \
-                 patch.object(TradingExecutor, "_execute_signal") as mock_exec_signal, \
+                 patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
                  patch.object(DataHandler, "update_last_rebalance"):
                 mock_exec_signal.return_value = True
                 te = TradingExecutor()
@@ -560,7 +558,7 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
                              side_effect=[True, False]), \
                  patch("app.strategies.cross_sectional.run_cross_sectional_indicator",
                        return_value=indicator_result), \
-                 patch.object(TradingExecutor, "_execute_signal") as mock_exec_signal, \
+                 patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
                  patch.object(DataHandler, "update_last_rebalance"):
                 mock_exec_signal.return_value = True
                 te = TradingExecutor()
@@ -725,7 +723,7 @@ class TestTE06bCloseSignalReceivesCorrectPositions:
                        return_value=raw_output), \
                  patch("app.strategies.cross_sectional.generate_cross_sectional_signals",
                        return_value=[{"symbol": "A", "type": "close_long", "score": 0.5}]), \
-                 patch.object(TradingExecutor, "_execute_signal") as mock_exec_signal, \
+                 patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
                  patch.object(DataHandler, "update_last_rebalance"), \
                  patch.object(DataHandler, "get_current_positions", return_value=[pos_a]), \
                  patch.object(DataHandler, "get_all_positions", return_value=[pos_a]):

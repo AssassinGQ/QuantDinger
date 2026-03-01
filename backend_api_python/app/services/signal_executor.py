@@ -4,10 +4,11 @@ Signal executor: 执行交易信号（状态机校验、下单、持仓更新）
 重构为类 `SignalExecutor`，封装了外部依赖（data_handler, pending_order_enqueuer 等），
 从而简化每次执行信号时的传参。
 """
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.services.server_side_risk import to_ratio
 from app.services.signal_processor import is_signal_allowed, position_state
+from app.services.entry_ai_filter import is_entry_ai_filter_enabled, entry_ai_filter_allows
 from app.services.pending_order_enqueuer import PendingOrderEnqueuer
 from app.services.data_handler import DataHandler
 from app.utils.logger import get_logger
@@ -85,6 +86,50 @@ class SignalExecutor:
                 return False
 
             sig = signal_type.strip().lower()
+
+            ai_model_config = strategy_ctx.get("ai_model_config") or {}
+            
+            # AI 过滤（仅对开仓信号）
+            ai_enabled = is_entry_ai_filter_enabled(
+                ai_model_config=ai_model_config, trading_config=trading_config
+            )
+            if sig in ("open_long", "open_short") and ai_enabled:
+                ok_ai, ai_info = entry_ai_filter_allows(
+                    symbol=symbol,
+                    signal_type=sig,
+                    ai_model_config=ai_model_config,
+                    trading_config=trading_config,
+                )
+                if not ok_ai:
+                    reason = (ai_info or {}).get("reason") or "ai_filter_rejected"
+                    ai_decision = (ai_info or {}).get("ai_decision") or ""
+                    title = f"AI过滤拦截开仓 | {symbol}"
+                    msg = (
+                        f"策略信号={sig}，AI决策={ai_decision or 'UNKNOWN'}，"
+                        f"原因={reason}；已HOLD（不下单）"
+                    )
+                    self.data_handler.persist_notification(
+                        strategy_id=strategy_id,
+                        symbol=symbol,
+                        signal_type="ai_filter_hold",
+                        title=title,
+                        message=msg,
+                        payload={
+                            "event": "qd.ai_filter",
+                            "strategy_id": strategy_id,
+                            "strategy_name": strategy_ctx.get("_strategy_name", ""),
+                            "symbol": symbol,
+                            "signal_type": sig,
+                            "ai_decision": ai_decision,
+                            "reason": reason,
+                            "signal_ts": signal_ts,
+                        },
+                    )
+                    logger.info(
+                        "AI entry filter rejected: strategy_id=%s symbol=%s signal=%s ai=%s reason=%s",
+                        strategy_id, symbol, sig, ai_decision, reason,
+                    )
+                    return False
 
             # 计算下单数量
             available_capital = _get_available_capital(strategy_id, initial_capital)

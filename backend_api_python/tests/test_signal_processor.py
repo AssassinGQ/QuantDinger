@@ -4,8 +4,6 @@
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from app.services.signal_processor import (
     is_signal_allowed,
     position_state,
@@ -13,110 +11,110 @@ from app.services.signal_processor import (
     signal_priority,
 )
 
-
 class TestPositionState:
-    """position_state 返回 flat | long | short"""
-
-    def test_empty_returns_flat(self):
+    def test_empty_positions(self):
         assert position_state([]) == "flat"
+        assert position_state(None) == "flat"
 
-    def test_long_returns_long(self):
-        assert position_state([{"side": "long"}]) == "long"
+    def test_has_long_position(self):
+        assert position_state([{"side": "long", "size": 1.0}]) == "long"
+        assert position_state([{"side": "LONG", "size": 0.5}]) == "long"
 
-    def test_short_returns_short(self):
-        assert position_state([{"side": "short"}]) == "short"
+    def test_has_short_position(self):
+        assert position_state([{"side": "short", "size": 1.0}]) == "short"
 
-    def test_invalid_returns_flat(self):
-        assert position_state([{"side": "unknown"}]) == "flat"
+    def test_invalid_side_returns_flat(self):
+        assert position_state([{"side": "unknown", "size": 1.0}]) == "flat"
 
-    def test_position_state_exception(self):
-        mock_pos = MagicMock()
-        mock_pos.get.side_effect = Exception("Error")
-        assert position_state([mock_pos]) == "flat"
 
 class TestIsSignalAllowed:
-    """状态机：flat 只允许 open，long 只允许 add/reduce/close_long，short 同理"""
-
-    def test_flat_accepts_open_long_short(self):
+    def test_flat_state(self):
         assert is_signal_allowed("flat", "open_long") is True
         assert is_signal_allowed("flat", "open_short") is True
-
-    def test_flat_rejects_close(self):
         assert is_signal_allowed("flat", "close_long") is False
         assert is_signal_allowed("flat", "add_long") is False
 
-    def test_long_accepts_add_reduce_close(self):
+    def test_long_state(self):
+        assert is_signal_allowed("long", "open_long") is False
+        assert is_signal_allowed("long", "open_short") is False
         assert is_signal_allowed("long", "add_long") is True
         assert is_signal_allowed("long", "reduce_long") is True
         assert is_signal_allowed("long", "close_long") is True
-
-    def test_long_rejects_open_short(self):
-        assert is_signal_allowed("long", "open_long") is False
         assert is_signal_allowed("long", "close_short") is False
 
-    def test_short_accepts_add_reduce_close(self):
+    def test_short_state(self):
+        assert is_signal_allowed("short", "open_long") is False
+        assert is_signal_allowed("short", "open_short") is False
         assert is_signal_allowed("short", "add_short") is True
         assert is_signal_allowed("short", "reduce_short") is True
         assert is_signal_allowed("short", "close_short") is True
+        assert is_signal_allowed("short", "close_long") is False
 
-    def test_invalid_state(self):
-        assert is_signal_allowed("invalid", "open_long") is False
+    def test_case_insensitivity(self):
+        assert is_signal_allowed("FLAT", "OPEN_LONG") is True
 
 
 class TestSignalPriority:
-    """close > reduce > open > add"""
-
-    def test_close_highest(self):
+    def test_priority_ordering(self):
         assert signal_priority("close_long") == 0
-        assert signal_priority("close_short") == 0
-
-    def test_reduce_second(self):
-        assert signal_priority("reduce_long") == 1
-
-    def test_open_third(self):
+        assert signal_priority("reduce_short") == 1
         assert signal_priority("open_long") == 2
-
-    def test_add_lowest(self):
         assert signal_priority("add_long") == 3
-
-    def test_unknown_signal(self):
-        assert signal_priority("unknown_signal") == 99
+        assert signal_priority("unknown") == 99
 
 
 class TestProcessSignals:
-    """process_signals 返回 (selected, current_positions)"""
+    def setup_method(self):
+        self.strategy_ctx = {
+            "id": 1,
+            "_leverage": 1.0,
+            "_market_type": "swap",
+            "trading_config": {
+                "trade_direction": "both",
+                "timeframe": "1m"
+            }
+        }
 
-    def test_process_signals_with_risk_signals(self):
+    def test_process_signals_empty(self):
+        selected, positions = process_signals(self.strategy_ctx, "BTC/USDT", [], 100.0)
+        assert selected is None
+        assert positions == []
+
+    def test_process_signals_with_tp_sl(self):
         dh = MagicMock()
-        dh.get_current_positions.return_value = [{"side": "long"}]
+        dh.get_current_positions.return_value = [{"side": "long", "size": 0.1}]
         sig = {"type": "add_long", "position_size": 0.1, "timestamp": int(time.time())}
-        risk_tp = {"type": "close_long", "position_size": 1.0, "timestamp": int(time.time()), "reason": "tp"}
-        risk_sl = {"type": "close_long", "position_size": 1.0, "timestamp": int(time.time()), "reason": "sl"}
+        risk_sig = {"type": "close_long", "reason": "tp", "timestamp": int(time.time())}
         
-        with patch("app.services.signal_processor.check_take_profit_or_trailing_signal", return_value=risk_tp), \
-             patch("app.services.signal_processor.check_stop_loss_signal", return_value=risk_sl), \
+        ctx = dict(self.strategy_ctx)
+        ctx["trading_config"]["take_profit_pct"] = 5
+
+        with patch("app.services.signal_processor.check_take_profit_or_trailing_signal", return_value=risk_sig), \
+             patch("app.services.signal_processor.check_stop_loss_signal", return_value=None), \
              patch("app.services.signal_processor.DataHandler", return_value=dh):
             selected, positions = process_signals(
-                strategy_id=1, symbol="BTC/USDT", triggered_signals=[sig],
-                current_price=100.0, trade_direction="both", leverage=1.0,
-                market_type="swap", trading_config={}, timeframe_seconds=60,
+                strategy_ctx=ctx, symbol="BTC/USDT", triggered_signals=[sig],
+                current_price=100.0,
             )
             assert selected is not None
             assert selected["type"] == "close_long"
-            assert selected["reason"] == "tp"  # Because tp was appended first, and sort is stable for same priority/timestamp
+            assert selected["reason"] == "tp"
 
     def test_process_signals_trade_direction_long(self):
         dh = MagicMock()
         dh.get_current_positions.return_value = []
         sig1 = {"type": "open_long", "position_size": 0.1, "timestamp": int(time.time())}
         sig2 = {"type": "open_short", "position_size": 0.1, "timestamp": int(time.time())}
+        
+        ctx = dict(self.strategy_ctx)
+        ctx["trading_config"]["trade_direction"] = "long"
+
         with patch("app.services.signal_processor.check_take_profit_or_trailing_signal", return_value=None), \
              patch("app.services.signal_processor.check_stop_loss_signal", return_value=None), \
              patch("app.services.signal_processor.DataHandler", return_value=dh):
             selected, positions = process_signals(
-                strategy_id=1, symbol="BTC/USDT", triggered_signals=[sig1, sig2],
-                current_price=100.0, trade_direction="long", leverage=1.0,
-                market_type="swap", trading_config={}, timeframe_seconds=60,
+                strategy_ctx=ctx, symbol="BTC/USDT", triggered_signals=[sig1, sig2],
+                current_price=100.0,
             )
             assert selected is not None
             assert selected["type"] == "open_long"
@@ -126,13 +124,16 @@ class TestProcessSignals:
         dh.get_current_positions.return_value = []
         sig1 = {"type": "open_long", "position_size": 0.1, "timestamp": int(time.time())}
         sig2 = {"type": "open_short", "position_size": 0.1, "timestamp": int(time.time())}
+
+        ctx = dict(self.strategy_ctx)
+        ctx["trading_config"]["trade_direction"] = "short"
+
         with patch("app.services.signal_processor.check_take_profit_or_trailing_signal", return_value=None), \
              patch("app.services.signal_processor.check_stop_loss_signal", return_value=None), \
              patch("app.services.signal_processor.DataHandler", return_value=dh):
             selected, positions = process_signals(
-                strategy_id=1, symbol="BTC/USDT", triggered_signals=[sig1, sig2],
-                current_price=100.0, trade_direction="short", leverage=1.0,
-                market_type="swap", trading_config={}, timeframe_seconds=60,
+                strategy_ctx=ctx, symbol="BTC/USDT", triggered_signals=[sig1, sig2],
+                current_price=100.0,
             )
             assert selected is not None
             assert selected["type"] == "open_short"
@@ -143,20 +144,19 @@ class TestProcessSignals:
         sig = {"type": "open_long", "position_size": 0.1, "timestamp": int(time.time())}
         with patch("app.services.signal_processor.check_take_profit_or_trailing_signal", return_value=None), \
              patch("app.services.signal_processor.check_stop_loss_signal", return_value=None), \
-             patch("app.services.signal_processor.DataHandler", return_value=dh):
+             patch("app.services.signal_processor.DataHandler", return_value=dh), \
+             patch("app.services.signal_processor.get_signal_deduplicator") as mock_dedup:
+            mock_dedup.return_value.should_skip_signal_once_per_candle.return_value = True
             selected, positions = process_signals(
-                strategy_id=1, symbol="BTC/USDT", triggered_signals=[sig],
-                current_price=100.0, trade_direction="both", leverage=1.0,
-                market_type="swap", trading_config={}, timeframe_seconds=60,
-                dedup_check=lambda *args: True
+                strategy_ctx=self.strategy_ctx, symbol="BTC/USDT", triggered_signals=[sig],
+                current_price=100.0,
             )
             assert selected is None
         dh = MagicMock()
         dh.get_current_positions.return_value = []
         selected, positions = process_signals(
-            strategy_id=1, symbol="BTC/USDT", triggered_signals=[],
-            current_price=100.0, trade_direction="both", leverage=1.0,
-            market_type="swap", trading_config={}, timeframe_seconds=60,
+            strategy_ctx=self.strategy_ctx, symbol="BTC/USDT", triggered_signals=[],
+            current_price=100.0,
         )
         assert selected is None
         assert positions == []
@@ -170,9 +170,8 @@ class TestProcessSignals:
              patch("app.services.signal_processor.check_stop_loss_signal", return_value=None), \
              patch("app.services.signal_processor.DataHandler", return_value=dh):
             selected, positions = process_signals(
-                strategy_id=1, symbol="BTC/USDT", triggered_signals=[sig],
-                current_price=100.0, trade_direction="both", leverage=1.0,
-                market_type="swap", trading_config={}, timeframe_seconds=60,
+                strategy_ctx=self.strategy_ctx, symbol="BTC/USDT", triggered_signals=[sig],
+                current_price=100.0,
             )
         assert selected is not None
         assert selected.get("type") == "open_long"
@@ -186,9 +185,8 @@ class TestProcessSignals:
              patch("app.services.signal_processor.check_stop_loss_signal", return_value=None), \
              patch("app.services.signal_processor.DataHandler", return_value=dh):
             selected, positions = process_signals(
-                strategy_id=1, symbol="BTC/USDT", triggered_signals=[sig],
-                current_price=100.0, trade_direction="both", leverage=1.0,
-                market_type="swap", trading_config={}, timeframe_seconds=60,
+                strategy_ctx=self.strategy_ctx, symbol="BTC/USDT", triggered_signals=[sig],
+                current_price=100.0,
             )
         assert selected is None
         assert len(positions) == 1

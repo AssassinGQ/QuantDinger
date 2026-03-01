@@ -1,7 +1,9 @@
 """
 pytest 配置与共享 fixtures。
 """
+import pytest
 from unittest.mock import MagicMock
+from app.services.signal_processor import get_signal_deduplicator
 
 
 def make_db_ctx(
@@ -24,3 +26,9 @@ def make_db_ctx(
     ctx.__enter__.return_value = conn
     ctx.__exit__.return_value = False
     return ctx
+
+@pytest.fixture(autouse=True)
+def reset_signal_deduplicator():
+    """每个测试前清空内存去重缓存，避免互相干扰。"""
+    get_signal_deduplicator().clear()
+

@@ -5,22 +5,15 @@ import time
 import threading
 import traceback
 import os
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from datetime import datetime
-import json
 from app.utils.logger import get_logger
 from app.strategies.factory import load_and_create
 from app.strategies.base import sleep_until_next_tick
 from app.services.data_handler import DataHandler
-from app.services.server_side_risk import to_ratio
-from app.services.signal_processor import (
-    is_signal_allowed,
-    position_state,
-    process_signals,
-)
+from app.services.signal_processor import process_signals
 from app.services.signal_executor import SignalExecutor
 from app.services.price_fetcher import get_price_fetcher
-from app.data_sources import DataSourceFactory
 from app.utils.console import console_print
 
 logger = get_logger(__name__)
@@ -33,10 +26,6 @@ class TradingExecutor:
         # 不再使用全局连接，改为每次使用时从连接池获取
         self.running_strategies = {}  # {strategy_id: thread}
         self.lock = threading.Lock()
-        # In-memory signal de-dup cache to prevent repeated orders on the same candle signal.
-        # Keyed by (strategy_id, symbol, signal_type, signal_timestamp).
-        self._signal_dedup = {}  # type: Dict[int, Dict[str, float]]
-        self._signal_dedup_lock = threading.Lock()
         self.data_handler = DataHandler()
         self._price_fetcher = get_price_fetcher()
         self._signal_executor = SignalExecutor()
@@ -140,63 +129,6 @@ class TradingExecutor:
                 )
             except Exception:
                 pass
-
-    def _dedup_key(self, strategy_id: int, symbol: str, signal_type: str, signal_ts: int) -> str:
-        sym = (symbol or "").strip().upper()
-        if ":" in sym:
-            sym = sym.split(":", 1)[0]
-        return f"{int(strategy_id)}|{sym}|{(signal_type or '').strip().lower()}|{int(signal_ts or 0)}"
-
-    def _should_skip_signal_once_per_candle(
-        self,
-        strategy_id: int,
-        symbol: str,
-        signal_type: str,
-        signal_ts: int,
-        timeframe_seconds: int,
-        now_ts: Optional[int] = None,
-    ) -> bool:
-        """
-        Prevent repeated orders for the same candle signal across ticks.
-
-        This is especially important for 'confirmed' signals that point to the previous closed candle:
-        the signal timestamp stays constant for the entire next candle, so without de-dup the system
-        would re-enqueue the same order every tick.
-        """
-        try:
-            now = int(now_ts or time.time())
-            tf = int(timeframe_seconds or 0)
-            if tf <= 0:
-                tf = 60
-            # Keep keys long enough to cover at least the next candle.
-            ttl_sec = max(tf * 2, 120)
-            expiry = float(now + ttl_sec)
-            key = self._dedup_key(strategy_id, symbol, signal_type, int(signal_ts or 0))
-
-            with self._signal_dedup_lock:
-                bucket = self._signal_dedup.get(int(strategy_id))
-                if bucket is None:
-                    bucket = {}
-                    self._signal_dedup[int(strategy_id)] = bucket
-
-                # Opportunistic cleanup
-                stale = [k for k, exp in bucket.items() if float(exp) <= now]
-                for k in stale[:512]:
-                    try:
-                        del bucket[k]
-                    except Exception:
-                        pass
-
-                exp = bucket.get(key)
-                if exp is not None and float(exp) > now:
-                    return True
-
-                # Reserve the key (best-effort). Caller may still fail to enqueue; that's acceptable
-                # because repeated failures should not flood the queue.
-                bucket[key] = expiry
-                return False
-        except Exception:
-            return False
 
     def start_strategy(self, strategy_id: int) -> bool:
         """
@@ -507,14 +439,13 @@ class TradingExecutor:
                     signal["timestamp"] = int(current_time)
 
                 future = pool.submit(
-                    self._execute_signal,
-                    strategy_id=strategy_id,
-                    strategy=strategy,
-                    exchange=None,
+                    self._signal_executor.execute,
+                    strategy_ctx=strategy,
+                    signal=signal,
                     symbol=signal["symbol"],
                     current_price=0.0,
-                    signal=signal,
                     current_positions=symbol_positions,
+                    exchange=None,
                 )
                 futures[future] = signal
 
@@ -535,14 +466,6 @@ class TradingExecutor:
                         signal["type"],
                         e,
                     )
-
-    def _get_timeframe_seconds(self, timeframe: str) -> int:
-        """将 timeframe 字符串（如 1H、1m）转为秒数"""
-        from app.data_sources.base import TIMEFRAME_SECONDS
-        tf = str(timeframe or "1H").strip()
-        if tf not in TIMEFRAME_SECONDS:
-            tf = tf.upper() if tf.islower() else tf.lower()
-        return int(TIMEFRAME_SECONDS.get(tf, 3600))
 
     def _is_strategy_running(self, strategy_id: int) -> bool:
         """检查策略是否在运行"""
@@ -566,38 +489,24 @@ class TradingExecutor:
         if not triggered_signals:
             return
             
-        leverage = float(strategy.get("_leverage", 1.0))
-        market_type = strategy.get("_market_type", "swap")
-        trading_config = strategy.get("trading_config") or {}
-        trade_direction = "long" if market_type == "spot" else trading_config.get("trade_direction", "long")
-        timeframe_seconds = self._get_timeframe_seconds(trading_config.get("timeframe", "1H"))
-
         selected, current_positions = process_signals(
-            strategy_id=strategy_id,
+            strategy_ctx=strategy,
             symbol=symbol,
             triggered_signals=triggered_signals,
             current_price=current_price,
-            trade_direction=trade_direction,
-            leverage=leverage,
-            market_type=market_type,
-            trading_config=trading_config,
-            timeframe_seconds=timeframe_seconds,
-            dedup_check=self._should_skip_signal_once_per_candle,
-            now_ts=int(time.time()),
         )
         if selected:
             sig_type = selected.get("type")
             trigger_price = selected.get("trigger_price", current_price)
             execute_price = trigger_price if trigger_price > 0 else current_price
 
-            ok = self._execute_signal(
-                strategy_id=strategy_id,
-                strategy=strategy,
-                exchange=exchange,
+            ok = self._signal_executor.execute(
+                strategy_ctx=strategy,
+                signal=selected,
                 symbol=symbol,
                 current_price=execute_price,
-                signal=selected,
                 current_positions=current_positions,
+                exchange=exchange,
             )
             if ok:
                 strategy_name = strategy.get("_strategy_name", "")
@@ -621,235 +530,6 @@ class TradingExecutor:
                     "Strategy %s signal rejected/failed: %s",
                     strategy_id, sig_type,
                 )
-
-    def _execute_signal(
-        self,
-        strategy_id: int,
-        strategy: Dict[str, Any],
-        exchange: Any,
-        symbol: str,
-        current_price: float,
-        signal: Dict[str, Any],
-        current_positions: List[Dict[str, Any]],
-    ):
-        """执行具体的交易信号（保留 state machine、trade direction、AI filter；其余委托 signal_executor）"""
-        try:
-            signal_type = signal.get("type", "")
-            
-            # Hard state-machine guard (double safety in addition to loop-level filtering).
-            state = position_state(current_positions)
-            if not is_signal_allowed(state, signal_type):
-                return False
-
-            market_type = strategy.get("_market_type", "swap")
-            # 1. 检查交易方向限制
-            if market_type == 'spot' and 'short' in signal_type:
-                return False
-
-            sig = signal_type.strip().lower()
-
-            ai_model_config = strategy.get("ai_model_config") or {}
-            trading_config = strategy.get("trading_config") or {}
-
-            # 1.1 开仓 AI 过滤（仅 open_*）
-            ai_enabled = self._is_entry_ai_filter_enabled(
-                ai_model_config=ai_model_config, trading_config=trading_config
-            )
-            if sig in ("open_long", "open_short") and ai_enabled:
-                ok_ai, ai_info = self._entry_ai_filter_allows(
-                    strategy_id=strategy_id,
-                    symbol=symbol,
-                    signal_type=sig,
-                    ai_model_config=ai_model_config,
-                    trading_config=trading_config,
-                )
-                if not ok_ai:
-                    # Best-effort persist a browser notification so UI can show "HOLD due to AI filter".
-                    reason = (ai_info or {}).get("reason") or "ai_filter_rejected"
-                    ai_decision = (ai_info or {}).get("ai_decision") or ""
-                    title = f"AI过滤拦截开仓 | {symbol}"
-                    msg = (
-                        f"策略信号={sig}，AI决策={ai_decision or 'UNKNOWN'}，"
-                        f"原因={reason}；已HOLD（不下单）"
-                    )
-                    self.data_handler.persist_notification(
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        signal_type="ai_filter_hold",
-                        title=title,
-                        message=msg,
-                        payload={
-                            "event": "qd.ai_filter",
-                            "strategy_id": int(strategy_id),
-                            "strategy_name": str(strategy.get("_strategy_name", "")),
-                            "symbol": str(symbol or ""),
-                            "signal_type": str(sig),
-                            "ai_decision": str(ai_decision),
-                            "reason": str(reason),
-                            "signal_ts": int(signal.get("timestamp") or 0),
-                        },
-                    )
-                    logger.info(
-                        "AI entry filter rejected: strategy_id=%s symbol=%s signal=%s ai=%s reason=%s",
-                        strategy_id, symbol, sig, ai_decision, reason,
-                    )
-                    return False
-
-            return self._signal_executor.execute(
-                strategy_ctx=strategy,
-                signal=signal,
-                symbol=symbol,
-                current_price=current_price,
-                current_positions=current_positions,
-                exchange=exchange,
-            )
-        except Exception as e:
-            logger.error("Failed to execute signal: %s", e)
-            return False
-
-    def _is_entry_ai_filter_enabled(
-        self,
-        *,
-        ai_model_config: Optional[Dict[str, Any]],
-        trading_config: Optional[Dict[str, Any]],
-    ) -> bool:
-        """Detect whether the strategy enabled 'AI filter on entry (open positions only)'."""
-        amc = ai_model_config if isinstance(ai_model_config, dict) else {}
-        tc = trading_config if isinstance(trading_config, dict) else {}
-
-        # Accept multiple key names for forward/backward compatibility.
-        candidates = [
-            amc.get("entry_ai_filter_enabled"),
-            amc.get("entryAiFilterEnabled"),
-            amc.get("ai_filter_enabled"),
-            amc.get("aiFilterEnabled"),
-            amc.get("enable_ai_filter"),
-            amc.get("enableAiFilter"),
-            tc.get("entry_ai_filter_enabled"),
-            tc.get("ai_filter_enabled"),
-            tc.get("enable_ai_filter"),
-            tc.get("enableAiFilter"),
-        ]
-        for v in candidates:
-            if v is None:
-                continue
-            if isinstance(v, bool):
-                return bool(v)
-            s = str(v).strip().lower()
-            if s in ("1", "true", "yes", "y", "on", "enabled"):
-                return True
-            if s in ("0", "false", "no", "n", "off", "disabled"):
-                return False
-        return False
-
-    def _entry_ai_filter_allows(
-        self,
-        *,
-        strategy_id: int,
-        symbol: str,
-        signal_type: str,
-        ai_model_config: Optional[Dict[str, Any]],
-        trading_config: Optional[Dict[str, Any]],
-    ) -> Tuple[bool, Dict[str, Any]]:
-        """
-        Run internal AI analysis and decide whether an entry signal is allowed.
-
-        Returns:
-          (allowed, info)
-          - allowed: True -> proceed; False -> hold (reject open)
-          - info: {ai_decision, reason, analysis_error?}
-        """
-        amc = ai_model_config if isinstance(ai_model_config, dict) else {}
-        tc = trading_config if isinstance(trading_config, dict) else {}
-
-        # Market for AnalysisService. Live trading executor is Crypto-focused.
-        market = str(
-            amc.get("market") or amc.get("analysis_market") or "Crypto"
-        ).strip() or "Crypto"
-
-        # Optional model override (OpenRouter model id)
-        model = (
-            amc.get("model") or amc.get("openrouter_model")
-            or amc.get("openrouterModel") or None
-        )
-        model = str(model).strip() if model else None
-
-        # Prefer zh-CN for local UI; can be overridden.
-        language = (
-            amc.get("language") or amc.get("lang")
-            or tc.get("language") or "zh-CN"
-        )
-        language = str(language or "zh-CN")
-
-        try:
-            # 使用新的 FastAnalysisService (单次LLM调用，更快更稳定)
-            from app.services.fast_analysis import get_fast_analysis_service
-
-            service = get_fast_analysis_service()
-            result = service.analyze(market, symbol, language, model=model)
-
-            if isinstance(result, dict) and result.get("error"):
-                err_msg = str(result.get("error") or "")
-                return False, {
-                    "ai_decision": "",
-                    "reason": "analysis_error",
-                    "analysis_error": err_msg,
-                }
-
-            # FastAnalysisService 直接返回 decision 字段
-            ai_dec = str(result.get("decision", "")).strip().upper()
-            if not ai_dec or ai_dec not in ("BUY", "SELL", "HOLD"):
-                return False, {"ai_decision": ai_dec, "reason": "missing_ai_decision"}
-
-            expected = "BUY" if signal_type == "open_long" else "SELL"
-            confidence = result.get("confidence", 50)
-            summary = result.get("summary", "")
-
-            info = {"ai_decision": ai_dec, "confidence": confidence, "summary": summary}
-            if ai_dec == expected:
-                return True, {**info, "reason": "match"}
-            if ai_dec == "HOLD":
-                return False, {**info, "reason": "ai_hold"}
-            return False, {**info, "reason": "direction_mismatch"}
-        except Exception as e:
-            return False, {"ai_decision": "", "reason": "analysis_exception", "analysis_error": str(e)}
-
-    def _extract_ai_trade_decision(self, analysis_result: Any) -> str:
-        """
-        Normalize AI analysis output into one of: BUY / SELL / HOLD / "".
-        We primarily look at final_decision.decision, with fallbacks.
-        """
-        if not isinstance(analysis_result, dict):
-            return ""
-
-        def _pick(*paths: str) -> str:
-            for p in paths:
-                cur: Any = analysis_result
-                ok = True
-                for k in p.split("."):
-                    if not isinstance(cur, dict):
-                        ok = False
-                        break
-                    cur = cur.get(k)
-                if ok and cur is not None:
-                    s = str(cur).strip()
-                    if s:
-                        return s
-            return ""
-
-        raw = _pick("final_decision.decision", "trader_decision.decision", "decision", "final.decision")
-        s = raw.strip().upper()
-        if not s:
-            return ""
-
-        # Common variants / synonyms
-        if "BUY" in s or s == "LONG" or "LONG" in s:
-            return "BUY"
-        if "SELL" in s or s == "SHORT" or "SHORT" in s:
-            return "SELL"
-        if "HOLD" in s or "WAIT" in s or "NEUTRAL" in s:
-            return "HOLD"
-        return s if s in ("BUY", "SELL", "HOLD") else ""
 
     def _should_rebalance(self, strategy_id: int, rebalance_frequency: str) -> bool:
         """检查是否应该调仓（执行调度逻辑）。数据由 DataHandler 提供。"""
