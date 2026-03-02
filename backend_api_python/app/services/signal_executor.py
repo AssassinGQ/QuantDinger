@@ -94,6 +94,45 @@ class SignalExecutor:
         )
         return False
 
+    def _calculate_target_weight_amount(
+        self,
+        signal: Dict[str, Any],
+        sig: str,
+        current_price: float,
+        current_positions: List[Dict[str, Any]],
+        available_capital: float,
+        market_type: str,
+        leverage: float,
+    ) -> tuple[float, str]:
+        target_weight = signal.get("target_weight")
+        target_ratio = to_ratio(target_weight, default=0.0)
+        if market_type == "spot":
+            target_amount = available_capital * target_ratio / current_price
+        else:
+            target_amount = (
+                available_capital * target_ratio * leverage
+            ) / current_price
+
+        pos_side = "long" if "long" in sig else "short"
+        pos = next(
+            (
+                p for p in current_positions
+                if (p.get("side") or "").strip().lower() == pos_side
+            ),
+            None,
+        )
+        old_size = float(pos.get("size") or 0.0) if pos else 0.0
+
+        if target_amount > old_size + 1e-8:
+            return target_amount - old_size, f"open_{pos_side}" if old_size == 0 else f"add_{pos_side}"
+
+        if target_amount < old_size - 1e-8:
+            if target_amount <= old_size * 0.001:
+                return old_size, f"close_{pos_side}"
+            return old_size - target_amount, f"reduce_{pos_side}"
+
+        return 0.0, signal.get("type", "")
+
     def _calculate_order_amount(
         self,
         strategy_ctx: Dict[str, Any],
@@ -121,6 +160,13 @@ class SignalExecutor:
                 )
 
         available_capital = _get_available_capital(strategy_id, initial_capital)
+
+        # Handle target_weight absolute sizing (for cross_sectional_weighted)
+        if signal.get("target_weight") is not None:
+            return self._calculate_target_weight_amount(
+                signal, sig, current_price, current_positions,
+                available_capital, market_type, leverage
+            )
 
         if "open" in sig or "add" in sig:
             if position_size is None or float(position_size) <= 0:
@@ -248,26 +294,26 @@ class SignalExecutor:
         self,
         strategy_id: int,
         symbol: str,
-        sig: str,
         signal_type: str,
         amount: float,
         current_price: float,
         current_positions: List[Dict[str, Any]],
     ) -> None:
         """更新本地模拟持仓状态"""
-        if "open" in sig or "add" in sig:
+        actual_sig = signal_type.strip().lower()
+        if "open" in actual_sig or "add" in actual_sig:
             self._handle_open_or_add_position(
                 strategy_id, symbol, signal_type, amount, current_price, current_positions
             )
             return
 
-        if sig.startswith("reduce_"):
+        if actual_sig.startswith("reduce_"):
             self._handle_reduce_position(
                 strategy_id, symbol, signal_type, amount, current_price, current_positions
             )
             return
 
-        if "close" in sig:
+        if "close" in actual_sig:
             self._handle_close_position(
                 strategy_id, symbol, signal_type, amount, current_price, current_positions
             )
@@ -301,7 +347,11 @@ class SignalExecutor:
             take_profit_price = signal.get("take_profit_price")
 
             state = position_state(current_positions)
-            if not is_signal_allowed(state, signal_type):
+
+            # Target weight sizing inherently allows adding to an existing position,
+            # even if the original signal was "open_long" or "open_short",
+            # so we bypass the strict state machine check for target_weight signals
+            if signal.get("target_weight") is None and not is_signal_allowed(state, signal_type):
                 return False
 
             if market_type == "spot" and "short" in signal_type:
@@ -317,6 +367,7 @@ class SignalExecutor:
             )
 
             if amount <= 0:
+                logger.debug("Amount %s <= 0, returning False", amount)
                 return False
 
             order_result = self.pending_order_enqueuer.execute_exchange_order(
@@ -336,7 +387,7 @@ class SignalExecutor:
                 return True
 
             self._update_local_position(
-                strategy_id, symbol, sig, signal_type, amount,
+                strategy_id, symbol, signal_type, amount,
                 current_price, current_positions
             )
             return True

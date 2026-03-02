@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 from app.strategies.base import IStrategyLoop
 from app.strategies.single_symbol import SingleSymbolStrategy
 from app.strategies.cross_sectional import CrossSectionalStrategy
+from app.strategies.cross_sectional_weighted import CrossSectionalWeightedStrategy
 from app.strategies.strategy_config_loader import load_strategy
 
 
@@ -16,13 +17,15 @@ def create_strategy(cs_type: str) -> IStrategyLoop:
     根据策略类型创建策略实例
 
     Args:
-        cs_type: 'single' | 'cross_sectional'
+        cs_type: 'single' | 'cross_sectional' | 'cross_sectional_weighted'
 
     Returns:
         IStrategyLoop 实例
     """
     if cs_type == "cross_sectional":
         return CrossSectionalStrategy()
+    if cs_type == "cross_sectional_weighted":
+        return CrossSectionalWeightedStrategy()
     return SingleSymbolStrategy()
 
 

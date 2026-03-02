@@ -76,6 +76,7 @@ class CrossSectionalRunner(BaseStrategyRunner):
 
         ctx["strategy_id"] = strategy_id
         ctx["indicator_code"] = strategy.get("_indicator_code", "")
+        ctx["symbol_indicator_codes"] = strategy.get("_symbol_indicator_codes", {})
         ctx["current_time"] = current_time
 
         signals, keep_running, update_rebalance, _ = strat_instance.get_signals(ctx)
