@@ -230,7 +230,7 @@ def _get_symbol_strategies_from_db(user_id: Optional[int] = 1) -> Dict[str, Dict
 def compute_target_strategy_ids(regime: str, config: Optional[Dict] = None,
                                 symbol_strategies_override: Optional[Dict] = None,
                                 regime_per_symbol: Optional[Dict[str, str]] = None) -> Set[int]:
-    """根据 regime 和配置，计算应该运行的 strategy_id 集合（P0 二元模式）。
+    """根据 regime 和配置，计算应该运行的 strategy_id 集合。
     当 regime_per_symbol 非空时，每个 symbol 使用其自身的 regime。"""
     cfg = config or _load_config()
     regime_to_style = cfg.get("regime_to_style", {})
@@ -485,7 +485,8 @@ def _run_inner() -> None:
     config = _load_config()
     symbol_strategies = config.get("symbol_strategies") or {}
     # 策略启停使用默认主用户（regime 配置全局，策略仍按用户）
-    user_id = 1
+    user_id_raw = config.get("user_id")
+    user_id = int(user_id_raw) if user_id_raw is not None else 1
 
     if not symbol_strategies:
         symbol_strategies = _get_symbol_strategies_from_db(user_id=user_id)
@@ -493,6 +494,7 @@ def _run_inner() -> None:
         logger.debug("[regime_switch] no symbol_strategies (config or DB with regime_style), noop")
         return
 
+    # 1) 拉宏观
     macro = _fetch_macro_snapshot()
     regime_per_symbol = compute_regime_per_symbol(symbol_strategies, macro, config)
     regime_default = next(iter(regime_per_symbol.values()), "normal") if regime_per_symbol else "normal"
@@ -549,6 +551,7 @@ def _run_legacy(
     vix = macro["vix"]
     fg = macro["fear_greed"]
 
+    # 3) 算目标（使用合并后的 symbol_strategies：配置优先，否则来自 DB）
     target_ids = compute_target_strategy_ids(regime, config=config,
                                             symbol_strategies_override=symbol_strategies,
                                             regime_per_symbol=regime_per_symbol)

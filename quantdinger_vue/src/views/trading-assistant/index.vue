@@ -482,6 +482,20 @@
                     placeholder="ungrouped" />
                 </a-form-item>
 
+                <a-form-item :label="$t('trading-assistant.form.regimeStyle')">
+                  <a-select
+                    v-decorator="['regime_style', { initialValue: '' }]"
+                    :placeholder="$t('trading-assistant.placeholders.regimeStyle')"
+                    allow-clear
+                    style="width: 100%">
+                    <a-select-option value="">{{ $t('trading-assistant.form.regimeStyleNone') }}</a-select-option>
+                    <a-select-option value="conservative">{{ $t('trading-assistant.form.regimeStyleConservative') }}</a-select-option>
+                    <a-select-option value="balanced">{{ $t('trading-assistant.form.regimeStyleBalanced') }}</a-select-option>
+                    <a-select-option value="aggressive">{{ $t('trading-assistant.form.regimeStyleAggressive') }}</a-select-option>
+                  </a-select>
+                  <div class="form-item-hint">{{ $t('trading-assistant.form.regimeStyleHint') }}</div>
+                </a-form-item>
+
                 <!-- 策略类型选择 -->
                 <a-form-item :label="$t('trading-assistant.form.strategyType')">
                   <a-radio-group
@@ -2847,7 +2861,8 @@ export default {
           adverse_reduce_max_times: (tc.adverse_reduce_max_times !== undefined) ? (tc.adverse_reduce_max_times || 0) : (adverseReduceObj ? (adverseReduceObj.maxTimes || 0) : 0),
           entry_pct: (tc.entry_pct === 0 || tc.entry_pct) ? tc.entry_pct : (posObj && posObj.entryPct ? posObj.entryPct : 100),
           // AI智能决策过滤
-          enable_ai_filter: aiFilterEnabled
+          enable_ai_filter: aiFilterEnabled,
+          regime_style: (tc.regime_style && ['conservative', 'balanced', 'aggressive'].includes(tc.regime_style)) ? tc.regime_style : ''
         })
 
         this.$nextTick(() => {
@@ -3868,7 +3883,8 @@ export default {
                 symbol_list: values.cs_strategy_type === 'cross_sectional' ? this.crossSectionalSymbols : undefined,
                 portfolio_size: values.cs_strategy_type === 'cross_sectional' ? (values.portfolio_size || 10) : undefined,
                 long_ratio: values.cs_strategy_type === 'cross_sectional' ? (values.long_ratio || 0.5) : undefined,
-                rebalance_frequency: values.cs_strategy_type === 'cross_sectional' ? (values.rebalance_frequency || 'daily') : undefined
+                rebalance_frequency: values.cs_strategy_type === 'cross_sectional' ? (values.rebalance_frequency || 'daily') : undefined,
+                regime_style: (values.regime_style && ['conservative', 'balanced', 'aggressive'].includes(values.regime_style)) ? values.regime_style : undefined
               }
             }
 
