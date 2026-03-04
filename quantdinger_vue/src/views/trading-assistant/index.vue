@@ -398,6 +398,32 @@
             <!-- 指标策略：选择技术指标 -->
             <div v-if="strategyType === 'indicator'">
               <a-form :form="form" layout="vertical">
+                <!-- 策略类型选择 (移至顶部) -->
+                <a-form-item :label="$t('trading-assistant.form.strategyType')">
+                  <a-radio-group
+                    v-decorator="['cs_strategy_type', { initialValue: 'single' }]"
+                    @change="handleStrategyTypeChange">
+                    <a-radio value="single">{{ $t('trading-assistant.form.strategyTypeSingle') }}</a-radio>
+                    <a-radio value="cross_sectional">{{ $t('trading-assistant.form.strategyTypeCrossSectional') }}</a-radio>
+                    <a-radio value="cross_sectional_weighted">{{ $t('trading-assistant.form.strategyTypeRegime') }}</a-radio>
+                  </a-radio-group>
+                  <div class="form-item-hint">
+                    {{ $t('trading-assistant.form.strategyTypeHint') }}
+                  </div>
+                </a-form-item>
+
+                <a-form-item :label="$t('trading-assistant.form.strategyName')">
+                  <a-input
+                    v-decorator="['strategy_name', { rules: [{ required: true, message: $t('trading-assistant.validation.strategyNameRequired') }] }]"
+                    :placeholder="$t('trading-assistant.placeholders.inputStrategyName')" />
+                </a-form-item>
+
+                <a-form-item :label="$t('trading-assistant.form.displayGroup')">
+                  <a-input
+                    v-decorator="['display_group', { initialValue: 'ungrouped' }]"
+                    placeholder="ungrouped" />
+                </a-form-item>
+
                 <template v-if="form.getFieldValue('cs_strategy_type') !== 'cross_sectional_weighted'">
                   <a-form-item :label="$t('trading-assistant.form.indicator')">
                     <a-select
@@ -528,32 +554,6 @@
                 </template>
 
                 <a-divider />
-
-                <a-form-item :label="$t('trading-assistant.form.strategyName')">
-                  <a-input
-                    v-decorator="['strategy_name', { rules: [{ required: true, message: $t('trading-assistant.validation.strategyNameRequired') }] }]"
-                    :placeholder="$t('trading-assistant.placeholders.inputStrategyName')" />
-                </a-form-item>
-
-                <a-form-item :label="$t('trading-assistant.form.displayGroup')">
-                  <a-input
-                    v-decorator="['display_group', { initialValue: 'ungrouped' }]"
-                    placeholder="ungrouped" />
-                </a-form-item>
-
-                <!-- 策略类型选择 -->
-                <a-form-item :label="$t('trading-assistant.form.strategyType')">
-                  <a-radio-group
-                    v-decorator="['cs_strategy_type', { initialValue: 'single' }]"
-                    @change="handleStrategyTypeChange">
-                    <a-radio value="single">{{ $t('trading-assistant.form.strategyTypeSingle') }}</a-radio>
-                    <a-radio value="cross_sectional">{{ $t('trading-assistant.form.strategyTypeCrossSectional') }}</a-radio>
-                    <a-radio value="cross_sectional_weighted">{{ $t('trading-assistant.form.strategyTypeRegime') }}</a-radio>
-                  </a-radio-group>
-                  <div class="form-item-hint">
-                    {{ $t('trading-assistant.form.strategyTypeHint') }}
-                  </div>
-                </a-form-item>
 
                 <!-- 截面策略配置 -->
                 <template v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional'">
@@ -3762,7 +3762,6 @@ export default {
         // Step 1: basic config (strategy name/symbol/capital/leverage/market type/timeframe)
         // 编辑模式验证 symbol，创建模式验证 selectedSymbols（多选）
         const fieldsToValidate = [
-          'indicator_id',
           'strategy_name',
           'initial_capital',
           'market_type',
@@ -3770,8 +3769,14 @@ export default {
           'trade_direction',
           'timeframe'
         ]
+
+        const strategyType = this.form.getFieldValue('cs_strategy_type') || 'single'
+        if (strategyType !== 'cross_sectional_weighted') {
+          fieldsToValidate.push('indicator_id')
+        }
+
         // 编辑模式需要验证 symbol 字段
-        if (this.isEditMode) {
+        if (this.isEditMode && strategyType === 'single') {
           fieldsToValidate.push('symbol')
         }
         this.form.validateFields(fieldsToValidate, (err, values) => {
@@ -3779,16 +3784,31 @@ export default {
 
           // 创建模式：验证多币种选择
           if (!this.isEditMode) {
-            const strategyType = this.form.getFieldValue('cs_strategy_type') || 'single'
             if (strategyType === 'cross_sectional') {
               // 截面策略：验证截面策略标的列表
               if (!this.crossSectionalSymbols || this.crossSectionalSymbols.length === 0) {
                 this.$message.warning(this.$t('trading-assistant.validation.symbolsRequired'))
                 return
               }
+            } else if (strategyType === 'cross_sectional_weighted') {
+              // 加权截面策略（Regime策略）：验证动态指标标的列表
+              const validPairs = this.regimeSymbolIndicators.filter(item => item.symbol && item.indicator_id)
+              if (validPairs.length === 0) {
+                this.$message.warning(this.$t('trading-assistant.validation.symbolsRequired'))
+                return
+              }
             } else {
               // 单标的策略：验证多币种选择
               if (!this.selectedSymbols || this.selectedSymbols.length === 0) {
+                this.$message.warning(this.$t('trading-assistant.validation.symbolsRequired'))
+                return
+              }
+            }
+          } else {
+            // 编辑模式
+            if (strategyType === 'cross_sectional_weighted') {
+              const validPairs = this.regimeSymbolIndicators.filter(item => item.symbol && item.indicator_id)
+              if (validPairs.length === 0) {
                 this.$message.warning(this.$t('trading-assistant.validation.symbolsRequired'))
                 return
               }
