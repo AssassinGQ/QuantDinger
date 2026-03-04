@@ -366,11 +366,25 @@
             <a-tabs defaultActiveKey="positions">
               <a-tab-pane key="regime" :tab="$t('trading-assistant.form.strategyTypeRegime')" v-if="selectedStrategy.trading_config && selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted'">
                 <div style="padding: 16px;">
+                  <div style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 600; font-size: 15px;">Regime 权重状态</span>
+                    <a-button
+                      type="primary"
+                      icon="reload"
+                      :loading="forceRebalanceLoading"
+                      :disabled="selectedStrategy.status !== 'running'"
+                      @click="handleForceRebalance(selectedStrategy.id)"
+                    >{{ $t('trading-assistant.rebalanceStrategy') }}</a-button>
+                  </div>
                   <div v-if="selectedStrategy.status_info && selectedStrategy.status_info.current_regime" style="margin-bottom: 16px; display: flex; gap: 16px; flex-wrap: wrap; background: #fafafa; padding: 12px; border-radius: 4px;">
                     <div><strong>宏观环境状态:</strong> <a-tag color="blue">{{ selectedStrategy.status_info.current_regime }}</a-tag></div>
-                    <div><strong>VIX:</strong> {{ selectedStrategy.status_info.vix }}</div>
-                    <div><strong>VHSI:</strong> {{ selectedStrategy.status_info.vhsi }}</div>
-                    <div><strong>贪婪恐慌:</strong> {{ selectedStrategy.status_info.fear_greed }}</div>
+                    <div v-if="selectedStrategy.status_info.primary_indicator">
+                      <strong>主指标:</strong> {{ getMacroIndicatorLabel(selectedStrategy.status_info.primary_indicator) }}
+                    </div>
+                    <div v-for="item in getStatusMacroItems()" :key="item.key">
+                      <strong>{{ item.label }}:</strong>
+                      <span :style="item.key === selectedStrategy.status_info.primary_indicator ? 'font-weight:600;color:#1890ff' : ''">{{ item.value }}</span>
+                    </div>
                     <div><strong>策略总权重:</strong> {{ selectedStrategy.status_info.final_weight }}</div>
                     <div>
                       <strong>最终信号:</strong>
@@ -641,6 +655,36 @@
                       {{ $t('trading-assistant.form.regimeSymbolIndicatorsHint') }}
                     </div>
                   </a-form-item>
+
+                  <a-form-item :label="$t('trading-assistant.form.macroIndicators')">
+                    <a-checkbox-group v-model="regimeMacroIndicators" style="width: 100%;">
+                      <a-row>
+                        <a-col :span="8"><a-checkbox value="vix">VIX (美股波动率)</a-checkbox></a-col>
+                        <a-col :span="8"><a-checkbox value="vhsi">VHSI (港股波动率)</a-checkbox></a-col>
+                        <a-col :span="8"><a-checkbox value="fear_greed">Fear & Greed (贪婪恐慌)</a-checkbox></a-col>
+                        <a-col :span="8"><a-checkbox value="civix">CIVIX (A股波动率)</a-checkbox></a-col>
+                        <a-col :span="8"><a-checkbox value="dxy">DXY (美元指数)</a-checkbox></a-col>
+                      </a-row>
+                    </a-checkbox-group>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.macroIndicatorsHint') }}
+                    </div>
+                  </a-form-item>
+
+                  <a-form-item :label="$t('trading-assistant.form.primaryMacroIndicator')">
+                    <a-select
+                      v-model="regimePrimaryIndicator"
+                      style="width: 100%"
+                      :placeholder="$t('trading-assistant.placeholders.selectPrimaryMacro')"
+                      :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                      <a-select-option v-for="mi in regimeMacroIndicators" :key="mi" :value="mi">
+                        {{ getMacroIndicatorLabel(mi) }}
+                      </a-select-option>
+                    </a-select>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.primaryMacroIndicatorHint') }}
+                    </div>
+                  </a-form-item>
                 </template>
 
                 <a-divider />
@@ -712,19 +756,23 @@
                     </a-col>
                   </a-row>
 
-                  <a-form-item :label="$t('trading-assistant.form.rebalanceFrequency')">
-                    <a-select
-                      v-decorator="['rebalance_frequency', { initialValue: 'daily' }]"
-                      style="width: 100%">
-                      <a-select-option value="daily">{{ $t('trading-assistant.form.rebalanceDaily') }}</a-select-option>
-                      <a-select-option value="weekly">{{ $t('trading-assistant.form.rebalanceWeekly') }}</a-select-option>
-                      <a-select-option value="monthly">{{ $t('trading-assistant.form.rebalanceMonthly') }}</a-select-option>
-                    </a-select>
-                    <div class="form-item-hint">
-                      {{ $t('trading-assistant.form.rebalanceFrequencyHint') }}
-                    </div>
-                  </a-form-item>
                 </template>
+
+                <!-- Rebalance 周期：截面策略和 Regime 策略都需要 -->
+                <a-form-item
+                  v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional' || form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted'"
+                  :label="$t('trading-assistant.form.rebalanceFrequency')">
+                  <a-select
+                    v-decorator="['rebalance_frequency', { initialValue: 'daily' }]"
+                    style="width: 100%">
+                    <a-select-option value="daily">{{ $t('trading-assistant.form.rebalanceDaily') }}</a-select-option>
+                    <a-select-option value="weekly">{{ $t('trading-assistant.form.rebalanceWeekly') }}</a-select-option>
+                    <a-select-option value="monthly">{{ $t('trading-assistant.form.rebalanceMonthly') }}</a-select-option>
+                  </a-select>
+                  <div class="form-item-hint">
+                    {{ $t('trading-assistant.form.rebalanceFrequencyHint') }}
+                  </div>
+                </a-form-item>
 
                 <!-- 单标的策略：原有的标的选择 -->
                 <a-form-item
@@ -1759,14 +1807,9 @@ export default {
           scopedSlots: { customRender: 'signal' }
         },
         {
-          title: '指标权重',
-          dataIndex: 'indicator_weight',
-          key: 'indicator_weight'
-        },
-        {
-          title: '风格权重',
-          dataIndex: 'style_weight',
-          key: 'style_weight'
+          title: 'Regime 权重',
+          dataIndex: 'regime_weight',
+          key: 'regime_weight'
         },
         {
           title: '最终贡献',
@@ -2071,6 +2114,7 @@ export default {
     return {
       loading: false,
       loadingRecords: false,
+      forceRebalanceLoading: false,
       strategies: [],
       selectedStrategy: null,
       showFormModal: false,
@@ -2128,6 +2172,8 @@ export default {
       // 截面策略标的列表
       crossSectionalSymbols: [],
       regimeSymbolIndicators: [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }],
+      regimeMacroIndicators: ['vix', 'fear_greed'],
+      regimePrimaryIndicator: 'vix',
       // 策略组折叠状态
       collapsedGroups: {},
       // 分组模式: 'strategy' 或 'symbol'
@@ -2733,6 +2779,8 @@ export default {
       this.selectedSymbols = []
       this.crossSectionalSymbols = []
       this.regimeSymbolIndicators = [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }]
+      this.regimeMacroIndicators = ['vix', 'fear_greed']
+      this.regimePrimaryIndicator = 'vix'
 
       this.form.resetFields()
       this.form.setFieldsValue({
@@ -3002,6 +3050,9 @@ export default {
             rebalance_frequency: tc.rebalance_frequency || 'daily'
           })
 
+          this.regimeMacroIndicators = tc.macro_indicators || ['vix', 'fear_greed']
+          this.regimePrimaryIndicator = tc.primary_macro_indicator || 'vix'
+
           if (tc.symbol_indicators && typeof tc.symbol_indicators === 'object') {
             const pairs = []
             // If it's a cross_sectional_weighted regime strategy, symbol_indicators should be a dict of styles -> indId or styles -> [indId, ...]
@@ -3163,6 +3214,8 @@ export default {
       this.aiFilterEnabledUi = false
       this.crossSectionalSymbols = []
       this.regimeSymbolIndicators = [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }]
+      this.regimeMacroIndicators = ['vix', 'fear_greed']
+      this.regimePrimaryIndicator = 'vix'
 
       this.form.resetFields()
     },
@@ -3190,6 +3243,7 @@ export default {
       }
     },
     async handleForceRebalance (strategyId) {
+      this.forceRebalanceLoading = true
       try {
         const res = await forceRebalanceStrategy(strategyId)
         if (res.code === 1) {
@@ -3199,6 +3253,8 @@ export default {
         }
       } catch (error) {
         this.$message.error(error.message || 'Rebalance trigger error')
+      } finally {
+        this.forceRebalanceLoading = false
       }
     },
     toggleGroup (groupId) {
@@ -3372,6 +3428,31 @@ export default {
       }
       return names[style] || style
     },
+    getMacroIndicatorLabel (key) {
+      const labels = {
+        vix: 'VIX (美股波动率)',
+        vhsi: 'VHSI (港股波动率)',
+        fear_greed: 'Fear & Greed (贪婪恐慌)',
+        civix: 'CIVIX (A股波动率)',
+        dxy: 'DXY (美元指数)'
+      }
+      return labels[key] || key
+    },
+    getStatusMacroItems () {
+      if (!this.selectedStrategy || !this.selectedStrategy.status_info) return []
+      const si = this.selectedStrategy.status_info
+      const reserved = new Set([
+        'current_regime', 'primary_indicator', 'components',
+        'combined_weight', 'final_weight', 'final_signal'
+      ])
+      const items = []
+      for (const [key, val] of Object.entries(si)) {
+        if (reserved.has(key) || val == null || typeof val === 'object') continue
+        if (typeof val !== 'number') continue
+        items.push({ key, label: this.getMacroIndicatorLabel(key), value: val })
+      }
+      return items
+    },
     getRegimeIndicatorsData () {
       if (!this.selectedStrategy || !this.selectedStrategy.trading_config) return []
       const tc = this.selectedStrategy.trading_config
@@ -3408,8 +3489,7 @@ export default {
             style: style,
             indicatorName: indicator ? indicator.name : `ID: ${idStr}`,
             signal: compData.signal !== undefined ? compData.signal : '-',
-            indicator_weight: compData.indicator_weight !== undefined ? compData.indicator_weight : '-',
-            style_weight: compData.style_weight !== undefined ? compData.style_weight : '-',
+            regime_weight: compData.regime_weight !== undefined ? compData.regime_weight : '-',
             contribution: compData.contribution !== undefined ? compData.contribution : '-'
           })
         }
@@ -4233,7 +4313,9 @@ export default {
                     acc[style].push(parseInt(curr.indicator_id))
                   }
                   return acc
-                }, {}) : undefined
+                }, {}) : undefined,
+                macro_indicators: values.cs_strategy_type === 'cross_sectional_weighted' ? this.regimeMacroIndicators : undefined,
+                primary_macro_indicator: values.cs_strategy_type === 'cross_sectional_weighted' ? this.regimePrimaryIndicator : undefined
               }
             }
 

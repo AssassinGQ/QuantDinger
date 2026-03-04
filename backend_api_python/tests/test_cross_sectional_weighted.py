@@ -20,9 +20,9 @@ class TestCrossSectionalWeightedStrategy:
     def test_indicator_run(self):
         """Test basic execution of run_cross_sectional_weighted_indicator."""
         codes = {
-            "BTC": "weight=0.5\nsignal='long'",
-            "ETH": "weight=0.3\nsignal='short'",
-            "XRP": "weight=0.0\nsignal='flat'"
+            "BTC": "signal='long'",
+            "ETH": "signal='short'",
+            "XRP": "signal='flat'"
         }
         data = {
             "BTC": pd.DataFrame({"close": [1]}),
@@ -36,9 +36,9 @@ class TestCrossSectionalWeightedStrategy:
         assert "weights" in result
         assert "signals" in result
 
-        assert result["weights"]["BTC"] == 0.5
-        assert result["weights"]["ETH"] == 0.3
-        assert result["weights"]["XRP"] == 0.0
+        assert result["weights"]["BTC"] == 1
+        assert result["weights"]["ETH"] == 1
+        assert result["weights"]["XRP"] == 0
 
         assert result["signals"]["BTC"] == 1
         assert result["signals"]["ETH"] == -1
@@ -50,18 +50,12 @@ class TestCrossSectionalWeightedStrategy:
         signals = {"BTC": 1, "ETH": -1, "SOL": 0}
 
         current_positions = [
-            {"symbol": "BTC", "side": "long", "size": 1.0}, # Keep/Adjust
-            {"symbol": "ETH", "side": "long", "size": 1.0}, # Wrong side, should close
-            {"symbol": "SOL", "side": "short", "size": 1.0}, # Signal 0, should close
+            {"symbol": "BTC", "side": "long", "size": 1.0},
+            {"symbol": "ETH", "side": "long", "size": 1.0},
+            {"symbol": "SOL", "side": "short", "size": 1.0},
         ]
 
         result = generate_cross_sectional_weighted_signals(weights, signals, current_positions)
-
-        # We expect:
-        # 1. close ETH long
-        # 2. close SOL short
-        # 3. open BTC long with position_size=0.5
-        # 4. open ETH short with position_size=0.3
 
         assert len(result) == 4
         assert any(s["type"] == "close_long" and s["symbol"] == "ETH" for s in result)
@@ -76,67 +70,71 @@ class TestCrossSectionalWeightedStrategy:
         assert open_eth["target_weight"] == 0.3
 
     def test_indicator_run_nested_multiple(self):
-        """Test indicator run with multiple indicators for a single style (nested format)."""
+        """Test nested format: multiple indicators per style, regime_weight evenly split."""
         codes = {
             "A": {
-                "aggressive": ["weight=0.6\nsignal=1", "weight=0.4\nsignal=1"],
-                "conservative": ["weight=1\nsignal=-1"]
+                "aggressive": ["signal=1", "signal=1"],
+                "conservative": ["signal=-1"]
             }
         }
         data = {"A": pd.DataFrame({"vix": [10], "vhsi": [10], "fear_greed": [80], "c": [1]})}
-        # Suppose target weights for low_vol (vix=10, fg=80) are:
-        # conservative: 0.1, aggressive: 0.6
-        # The aggressive style has 2 codes, weight is evenly split: 0.3 each
-        # Code1: weight 0.6 * 0.3 = 0.18 (long -> +0.18)
-        # Code2: weight 0.4 * 0.3 = 0.12 (long -> +0.12)
-        # Conservative has 1 code: weight 1 * 0.1 = 0.1 (short -> -0.1)
-        # Total combined: +0.18 + 0.12 - 0.1 = +0.2 (long)
+        # low_vol regime (vix=10 < 15): aggressive=0.6, conservative=0.1
+        # aggressive has 2 codes => regime_weight = 0.6/2 = 0.3 each
+        # Code1: signal=1 * 0.3 = +0.3
+        # Code2: signal=1 * 0.3 = +0.3
+        # conservative has 1 code => regime_weight = 0.1
+        # Code3: signal=-1 * 0.1 = -0.1
+        # combined = +0.3 + 0.3 - 0.1 = +0.5
         res = run_cross_sectional_weighted_indicator(codes, data, {})
         assert res["signals"]["A"] == 1
-        assert abs(res["weights"]["A"] - 0.2) < 1e-6
+        assert abs(res["weights"]["A"] - 0.5) < 1e-6
+
+    def test_indicator_run_with_macro_config(self):
+        """Test that custom macro_indicators and primary_macro_indicator are respected."""
+        codes = {
+            "A": {
+                "aggressive": "signal=1",
+                "conservative": "signal=-1"
+            }
+        }
+        # primary_macro_indicator=fear_greed, fg=15 < fg_extreme_fear(20) => panic
+        data = {"A": pd.DataFrame({"vix": [12], "fear_greed": [15], "c": [1]})}
+        tc = {
+            "macro_indicators": ["vix", "fear_greed"],
+            "primary_macro_indicator": "fear_greed"
+        }
+        res = run_cross_sectional_weighted_indicator(codes, data, tc)
+        meta = res.get("metadata") or {}
+        assert meta.get("primary_indicator") == "fear_greed"
+        assert meta.get("current_regime") == "panic"
+        # Panic regime: conservative=0.8, aggressive=0.0
+        # Only conservative contributes: signal=-1 * 0.8 = -0.8
+        assert res["signals"]["A"] == -1
+        assert abs(res["weights"]["A"] - 0.8) < 1e-6
 
     def test_indicator_run_edge_cases(self):
-        """Test indicator run with multiple indicators for a single style (nested format)."""
-        codes = {
-            "A": {
-                "aggressive": ["weight=0.6\nsignal=1", "weight=0.4\nsignal=1"],
-                "conservative": ["weight=1\nsignal=-1"]
-            }
-        }
-        data = {"A": pd.DataFrame({"vix": [10], "vhsi": [10], "fear_greed": [80], "c": [1]})}
-        # Suppose target weights for low_vol (vix=10, fg=80) are:
-        # conservative: 0.1, aggressive: 0.6
-        # The aggressive style has 2 codes, weight is evenly split: 0.3 each
-        # Code1: weight 0.6 * 0.3 = 0.18 (long -> +0.18)
-        # Code2: weight 0.4 * 0.3 = 0.12 (long -> +0.12)
-        # Conservative has 1 code: weight 1 * 0.1 = 0.1 (short -> -0.1)
-        # Total combined: +0.18 + 0.12 - 0.1 = +0.2 (long)
-        res = run_cross_sectional_weighted_indicator(codes, data, {})
-        assert res["signals"]["A"] == 1
-        assert abs(res["weights"]["A"] - 0.2) < 1e-6
-        """Test indicator run edge cases, missing data, and invalid codes."""
-        codes = {"A": "weight=1\nsignal=1", "B": "bad code"}
+        """Test indicator run edge cases: missing data, invalid codes, unknown signal."""
+        codes = {"A": "signal=1", "B": "bad code"}
         data = {
-            "A": pd.DataFrame(), # Empty df -> lines 42
-            "B": pd.DataFrame({"c":[1]}), # Exception -> lines 69-71
-            "C": pd.DataFrame({"c":[1]})  # No code -> lines 46-47
+            "A": pd.DataFrame(),
+            "B": pd.DataFrame({"c": [1]}),
+            "C": pd.DataFrame({"c": [1]})
         }
         res = run_cross_sectional_weighted_indicator(codes, data, {})
-        # We expect B to return weight 0.0 because of the exception handler fallback
-        assert res["weights"] == {"B": 0.0}
+        # A: empty df => skipped; B: exception => signal=0, weight=0; C: no code => skipped
+        assert res["weights"] == {"B": 0}
         assert res["signals"] == {"B": 0}
 
-        # Test unexpected signal string
-        codes2 = {"A": "weight=1\nsignal='unknown'"}
-        data2 = {"A": pd.DataFrame({"c":[1]})}
+        # Unknown signal string defaults to 0
+        codes2 = {"A": "signal='unknown'"}
+        data2 = {"A": pd.DataFrame({"c": [1]})}
         res2 = run_cross_sectional_weighted_indicator(codes2, data2, {})
         assert res2["signals"]["A"] == 0
 
     def test_generate_signals_edge_cases(self):
         """Test edge cases when generating signals like wrong side and zeros."""
-        weights = {"A": 0.5, "B": 0.0, "C": -1} # <= 0 weight -> lines 59
+        weights = {"A": 0.5, "B": 0.0, "C": -1}
         signals = {"A": 1, "B": 1, "C": 1}
-        # expected_signal=1, side='short' -> line 49
         current = [{"symbol": "A", "side": "short", "size": 1.0}]
         res = generate_cross_sectional_weighted_signals(weights, signals, current)
 
@@ -144,19 +142,17 @@ class TestCrossSectionalWeightedStrategy:
         assert res[0]["type"] == "close_short" and res[0]["symbol"] == "A"
         assert res[1]["type"] == "open_long" and res[1]["symbol"] == "A"
 
-        # expected_signal=-1, side='long'
         weights2 = {"A": 0.5}
         signals2 = {"A": -1}
         current2 = [{"symbol": "A", "side": "long", "size": 1.0}]
         res2 = generate_cross_sectional_weighted_signals(weights2, signals2, current2)
         assert len(res2) == 2
-        assert res2[0]["type"] == "close_long" and res[0]["symbol"] == "A"
+        assert res2[0]["type"] == "close_long" and res2[0]["symbol"] == "A"
 
     def test_strategy_class_edge_cases(self):
         """Test edge cases in CrossSectionalWeightedStrategy."""
         strat = CrossSectionalWeightedStrategy()
 
-        # Missing data
         res1 = strat.get_signals({"data": {}})
         assert res1 == ([], True, False, None)
 
@@ -167,19 +163,18 @@ class TestCrossSectionalWeightedStrategy:
             "app.strategies.cross_sectional_weighted.generate_cross_sectional_weighted_signals"
         )
 
-        # Indicator returned empty
         with patch(mock_indicator) as mock_run:
             mock_run.return_value = {}
             res2 = strat.get_signals({"data": {"A": "df"}})
             assert res2 == ([], True, False, None)
 
-        # Signals empty
         with patch(mock_indicator) as mock_run:
             mock_run.return_value = {"weights": {}, "signals": {}}
             with patch(mock_gen_signals) as mock_gen:
                 mock_gen.return_value = []
                 res3 = strat.get_signals({"data": {"A": "df"}})
                 assert res3 == ([], True, True, None)
+
         strat = CrossSectionalWeightedStrategy()
         assert strat.need_macro_info() is True
 
