@@ -3956,8 +3956,19 @@ export default {
             }
 
             // Indicator strategy submit logic (local mode)
-            const indicatorIdStr = String(values.indicator_id)
-            const indicator = this.availableIndicators.find(ind => String(ind.id) === indicatorIdStr)
+            let indicator = null
+            const strategyType = values.cs_strategy_type || 'single'
+            if (strategyType === 'cross_sectional_weighted') {
+              // 对于 Regime 策略，取列表里第一个有效的指标作为主 indicator_config 以通过基础校验
+              const firstValid = this.regimeSymbolIndicators.find(item => item.indicator_id)
+              if (firstValid) {
+                indicator = this.availableIndicators.find(ind => String(ind.id) === String(firstValid.indicator_id))
+              }
+            } else {
+              const indicatorIdStr = String(values.indicator_id)
+              indicator = this.availableIndicators.find(ind => String(ind.id) === indicatorIdStr)
+            }
+
             if (!indicator) {
               this.$message.error(this.$t('trading-assistant.validation.indicatorRequired'))
               this.saving = false

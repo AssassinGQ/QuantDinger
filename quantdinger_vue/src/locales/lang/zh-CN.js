@@ -1238,7 +1238,7 @@ const locale = {
   'trading-assistant.form.strategyTypeSingle': '单标的策略',
   'trading-assistant.form.strategyTypeCrossSectional': '截面策略',
   'trading-assistant.form.strategyTypeRegime': 'Regime 策略 (加权截面)',
-  'trading-assistant.form.strategyTypeHint': '单标的策略：针对单个标的进行交易；截面策略：同时管理多个标的的组合',
+  'trading-assistant.form.strategyTypeHint': '单标的策略：针对单个标的进行交易；截面策略：同时管理多个标的的组合；Regime 策略：根据宏观因子动态切换多风格指标',
   'trading-assistant.form.regimeSymbolIndicators': 'Regime 标的指标配置',
   'trading-assistant.form.addRegimePair': '添加标的与指标',
   'trading-assistant.form.regimeSymbolIndicatorsHint': '为 Regime 加权截面策略选择参与的标的及其对应的交易指标。',

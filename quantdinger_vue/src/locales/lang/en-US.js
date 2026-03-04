@@ -1334,7 +1334,7 @@ const locale = {
   'trading-assistant.form.strategyTypeSingle': 'Single Symbol Strategy',
   'trading-assistant.form.strategyTypeCrossSectional': 'Cross-Sectional Strategy',
   'trading-assistant.form.strategyTypeRegime': 'Regime Strategy',
-  'trading-assistant.form.strategyTypeHint': 'Single Symbol: Trade a single symbol; Cross-Sectional: Manage a portfolio of multiple symbols',
+  'trading-assistant.form.strategyTypeHint': 'Single Symbol: Trade a single symbol; Cross-Sectional: Manage a portfolio; Regime: Dynamic switch styles based on macro factors',
   'trading-assistant.form.regimeSymbolIndicators': 'Regime Target Indicators',
   'trading-assistant.form.addRegimePair': 'Add Target & Indicator',
   'trading-assistant.form.regimeSymbolIndicatorsHint': 'Select targets and their corresponding indicators for the regime-weighted strategy.',
