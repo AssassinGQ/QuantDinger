@@ -2691,6 +2691,8 @@ export default {
       this.aiFilterEnabledUi = false
       this.selectedMarketCategory = 'Crypto'
       this.selectedSymbols = []
+      this.crossSectionalSymbols = []
+      this.regimeSymbolIndicators = [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }]
 
       this.form.resetFields()
       this.form.setFieldsValue({
@@ -3119,6 +3121,8 @@ export default {
       this.trailingEnabledUi = false
       this.entryPctMaxUi = 100
       this.aiFilterEnabledUi = false
+      this.crossSectionalSymbols = []
+      this.regimeSymbolIndicators = [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }]
 
       this.form.resetFields()
     },
