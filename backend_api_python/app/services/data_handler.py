@@ -259,6 +259,14 @@ class DataHandler:
                         cursor.execute("ALTER TABLE qd_strategies_trading ADD COLUMN status_info TEXT DEFAULT ''")
                     db.commit()
 
+                if "last_rebalance_at" not in col_names_strat and col_names_strat:
+                    logger.info("Adding last_rebalance_at column to qd_strategies_trading (%s)...", db_type)
+                    if db_type == "postgresql":
+                        cursor.execute("ALTER TABLE qd_strategies_trading ADD COLUMN IF NOT EXISTS last_rebalance_at TIMESTAMP")
+                    else:
+                        cursor.execute("ALTER TABLE qd_strategies_trading ADD COLUMN last_rebalance_at TEXT")
+                    db.commit()
+
                 cursor.close()
         except Exception as e:
             logger.error("Failed to check/ensure DB columns: %s", e)

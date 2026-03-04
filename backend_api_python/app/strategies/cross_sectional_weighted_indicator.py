@@ -1,6 +1,7 @@
 """
 执行 Regime 截面策略的指标代码
 """
+import math
 from typing import Any, Dict
 
 import pandas as pd
@@ -39,12 +40,15 @@ def _read_macro_values(
     df: pd.DataFrame,
     macro_indicators: list,
 ) -> Dict[str, float]:
-    """从 df 最后一行读取指定的宏观指标值。"""
+    """从 df 最后一行读取指定的宏观指标值，nan 回退到默认值。"""
     defaults = {"vix": 18.0, "vhsi": 22.0, "civix": 18.0, "dxy": 100.0, "fear_greed": 50.0}
     last_row = df.iloc[-1]
     result = {}
     for key in macro_indicators:
-        result[key] = float(last_row.get(key, defaults.get(key, 0.0)))
+        val = last_row.get(key, None)
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            val = defaults.get(key, 0.0)
+        result[key] = float(val)
     return result
 
 
