@@ -3419,7 +3419,7 @@ export default {
       const si = this.selectedStrategy.status_info
       const reserved = new Set([
         'current_regime', 'primary_indicator', 'components',
-        'combined_weight'
+        'combined_weight', 'final_weight', 'final_signal'
       ])
       const items = []
       for (const [key, val] of Object.entries(si)) {
