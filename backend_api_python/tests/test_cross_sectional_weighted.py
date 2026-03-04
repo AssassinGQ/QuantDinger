@@ -75,7 +75,45 @@ class TestCrossSectionalWeightedStrategy:
         assert open_eth["position_size"] == 0.3
         assert open_eth["target_weight"] == 0.3
 
+    def test_indicator_run_nested_multiple(self):
+        """Test indicator run with multiple indicators for a single style (nested format)."""
+        codes = {
+            "A": {
+                "aggressive": ["weight=0.6\nsignal=1", "weight=0.4\nsignal=1"],
+                "conservative": ["weight=1\nsignal=-1"]
+            }
+        }
+        data = {"A": pd.DataFrame({"vix": [10], "vhsi": [10], "fear_greed": [80], "c": [1]})}
+        # Suppose target weights for low_vol (vix=10, fg=80) are:
+        # conservative: 0.1, aggressive: 0.6
+        # The aggressive style has 2 codes, weight is evenly split: 0.3 each
+        # Code1: weight 0.6 * 0.3 = 0.18 (long -> +0.18)
+        # Code2: weight 0.4 * 0.3 = 0.12 (long -> +0.12)
+        # Conservative has 1 code: weight 1 * 0.1 = 0.1 (short -> -0.1)
+        # Total combined: +0.18 + 0.12 - 0.1 = +0.2 (long)
+        res = run_cross_sectional_weighted_indicator(codes, data, {})
+        assert res["signals"]["A"] == 1
+        assert abs(res["weights"]["A"] - 0.2) < 1e-6
+
     def test_indicator_run_edge_cases(self):
+        """Test indicator run with multiple indicators for a single style (nested format)."""
+        codes = {
+            "A": {
+                "aggressive": ["weight=0.6\nsignal=1", "weight=0.4\nsignal=1"],
+                "conservative": ["weight=1\nsignal=-1"]
+            }
+        }
+        data = {"A": pd.DataFrame({"vix": [10], "vhsi": [10], "fear_greed": [80], "c": [1]})}
+        # Suppose target weights for low_vol (vix=10, fg=80) are:
+        # conservative: 0.1, aggressive: 0.6
+        # The aggressive style has 2 codes, weight is evenly split: 0.3 each
+        # Code1: weight 0.6 * 0.3 = 0.18 (long -> +0.18)
+        # Code2: weight 0.4 * 0.3 = 0.12 (long -> +0.12)
+        # Conservative has 1 code: weight 1 * 0.1 = 0.1 (short -> -0.1)
+        # Total combined: +0.18 + 0.12 - 0.1 = +0.2 (long)
+        res = run_cross_sectional_weighted_indicator(codes, data, {})
+        assert res["signals"]["A"] == 1
+        assert abs(res["weights"]["A"] - 0.2) < 1e-6
         """Test indicator run edge cases, missing data, and invalid codes."""
         codes = {"A": "weight=1\nsignal=1", "B": "bad code"}
         data = {

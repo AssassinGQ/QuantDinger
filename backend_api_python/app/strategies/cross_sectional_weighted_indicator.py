@@ -39,7 +39,7 @@ def _execute_indicator_code(
 
 
 def _process_nested_config(
-    ind_config: Dict[str, str],
+    ind_config: Dict[str, Any],
     df: pd.DataFrame,
     global_env: Dict[str, Any],
     regime_cfg: Dict[str, Any],
@@ -60,13 +60,20 @@ def _process_nested_config(
 
     combined_weight = 0.0
 
-    for style, code in ind_config.items():
+    for style, code_or_codes in ind_config.items():
         target_ratio = style_weights.get(style, 0.0)
         if target_ratio <= 0.0:
             continue
 
-        ind_weight, sig_val = _execute_indicator_code(code, global_env, df)
-        combined_weight += sig_val * ind_weight * target_ratio
+        codes = code_or_codes if isinstance(code_or_codes, list) else [code_or_codes]
+        if not codes:
+            continue
+            
+        style_weight = target_ratio / len(codes)
+
+        for code in codes:
+            ind_weight, sig_val = _execute_indicator_code(code, global_env, df)
+            combined_weight += sig_val * ind_weight * style_weight
 
     final_weight = abs(combined_weight)
     final_signal = 1 if combined_weight > 0 else (-1 if combined_weight < 0 else 0)

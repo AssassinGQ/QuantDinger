@@ -4075,7 +4075,10 @@ export default {
                 symbol_indicators: values.cs_strategy_type === 'cross_sectional_weighted' ? this.regimeSymbolIndicators.reduce((acc, curr) => {
                   if (curr.indicator_id) {
                     const style = curr.regime_style || 'default'
-                    acc[style] = parseInt(curr.indicator_id)
+                    if (!acc[style]) {
+                      acc[style] = []
+                    }
+                    acc[style].push(parseInt(curr.indicator_id))
                   }
                   return acc
                 }, {}) : undefined

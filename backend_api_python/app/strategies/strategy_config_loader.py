@@ -149,7 +149,7 @@ def _normalize_indicator_code(strategy: Dict[str, Any], dh: 'DataHandler') -> bo
 
 def _parse_symbol_indicators(trading_config: Dict[str, Any], dh: Any) -> Dict[str, Any]:
     """Parse symbol_indicators supporting both flat and nested dict formats."""
-    # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches,too-many-nested-blocks
     symbol_indicator_codes = {}
     symbol_indicators = trading_config.get("symbol_indicators", {})
     if not isinstance(symbol_indicators, dict) or not symbol_indicators:
@@ -162,13 +162,25 @@ def _parse_symbol_indicators(trading_config: Dict[str, Any], dh: Any) -> Dict[st
     is_flat_dict = not any(isinstance(v, dict) for v in symbol_indicators.values())
     if strategy_type == "cross_sectional_weighted" and symbol and is_flat_dict:
         nested_codes = {}
-        for style, ind in symbol_indicators.items():
-            if isinstance(ind, int):
-                code = dh.get_indicator_code(ind)
-                if code:
-                    nested_codes[style] = code
-            elif isinstance(ind, str):
-                nested_codes[style] = ind
+        for style, ind_or_list in symbol_indicators.items():
+            if isinstance(ind_or_list, list):
+                codes = []
+                for ind in ind_or_list:
+                    if isinstance(ind, int):
+                        code = dh.get_indicator_code(ind)
+                        if code:
+                            codes.append(code)
+                    elif isinstance(ind, str):
+                        codes.append(ind)
+                if codes:
+                    nested_codes[style] = codes
+            else:
+                if isinstance(ind_or_list, int):
+                    code = dh.get_indicator_code(ind_or_list)
+                    if code:
+                        nested_codes[style] = [code]
+                elif isinstance(ind_or_list, str):
+                    nested_codes[style] = [ind_or_list]
         if nested_codes:
             symbol_indicator_codes[symbol] = nested_codes
         return symbol_indicator_codes
@@ -177,23 +189,34 @@ def _parse_symbol_indicators(trading_config: Dict[str, Any], dh: Any) -> Dict[st
     for sym, ind_or_dict in symbol_indicators.items():
         if isinstance(ind_or_dict, dict):
             nested_codes = {}
-            for style, ind in ind_or_dict.items():
-                if isinstance(ind, int):
-                    code = dh.get_indicator_code(ind)
-                    if code:
-                        nested_codes[style] = code
-                elif isinstance(ind, str):
-                    nested_codes[style] = ind
+            for style, ind_or_list in ind_or_dict.items():
+                if isinstance(ind_or_list, list):
+                    codes = []
+                    for ind in ind_or_list:
+                        if isinstance(ind, int):
+                            code = dh.get_indicator_code(ind)
+                            if code:
+                                codes.append(code)
+                        elif isinstance(ind, str):
+                            codes.append(ind)
+                    if codes:
+                        nested_codes[style] = codes
+                else:
+                    if isinstance(ind_or_list, int):
+                        code = dh.get_indicator_code(ind_or_list)
+                        if code:
+                            nested_codes[style] = [code]
+                    elif isinstance(ind_or_list, str):
+                        nested_codes[style] = [ind_or_list]
             if nested_codes:
                 symbol_indicator_codes[sym] = nested_codes
         else:
-            ind = ind_or_dict
-            if isinstance(ind, int):
-                code = dh.get_indicator_code(ind)
+            if isinstance(ind_or_dict, int):
+                code = dh.get_indicator_code(ind_or_dict)
                 if code:
                     symbol_indicator_codes[sym] = code
-            elif isinstance(ind, str):
-                symbol_indicator_codes[sym] = ind
+            elif isinstance(ind_or_dict, str):
+                symbol_indicator_codes[sym] = ind_or_dict
     return symbol_indicator_codes
 
 
