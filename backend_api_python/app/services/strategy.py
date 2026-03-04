@@ -568,15 +568,20 @@ class StrategyService:
         market_type = (trading_config or {}).get('market_type') or 'swap'
 
         # Cross-sectional strategy fields (store in trading_config to avoid DB schema changes)
-        cs_strategy_type = payload.get('cs_strategy_type') or trading_config.get('cs_strategy_type') or 'single'
+        cs_strategy_type = (
+            payload.get('cs_strategy_type')
+            or trading_config.get('strategy_type')
+            or trading_config.get('cs_strategy_type')
+            or 'single'
+        )
         symbol_list = payload.get('symbol_list') or trading_config.get('symbol_list') or []
         portfolio_size = payload.get('portfolio_size') or trading_config.get('portfolio_size') or 10
         long_ratio = float(payload.get('long_ratio') or trading_config.get('long_ratio') or 0.5)
         rebalance_frequency = payload.get('rebalance_frequency') or trading_config.get('rebalance_frequency') or 'daily'
 
         # Store cross-sectional config in trading_config
-        if cs_strategy_type == 'cross_sectional':
-            trading_config['cs_strategy_type'] = cs_strategy_type
+        if cs_strategy_type in ('cross_sectional', 'cross_sectional_weighted'):
+            trading_config['strategy_type'] = cs_strategy_type
             trading_config['symbol_list'] = symbol_list
             trading_config['portfolio_size'] = portfolio_size
             trading_config['long_ratio'] = long_ratio
@@ -792,7 +797,7 @@ class StrategyService:
 
         # Handle cross-sectional strategy config updates
         if payload.get('cs_strategy_type') is not None:
-            trading_config['cs_strategy_type'] = payload.get('cs_strategy_type')
+            trading_config['strategy_type'] = payload.get('cs_strategy_type')
         if payload.get('symbol_list') is not None:
             trading_config['symbol_list'] = payload.get('symbol_list')
         if payload.get('portfolio_size') is not None:

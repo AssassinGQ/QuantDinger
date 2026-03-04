@@ -1027,7 +1027,7 @@ def get_system_strategies():
             cs_type = ''
             symbol_list = []
             if isinstance(trading_config, dict):
-                cs_type = trading_config.get('cs_strategy_type') or 'single'
+                cs_type = trading_config.get('strategy_type') or trading_config.get('cs_strategy_type') or 'single'
                 symbol_list = trading_config.get('symbol_list') or []
 
             # Format timestamps

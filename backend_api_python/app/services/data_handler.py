@@ -5,6 +5,7 @@ Executor 调用 DataHandler 获取 InputContext、执行 DB 读写。
 """
 
 import json
+import math
 import os
 import time
 from datetime import datetime
@@ -269,11 +270,23 @@ class DataHandler:
             (status, strategy_id),
         )
 
+    @staticmethod
+    def _sanitize_for_json(obj: Any) -> Any:
+        """Replace float NaN/Inf with None so json.dumps produces valid JSON."""
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        if isinstance(obj, dict):
+            return {k: DataHandler._sanitize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [DataHandler._sanitize_for_json(v) for v in obj]
+        return obj
+
     def update_strategy_status_info(self, strategy_id: int, status_info: Dict[str, Any]) -> None:
         """更新策略的运行时状态信息 (如实时权重等)"""
+        safe = self._sanitize_for_json(status_info)
         self._execute_query(
             "UPDATE qd_strategies_trading SET status_info = %s WHERE id = %s",
-            (json.dumps(status_info, ensure_ascii=False), strategy_id),
+            (json.dumps(safe, ensure_ascii=False), strategy_id),
         )
 
     def get_strategy_row(self, strategy_id: int) -> Optional[Dict[str, Any]]:

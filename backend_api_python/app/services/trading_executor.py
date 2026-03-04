@@ -238,7 +238,8 @@ class TradingExecutor:
                 logger.error("Strategy %s not found or invalid", strategy_id)
                 return
             exchange = None  # 信号模式下无需真实连接
-            cs_type = (strategy.get("trading_config") or {}).get("cs_strategy_type", "single")
+            tc = strategy.get("trading_config") or {}
+            cs_type = tc.get("strategy_type") or tc.get("cs_strategy_type") or "single"
 
             runner = create_runner(
                 cs_type=cs_type,

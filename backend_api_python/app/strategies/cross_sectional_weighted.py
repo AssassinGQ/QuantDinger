@@ -30,9 +30,14 @@ class CrossSectionalWeightedStrategy(IStrategyLoop):
         current_time: float,
     ) -> DataRequest:
         trading_config = strategy.get("trading_config") or {}
-        # 对于 weighted 策略，symbol_list 可以从 symbol_indicators 的键中提取，或者单独配置
         symbol_indicators = trading_config.get("symbol_indicators", {})
-        symbol_list = trading_config.get("symbol_list", list(symbol_indicators.keys()))
+        symbol_list = trading_config.get("symbol_list") or []
+        if not symbol_list:
+            symbol = trading_config.get("symbol", "")
+            if symbol:
+                symbol_list = [symbol]
+            else:
+                symbol_list = list(symbol_indicators.keys())
 
         timeframe = trading_config.get("timeframe", "1H")
         rebalance_frequency = trading_config.get("rebalance_frequency", "daily")

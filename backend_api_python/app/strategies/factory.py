@@ -41,6 +41,7 @@ def load_and_create(
     config = load_strategy(strategy_id)
     if not config:
         return None, None
-    cs_type = (config.get("trading_config") or {}).get("cs_strategy_type", "single")
+    tc = config.get("trading_config") or {}
+    cs_type = tc.get("strategy_type") or tc.get("cs_strategy_type") or "single"
     strat = create_strategy(cs_type)
     return strat, config
