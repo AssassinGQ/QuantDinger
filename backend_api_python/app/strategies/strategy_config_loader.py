@@ -147,6 +147,14 @@ def _normalize_indicator_code(strategy: Dict[str, Any], dh: 'DataHandler') -> bo
     return True
 
 
+def _get_code_from_id_or_str(ind: Any, dh: Any) -> Optional[str]:
+    """Helper to resolve indicator code from id or str"""
+    if isinstance(ind, int):
+        return dh.get_indicator_code(ind)
+    if isinstance(ind, str):
+        return ind
+    return None
+
 def _parse_symbol_indicators(trading_config: Dict[str, Any], dh: Any) -> Dict[str, Any]:
     """Parse symbol_indicators supporting both flat and nested dict formats."""
     # pylint: disable=too-many-branches,too-many-nested-blocks
@@ -166,21 +174,15 @@ def _parse_symbol_indicators(trading_config: Dict[str, Any], dh: Any) -> Dict[st
             if isinstance(ind_or_list, list):
                 codes = []
                 for ind in ind_or_list:
-                    if isinstance(ind, int):
-                        code = dh.get_indicator_code(ind)
-                        if code:
-                            codes.append(code)
-                    elif isinstance(ind, str):
-                        codes.append(ind)
+                    code = _get_code_from_id_or_str(ind, dh)
+                    if code:
+                        codes.append(code)
                 if codes:
                     nested_codes[style] = codes
             else:
-                if isinstance(ind_or_list, int):
-                    code = dh.get_indicator_code(ind_or_list)
-                    if code:
-                        nested_codes[style] = [code]
-                elif isinstance(ind_or_list, str):
-                    nested_codes[style] = [ind_or_list]
+                code = _get_code_from_id_or_str(ind_or_list, dh)
+                if code:
+                    nested_codes[style] = [code]
         if nested_codes:
             symbol_indicator_codes[symbol] = nested_codes
         return symbol_indicator_codes
@@ -193,30 +195,21 @@ def _parse_symbol_indicators(trading_config: Dict[str, Any], dh: Any) -> Dict[st
                 if isinstance(ind_or_list, list):
                     codes = []
                     for ind in ind_or_list:
-                        if isinstance(ind, int):
-                            code = dh.get_indicator_code(ind)
-                            if code:
-                                codes.append(code)
-                        elif isinstance(ind, str):
-                            codes.append(ind)
+                        code = _get_code_from_id_or_str(ind, dh)
+                        if code:
+                            codes.append(code)
                     if codes:
                         nested_codes[style] = codes
                 else:
-                    if isinstance(ind_or_list, int):
-                        code = dh.get_indicator_code(ind_or_list)
-                        if code:
-                            nested_codes[style] = [code]
-                    elif isinstance(ind_or_list, str):
-                        nested_codes[style] = [ind_or_list]
+                    code = _get_code_from_id_or_str(ind_or_list, dh)
+                    if code:
+                        nested_codes[style] = [code]
             if nested_codes:
                 symbol_indicator_codes[sym] = nested_codes
         else:
-            if isinstance(ind_or_dict, int):
-                code = dh.get_indicator_code(ind_or_dict)
-                if code:
-                    symbol_indicator_codes[sym] = code
-            elif isinstance(ind_or_dict, str):
-                symbol_indicator_codes[sym] = ind_or_dict
+            code = _get_code_from_id_or_str(ind_or_dict, dh)
+            if code:
+                symbol_indicator_codes[sym] = code
     return symbol_indicator_codes
 
 

@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 class TradingExecutor:
     """实时交易执行器 (Signal Provider Mode)"""
-
+    
     def __init__(self):
         # 不再使用全局连接，改为每次使用时从连接池获取
         self.running_strategies = {}  # {strategy_id: thread}
@@ -31,14 +31,14 @@ class TradingExecutor:
         self.data_handler = DataHandler()
         self._price_fetcher = get_price_fetcher()
         self._signal_executor = SignalExecutor()
-
+        
         # 单实例线程上限，避免无限制创建线程导致 can't start new thread/OOM
         self.max_threads = int(os.getenv('STRATEGY_MAX_THREADS', '64'))
         logger.info(
             "TradingExecutor max_threads=%d (set STRATEGY_MAX_THREADS in .env if needed)",
             self.max_threads,
         )
-
+        
         # 确保数据库字段存在
         self.data_handler.ensure_db_columns()
 
@@ -134,14 +134,14 @@ class TradingExecutor:
             )
         except (RuntimeError, OSError):
             pass
-
+    
     def start_strategy(self, strategy_id: int) -> bool:
         """
         启动策略
-
+        
         Args:
             strategy_id: 策略ID
-
+            
         Returns:
             是否成功
         """
@@ -167,7 +167,7 @@ class TradingExecutor:
                 if strategy_id in self.running_strategies:
                     logger.warning("Strategy %s is already running", strategy_id)
                     return False
-
+                
                 # 创建并启动线程
                 thread = threading.Thread(
                     target=self._run_strategy_loop,
@@ -181,23 +181,23 @@ class TradingExecutor:
                     self._log_resource_status(prefix="启动异常")
                     raise e
                 self.running_strategies[strategy_id] = thread
-
+                
                 logger.info("Strategy %s started", strategy_id)
                 console_print(f"[strategy:{strategy_id}] started")
                 return True
-
+                
         except (ValueError, TypeError, KeyError, RuntimeError, OSError) as e:
             logger.error("Failed to start strategy %s: %s", strategy_id, e)
             logger.error(traceback.format_exc())
             return False
-
+    
     def stop_strategy(self, strategy_id: int) -> bool:
         """
         停止策略
-
+        
         Args:
             strategy_id: 策略ID
-
+            
         Returns:
             是否成功
         """
@@ -206,26 +206,26 @@ class TradingExecutor:
                 if strategy_id not in self.running_strategies:
                     logger.warning("Strategy %s is not running", strategy_id)
                     return False
-
+                
                 # 标记策略为停止状态
                 self.data_handler.update_strategy_status(strategy_id, "stopped")
-
+                
                 # 从运行列表中移除（线程会在下次循环检查状态时退出）
                 del self.running_strategies[strategy_id]
-
+                
                 logger.info("Strategy %s stopped", strategy_id)
                 console_print(f"[strategy:{strategy_id}] stopped (requested)")
                 return True
-
+                
         except (ValueError, TypeError, KeyError, RuntimeError, OSError) as e:
             logger.error("Failed to stop strategy %s: %s", strategy_id, e)
             logger.error(traceback.format_exc())
             return False
-
+    
     def _run_strategy_loop(self, strategy_id: int):
         """
         策略运行循环
-
+        
         Args:
             strategy_id: 策略ID
         """
