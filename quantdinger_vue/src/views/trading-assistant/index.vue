@@ -310,9 +310,15 @@
                   </div>
                   <div
                     class="tag-item"
-                    v-if="selectedStrategy.indicator_config && selectedStrategy.indicator_config.indicator_name">
+                    v-if="selectedStrategy.indicator_config && selectedStrategy.indicator_config.indicator_name && (!selectedStrategy.trading_config || selectedStrategy.trading_config.strategy_type !== 'cross_sectional_weighted')">
                     <a-icon type="line-chart" />
                     <span>{{ selectedStrategy.indicator_config.indicator_name }}</span>
+                  </div>
+                  <div
+                    class="tag-item regime-tag"
+                    v-if="selectedStrategy.trading_config && selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted'">
+                    <a-icon type="apartment" />
+                    <span>{{ $t('trading-assistant.form.strategyTypeRegime') }}</span>
                   </div>
                   <div class="tag-item" v-if="selectedStrategy.trading_config">
                     <a-icon type="thunderbolt" />
@@ -358,6 +364,21 @@
           <!-- 策略详情标签页 -->
           <a-card :bordered="false" class="strategy-content-card">
             <a-tabs defaultActiveKey="positions">
+              <a-tab-pane key="regime" :tab="$t('trading-assistant.form.strategyTypeRegime')" v-if="selectedStrategy.trading_config && selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted'">
+                <div style="padding: 16px;">
+                  <a-table
+                    :columns="regimeColumns"
+                    :data-source="getRegimeIndicatorsData()"
+                    :pagination="false"
+                    size="small"
+                    bordered
+                  >
+                    <template slot="style" slot-scope="text">
+                      <a-tag :color="getRegimeStyleColor(text)">{{ getRegimeStyleName(text) }}</a-tag>
+                    </template>
+                  </a-table>
+                </div>
+              </a-tab-pane>
               <a-tab-pane key="positions" :tab="$t('trading-assistant.tabs.positions')">
                 <position-records
                   :strategy-id="selectedStrategy.id"
@@ -1699,6 +1720,21 @@ export default {
         }
       })
     },
+    regimeColumns () {
+      return [
+        {
+          title: this.$t('trading-assistant.form.regimeStyle'),
+          dataIndex: 'style',
+          key: 'style',
+          scopedSlots: { customRender: 'style' }
+        },
+        {
+          title: this.$t('trading-assistant.form.selectIndicator'),
+          dataIndex: 'indicatorName',
+          key: 'indicatorName'
+        }
+      ]
+    },
     totalPnl () {
       if (this.currentEquity === null || !this.selectedStrategy || !this.selectedStrategy.initial_capital) {
         return null
@@ -1895,12 +1931,13 @@ export default {
             }
           }
           const tc = s.trading_config || {}
+          const isRegime = tc.strategy_type === 'cross_sectional_weighted'
           const strategyInfo = {
             ...s,
             displayInfo: {
               strategyName: s.strategy_name || s.group_base_name || 'Unnamed',
               timeframe: tc.timeframe || '-',
-              indicatorName: s.indicator_name || (s.indicator_config && s.indicator_config.name) || '-'
+              indicatorName: isRegime ? this.$t('trading-assistant.form.strategyTypeRegime') : (s.indicator_name || (s.indicator_config && s.indicator_config.name) || '-')
             }
           }
           groups[groupKey].strategies.push(strategyInfo)
@@ -3018,6 +3055,9 @@ export default {
       this.currentEquity = null // 重置当前净值
       this.loadStrategyDetails()
       this.startEquityPolling() // 开始轮询净值
+      if (strategy && strategy.trading_config && strategy.trading_config.strategy_type === 'cross_sectional_weighted' && !this.indicatorsLoaded) {
+        this.loadIndicators()
+      }
     },
     async loadStrategyDetails () {
       if (!this.selectedStrategy) {
@@ -3263,6 +3303,47 @@ export default {
     },
     getStatusText (status) {
       return this.$t(`trading-assistant.status.${status}`) || status
+    },
+    getRegimeStyleColor (style) {
+      const colors = {
+        aggressive: 'red',
+        balanced: 'orange',
+        conservative: 'green',
+        default: 'blue'
+      }
+      return colors[style] || 'default'
+    },
+    getRegimeStyleName (style) {
+      const names = {
+        aggressive: this.$t('regime.style.aggressive'),
+        balanced: this.$t('regime.style.balanced'),
+        conservative: this.$t('regime.style.conservative'),
+        default: this.$t('trading-assistant.form.regimeStyleDefault') || 'Default'
+      }
+      return names[style] || style
+    },
+    getRegimeIndicatorsData () {
+      if (!this.selectedStrategy || !this.selectedStrategy.trading_config) return []
+      const tc = this.selectedStrategy.trading_config
+      if (tc.strategy_type !== 'cross_sectional_weighted' || !tc.symbol_indicators) return []
+
+      const data = []
+      const symbolIndicators = tc.symbol_indicators
+      let keyCounter = 0
+
+      for (const [style, inds] of Object.entries(symbolIndicators)) {
+        const indList = Array.isArray(inds) ? inds : [inds]
+        for (const indId of indList) {
+          const idStr = String(indId)
+          const indicator = this.availableIndicators.find(ind => String(ind.id) === idStr)
+          data.push({
+            key: `regime_ind_${keyCounter++}`,
+            style: style,
+            indicatorName: indicator ? indicator.name : `ID: ${idStr}`
+          })
+        }
+      }
+      return data
     },
     getDisplayCapital (item) {
       if (!item) return null
