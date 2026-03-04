@@ -323,65 +323,65 @@
                             :class="['indicator-card', { 'indicator-active': isIndicatorActive('custom-' + indicator.id) }]"
                             @click="toggleIndicator(indicator, 'custom')"
                           >
-                      <div class="card-content">
-                        <div class="card-header">
-                          <span class="card-name">{{ indicator.name }}</span>
-                          <div class="card-actions">
-                            <!-- 编辑图标 -->
-                            <a-tooltip :title="$t('dashboard.indicator.action.edit')">
-                              <a-icon
-                                type="edit"
-                                class="action-icon edit-icon"
-                                @click.stop="handleEditIndicator(indicator)"
-                              />
-                            </a-tooltip>
-                            <!-- 删除图标 -->
-                            <a-tooltip :title="$t('dashboard.indicator.action.delete')">
-                              <a-icon
-                                type="delete"
-                                class="action-icon delete-icon"
-                                @click.stop="handleDeleteIndicator(indicator)"
-                              />
-                            </a-tooltip>
-                            <!-- 启动开关 -->
-                            <a-tooltip :title="isIndicatorActive('custom-' + indicator.id) ? $t('dashboard.indicator.action.stop') : $t('dashboard.indicator.action.start')">
-                              <a-icon
-                                :type="isIndicatorActive('custom-' + indicator.id) ? 'pause-circle' : 'play-circle'"
-                                :class="['action-icon', 'toggle-icon', { active: isIndicatorActive('custom-' + indicator.id) }]"
-                                @click.stop="toggleIndicator(indicator, 'custom')"
-                              />
-                            </a-tooltip>
-                            <!-- 回测按钮 -->
-                            <a-tooltip :title="$t('dashboard.indicator.backtest.title')">
-                              <a-icon
-                                type="experiment"
-                                class="action-icon backtest-icon"
-                                @click.stop="handleOpenBacktest(indicator)"
-                              />
-                            </a-tooltip>
-                            <!-- 回测记录 -->
-                            <a-tooltip :title="$t('dashboard.indicator.backtest.historyTitle')">
-                              <a-icon
-                                type="clock-circle"
-                                class="action-icon backtest-history-icon"
-                                @click.stop="handleOpenBacktestHistory(indicator)"
-                              />
-                            </a-tooltip>
-                            <!-- 发布到社区 -->
-                            <a-tooltip :title="indicator.publish_to_community ? $t('dashboard.indicator.action.unpublish') : $t('dashboard.indicator.action.publish')">
-                              <a-icon
-                                :type="indicator.publish_to_community ? 'cloud' : 'cloud-upload'"
-                                :class="['action-icon', 'publish-icon', { published: indicator.publish_to_community }]"
-                                @click.stop="handlePublishIndicator(indicator)"
-                              />
-                            </a-tooltip>
+                            <div class="card-content">
+                              <div class="card-header">
+                                <span class="card-name">{{ indicator.name }}</span>
+                                <div class="card-actions">
+                                  <!-- 编辑图标 -->
+                                  <a-tooltip :title="$t('dashboard.indicator.action.edit')">
+                                    <a-icon
+                                      type="edit"
+                                      class="action-icon edit-icon"
+                                      @click.stop="handleEditIndicator(indicator)"
+                                    />
+                                  </a-tooltip>
+                                  <!-- 删除图标 -->
+                                  <a-tooltip :title="$t('dashboard.indicator.action.delete')">
+                                    <a-icon
+                                      type="delete"
+                                      class="action-icon delete-icon"
+                                      @click.stop="handleDeleteIndicator(indicator)"
+                                    />
+                                  </a-tooltip>
+                                  <!-- 启动开关 -->
+                                  <a-tooltip :title="isIndicatorActive('custom-' + indicator.id) ? $t('dashboard.indicator.action.stop') : $t('dashboard.indicator.action.start')">
+                                    <a-icon
+                                      :type="isIndicatorActive('custom-' + indicator.id) ? 'pause-circle' : 'play-circle'"
+                                      :class="['action-icon', 'toggle-icon', { active: isIndicatorActive('custom-' + indicator.id) }]"
+                                      @click.stop="toggleIndicator(indicator, 'custom')"
+                                    />
+                                  </a-tooltip>
+                                  <!-- 回测按钮 -->
+                                  <a-tooltip :title="$t('dashboard.indicator.backtest.title')">
+                                    <a-icon
+                                      type="experiment"
+                                      class="action-icon backtest-icon"
+                                      @click.stop="handleOpenBacktest(indicator)"
+                                    />
+                                  </a-tooltip>
+                                  <!-- 回测记录 -->
+                                  <a-tooltip :title="$t('dashboard.indicator.backtest.historyTitle')">
+                                    <a-icon
+                                      type="clock-circle"
+                                      class="action-icon backtest-history-icon"
+                                      @click.stop="handleOpenBacktestHistory(indicator)"
+                                    />
+                                  </a-tooltip>
+                                  <!-- 发布到社区 -->
+                                  <a-tooltip :title="indicator.publish_to_community ? $t('dashboard.indicator.action.unpublish') : $t('dashboard.indicator.action.publish')">
+                                    <a-icon
+                                      :type="indicator.publish_to_community ? 'cloud' : 'cloud-upload'"
+                                      :class="['action-icon', 'publish-icon', { published: indicator.publish_to_community }]"
+                                      @click.stop="handlePublishIndicator(indicator)"
+                                    />
+                                  </a-tooltip>
+                                </div>
+                              </div>
+                              <span class="card-desc">{{ indicator.description || '' }}</span>
+                            </div>
                           </div>
                         </div>
-                        <span class="card-desc">{{ indicator.description || '' }}</span>
                       </div>
-                        </div>
-                      </div>
-                    </div>
                     </template>
                     <div v-if="groupedCustomIndicators.ungrouped.length > 0" class="indicator-group-block">
                       <div class="group-label" @click="toggleCustomGroup('ungrouped')">

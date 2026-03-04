@@ -8,66 +8,115 @@ import pandas as pd
 from app.strategies.base import RawIndicatorOutput
 from app.utils.logger import get_logger
 
+# Import regime logic
+from app.tasks.regime_switch import _load_config, compute_regime
+
 logger = get_logger(__name__)
 
 
+def _execute_indicator_code(
+    code: str,
+    global_env: Dict[str, Any],
+    df: pd.DataFrame
+) -> tuple[float, int]:
+    """Execute indicator code and return (weight, signal_val)."""
+    local_env = {"df": df.copy()}
+    try:
+        exec(code, global_env, local_env) # pylint: disable=exec-used
+        ind_weight = float(local_env.get("weight", 0.0))
+        ind_signal = local_env.get("signal", 0)
+
+        sig_val = 0
+        if str(ind_signal).lower() in ("1", "1.0", "long", "buy"):
+            sig_val = 1
+        elif str(ind_signal).lower() in ("-1", "-1.0", "short", "sell"):
+            sig_val = -1
+
+        return ind_weight, sig_val
+    except Exception as e: # pylint: disable=broad-exception-caught
+        logger.error("Error executing indicator code: %s", e)
+        return 0.0, 0
+
+
+def _process_nested_config(
+    ind_config: Dict[str, str],
+    df: pd.DataFrame,
+    global_env: Dict[str, Any],
+    regime_cfg: Dict[str, Any],
+    regime_to_weights_map: Dict[str, Any]
+) -> tuple[float, int]:
+    """处理嵌套的 regime style 配置，融合计算最终权重和信号。"""
+    # pylint: disable=too-many-locals
+    last_row = df.iloc[-1]
+    vix = float(last_row.get("vix", 18.0))
+    vhsi = float(last_row.get("vhsi", 22.0))
+    fear_greed = float(last_row.get("fear_greed", 50.0))
+    macro_data = {"vix": vix, "vhsi": vhsi, "civix": vix, "fear_greed": fear_greed}
+
+    current_regime = compute_regime(
+        vix=vix, fear_greed=fear_greed, config=regime_cfg, vhsi=vhsi, macro=macro_data
+    )
+    style_weights = regime_to_weights_map.get(current_regime, {})
+
+    combined_weight = 0.0
+
+    for style, code in ind_config.items():
+        target_ratio = style_weights.get(style, 0.0)
+        if target_ratio <= 0.0:
+            continue
+
+        ind_weight, sig_val = _execute_indicator_code(code, global_env, df)
+        combined_weight += sig_val * ind_weight * target_ratio
+
+    final_weight = abs(combined_weight)
+    final_signal = 1 if combined_weight > 0 else (-1 if combined_weight < 0 else 0)
+
+    return final_weight, final_signal
+
+
 def run_cross_sectional_weighted_indicator(
-    symbol_indicator_codes: Dict[str, str],
+    symbol_indicator_codes: Dict[str, Any],
     data: Dict[str, pd.DataFrame],
     trading_config: Dict[str, Any],
 ) -> RawIndicatorOutput:
     """
     针对不同 symbol 执行各自的指标代码，并汇总计算 weights 和 signals。
-    对于 Regime 策略，每个指标返回的是：
-    - weights: float
-    - signals: "long", "short", "flat" 或 1, -1, 0
-    然后我们将它们收集起来，组装成给到外层的 rankings, scores 等格式，或者直接构建新的格式。
-
-    Args:
-        symbol_indicator_codes: symbol 到 指标代码 的映射
-        data: symbol 到 K线 df 的映射
-        trading_config: 策略配置
-
-    Returns:
-        包含 weights 和 signals 字典的 RawIndicatorOutput
     """
     weights = {}
     signals = {}
 
-    # 将 trading_config 作为参数传给每个执行的脚本环境
     global_env = {"trading_config": trading_config}
+
+    regime_cfg = _load_config()
+
+    regime_to_weights_map = regime_cfg.get("regime_to_weights") or \
+                            regime_cfg.get("multi_strategy", {}).get("regime_to_weights") or {
+        "panic": {"conservative": 0.8, "balanced": 0.2, "aggressive": 0.0},
+        "high_vol": {"conservative": 0.5, "balanced": 0.4, "aggressive": 0.1},
+        "normal": {"conservative": 0.2, "balanced": 0.6, "aggressive": 0.2},
+        "low_vol": {"conservative": 0.1, "balanced": 0.3, "aggressive": 0.6},
+    }
 
     for symbol, df in data.items():
         if df is None or len(df) == 0:
             continue
 
-        indicator_code = symbol_indicator_codes.get(symbol)
-        if not indicator_code:
-            logger.warning("No indicator code found for symbol %s in cross_sectional_weighted", symbol)
+        ind_config = symbol_indicator_codes.get(symbol)
+        if not ind_config:
+            logger.warning(
+                "No indicator code found for symbol %s in cross_sectional_weighted", symbol
+            )
             continue
 
-        local_env = {"df": df.copy()}
-        try:
-            # 兼容 exec: 提供 df 作为局部变量
-            # 指标需在 df 末尾或通过某种方式返回其 weight 和 signal
-            # 约定：指标应在 local_env 中设置 `weight` 和 `signal` 变量
-            exec(indicator_code, global_env, local_env) # pylint: disable=exec-used
-
-            # 从局部变量中提取结果
-            weight = local_env.get("weight", 0.0)
-            signal = local_env.get("signal", 0) # 0=flat, 1=long, -1=short 或 'long', 'short', 'flat'
-
-            weights[symbol] = float(weight)
-
-            if str(signal).lower() in ("1", "1.0", "long", "buy"):
-                signals[symbol] = 1
-            elif str(signal).lower() in ("-1", "-1.0", "short", "sell"):
-                signals[symbol] = -1
-            else:
-                signals[symbol] = 0
-
-        except Exception as e: # pylint: disable=broad-exception-caught
-            logger.error("Error executing indicator for %s: %s", symbol, e)
-            continue
+        if isinstance(ind_config, dict):
+            final_weight, final_signal = _process_nested_config(
+                ind_config, df, global_env, regime_cfg, regime_to_weights_map
+            )
+            weights[symbol] = final_weight
+            signals[symbol] = final_signal
+        else:
+            final_weight, final_signal = _execute_indicator_code(ind_config, global_env, df)
+            weights[symbol] = final_weight
+            signals[symbol] = final_signal
 
     return {"weights": weights, "signals": signals}

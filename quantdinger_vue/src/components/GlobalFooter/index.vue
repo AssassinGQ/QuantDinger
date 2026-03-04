@@ -1,7 +1,7 @@
 <template>
   <div :class="footerCls">
     <global-footer class="footer custom-render">
-      <template v-slot:links>
+      <template #links>
         <a @click="showLegal = true" style="cursor: pointer;">{{ $t('user.login.legal.title') }} © 2025-2026 QuantDinger</a>
       </template>
     </global-footer>

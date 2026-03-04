@@ -424,7 +424,63 @@
                     placeholder="ungrouped" />
                 </a-form-item>
 
-                <template v-if="form.getFieldValue('cs_strategy_type') !== 'cross_sectional_weighted'">
+                <!-- 标的配置 (单标的 或 Regime策略 共用) -->
+                <template v-if="['single', 'cross_sectional_weighted'].includes(form.getFieldValue('cs_strategy_type'))">
+                  <a-form-item :label="$t('trading-assistant.form.symbol')">
+                    <a-select
+                      v-if="!isEditMode && form.getFieldValue('cs_strategy_type') === 'single'"
+                      v-model="selectedSymbols"
+                      mode="multiple"
+                      :placeholder="$t('trading-assistant.placeholders.selectSymbol')"
+                      show-search
+                      :filter-option="filterWatchlistOption"
+                      :loading="loadingWatchlist"
+                      @change="handleSymbolChange"
+                      :getPopupContainer="(triggerNode) => triggerNode.parentNode"
+                      :maxTagCount="3">
+                      <a-select-option
+                        v-for="item in watchlist"
+                        :key="`${item.market}:${item.symbol}`"
+                        :value="`${item.market}:${item.symbol}`">
+                        <div class="symbol-option">
+                          <a-tag :color="getMarketColor(item.market)" style="margin-right: 8px; margin-bottom: 0;">
+                            {{ item.market }}
+                          </a-tag>
+                          <span class="symbol-name">{{ item.symbol }}</span>
+                          <span v-if="item.name" class="symbol-name-extra">{{ item.name }}</span>
+                        </div>
+                      </a-select-option>
+                    </a-select>
+                    <!-- 编辑模式 或 Regime策略下单标的策略只能单选 -->
+                    <a-select
+                      v-else
+                      v-decorator="['symbol', { rules: [{ required: true, message: $t('trading-assistant.validation.symbolRequired') }] }]"
+                      :placeholder="$t('trading-assistant.placeholders.selectSymbol')"
+                      show-search
+                      :filter-option="filterWatchlistOption"
+                      :loading="loadingWatchlist"
+                      @change="handleSymbolChange"
+                      :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                      <a-select-option
+                        v-for="item in watchlist"
+                        :key="`${item.market}:${item.symbol}`"
+                        :value="`${item.market}:${item.symbol}`">
+                        <div class="symbol-option">
+                          <a-tag :color="getMarketColor(item.market)" style="margin-right: 8px; margin-bottom: 0;">
+                            {{ item.market }}
+                          </a-tag>
+                          <span class="symbol-name">{{ item.symbol }}</span>
+                          <span v-if="item.name" class="symbol-name-extra">{{ item.name }}</span>
+                        </div>
+                      </a-select-option>
+                    </a-select>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.symbolHint') }}
+                    </div>
+                  </a-form-item>
+                </template>
+
+                <template v-if="form.getFieldValue('cs_strategy_type') === 'single'">
                   <a-form-item :label="$t('trading-assistant.form.indicator')">
                     <a-select
                       v-decorator="['indicator_id', { rules: [{ required: true, message: $t('trading-assistant.validation.indicatorRequired') }] }]"
@@ -504,40 +560,10 @@
                   </a-form-item>
                 </template>
 
-                <!-- Regime 策略的动态指标与标的配置 -->
+                <!-- Regime 策略的动态指标配置 -->
                 <template v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted'">
-                  <a-form-item :label="$t('trading-assistant.form.regimeStyle')">
-                    <a-select
-                      v-decorator="['regime_style', { initialValue: '' }]"
-                      :placeholder="$t('trading-assistant.placeholders.regimeStyle')"
-                      allow-clear
-                      style="width: 100%">
-                      <a-select-option value="">{{ $t('trading-assistant.form.regimeStyleNone') }}</a-select-option>
-                      <a-select-option value="conservative">{{ $t('trading-assistant.form.regimeStyleConservative') }}</a-select-option>
-                      <a-select-option value="balanced">{{ $t('trading-assistant.form.regimeStyleBalanced') }}</a-select-option>
-                      <a-select-option value="aggressive">{{ $t('trading-assistant.form.regimeStyleAggressive') }}</a-select-option>
-                    </a-select>
-                    <div class="form-item-hint">{{ $t('trading-assistant.form.regimeStyleHint') }}</div>
-                  </a-form-item>
-
                   <a-form-item :label="$t('trading-assistant.form.regimeSymbolIndicators')">
                     <div v-for="(item, index) in regimeSymbolIndicators" :key="item.uid" style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
-                      <!-- 选择标的 -->
-                      <a-select
-                        v-model="item.symbol"
-                        style="flex: 1;"
-                        :placeholder="$t('trading-assistant.placeholders.selectSymbol')"
-                        show-search
-                        :filter-option="filterWatchlistOption"
-                        :loading="loadingWatchlist"
-                        :getPopupContainer="(triggerNode) => triggerNode.parentNode">
-                        <a-select-option
-                          v-for="symItem in watchlist"
-                          :key="`${symItem.market}:${symItem.symbol}`"
-                          :value="`${symItem.market}:${symItem.symbol}`">
-                          {{ symItem.market }}:{{ symItem.symbol }}
-                        </a-select-option>
-                      </a-select>
                       <!-- 选择指标 -->
                       <a-select
                         v-model="item.indicator_id"
@@ -554,6 +580,16 @@
                           :value="String(indicator.id)">
                           {{ indicator.name }}
                         </a-select-option>
+                      </a-select>
+                      <!-- 选择Regime风格 -->
+                      <a-select
+                        v-model="item.regime_style"
+                        style="width: 120px;"
+                        :placeholder="$t('trading-assistant.placeholders.regimeStyle')"
+                        :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                        <a-select-option value="conservative">{{ $t('trading-assistant.form.regimeStyleConservative') }}</a-select-option>
+                        <a-select-option value="balanced">{{ $t('trading-assistant.form.regimeStyleBalanced') }}</a-select-option>
+                        <a-select-option value="aggressive">{{ $t('trading-assistant.form.regimeStyleAggressive') }}</a-select-option>
                       </a-select>
                       <!-- 删除按钮 -->
                       <a-button type="danger" icon="minus" @click="removeRegimePair(index)" :disabled="regimeSymbolIndicators.length <= 1" />
@@ -2014,7 +2050,7 @@ export default {
       selectedSymbols: [],
       // 截面策略标的列表
       crossSectionalSymbols: [],
-      regimeSymbolIndicators: [{ uid: Date.now(), symbol: undefined, indicator_id: undefined }],
+      regimeSymbolIndicators: [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }],
       // 策略组折叠状态
       collapsedGroups: {},
       // 分组模式: 'strategy' 或 'symbol'
@@ -2362,7 +2398,7 @@ export default {
       return colors[market] || 'default'
     },
     addRegimePair () {
-      this.regimeSymbolIndicators.push({ uid: Date.now(), symbol: undefined, indicator_id: undefined })
+      this.regimeSymbolIndicators.push({ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' })
     },
     removeRegimePair (index) {
       if (this.regimeSymbolIndicators.length > 1) {
@@ -2889,22 +2925,33 @@ export default {
 
           if (tc.symbol_indicators && typeof tc.symbol_indicators === 'object') {
             const pairs = []
-            for (const [sym, indId] of Object.entries(tc.symbol_indicators)) {
-              // 补充市场前缀如果缺失（简易处理，默认用当前选定市场，实际上可能需要更好解析）
-              const fullSym = sym.includes(':') ? sym : `${this.selectedMarketCategory}:${sym}`
-              pairs.push({
-                uid: Date.now() + Math.random(),
-                symbol: fullSym,
-                indicator_id: String(indId)
-              })
+            // If it's a cross_sectional_weighted regime strategy, symbol_indicators should be a dict of styles -> indId
+            for (const [styleOrSym, val] of Object.entries(tc.symbol_indicators)) {
+              if (typeof val === 'object' && val !== null) {
+                // Legacy support if it was { symbol: { style: id } }
+                for (const [style, indId] of Object.entries(val)) {
+                  pairs.push({
+                    uid: Date.now() + Math.random(),
+                    indicator_id: String(indId),
+                    regime_style: style === 'default' ? '' : style
+                  })
+                }
+              } else {
+                // New format: { style: id }
+                pairs.push({
+                  uid: Date.now() + Math.random(),
+                  indicator_id: String(val),
+                  regime_style: styleOrSym === 'default' ? '' : styleOrSym
+                })
+              }
             }
             if (pairs.length > 0) {
               this.regimeSymbolIndicators = pairs
             } else {
-              this.regimeSymbolIndicators = [{ uid: Date.now(), symbol: undefined, indicator_id: undefined }]
+              this.regimeSymbolIndicators = [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }]
             }
           } else {
-            this.regimeSymbolIndicators = [{ uid: Date.now(), symbol: undefined, indicator_id: undefined }]
+            this.regimeSymbolIndicators = [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }]
           }
         } else {
           this.form.setFieldsValue({
@@ -3789,8 +3836,8 @@ export default {
           fieldsToValidate.push('indicator_id')
         }
 
-        // 编辑模式需要验证 symbol 字段
-        if (this.isEditMode && strategyType === 'single') {
+        // 编辑模式，或者 Regime 策略（无论创建还是编辑），都需要验证 symbol 字段
+        if ((this.isEditMode && strategyType === 'single') || strategyType === 'cross_sectional_weighted') {
           fieldsToValidate.push('symbol')
         }
         this.form.validateFields(fieldsToValidate, (err, values) => {
@@ -3805,10 +3852,10 @@ export default {
                 return
               }
             } else if (strategyType === 'cross_sectional_weighted') {
-              // 加权截面策略（Regime策略）：验证动态指标标的列表
-              const validPairs = this.regimeSymbolIndicators.filter(item => item.symbol && item.indicator_id)
+              // 加权截面策略（Regime策略）：由于现在使用 form.symbol 进行校验，这里不再需要额外校验 symbol
+              const validPairs = this.regimeSymbolIndicators.filter(item => item.indicator_id)
               if (validPairs.length === 0) {
-                this.$message.warning(this.$t('trading-assistant.validation.symbolsRequired'))
+                this.$message.warning(this.$t('trading-assistant.validation.indicatorRequired'))
                 return
               }
             } else {
@@ -3821,9 +3868,9 @@ export default {
           } else {
             // 编辑模式
             if (strategyType === 'cross_sectional_weighted') {
-              const validPairs = this.regimeSymbolIndicators.filter(item => item.symbol && item.indicator_id)
+              const validPairs = this.regimeSymbolIndicators.filter(item => item.indicator_id)
               if (validPairs.length === 0) {
-                this.$message.warning(this.$t('trading-assistant.validation.symbolsRequired'))
+                this.$message.warning(this.$t('trading-assistant.validation.indicatorRequired'))
                 return
               }
             }
@@ -4015,9 +4062,9 @@ export default {
                 long_ratio: values.cs_strategy_type === 'cross_sectional' ? (values.long_ratio || 0.5) : undefined,
                 rebalance_frequency: (values.cs_strategy_type === 'cross_sectional' || values.cs_strategy_type === 'cross_sectional_weighted') ? (values.rebalance_frequency || 'daily') : undefined,
                 symbol_indicators: values.cs_strategy_type === 'cross_sectional_weighted' ? this.regimeSymbolIndicators.reduce((acc, curr) => {
-                  if (curr.symbol && curr.indicator_id) {
-                    const sym = curr.symbol.includes(':') ? curr.symbol.split(':')[1] : curr.symbol
-                    acc[sym] = parseInt(curr.indicator_id)
+                  if (curr.indicator_id) {
+                    const style = curr.regime_style || 'default'
+                    acc[style] = parseInt(curr.indicator_id)
                   }
                   return acc
                 }, {}) : undefined
@@ -4044,8 +4091,20 @@ export default {
               if (values.cs_strategy_type === 'cross_sectional' || values.cs_strategy_type === 'cross_sectional_weighted') {
                 // 截面策略：只创建一个策略，标的列表存储在 trading_config 中
                 basePayload.strategy_type = 'IndicatorStrategy' // 保持为 IndicatorStrategy，截面类型在 trading_config 中
-                // 截面策略不需要设置 symbol，因为它是多标的的
-                basePayload.trading_config.symbol = null
+                if (values.cs_strategy_type === 'cross_sectional') {
+                  // 截面策略不需要设置 symbol，因为它是多标的的
+                  basePayload.trading_config.symbol = null
+                } else {
+                  // Regime 策略：单标的，但具有多个风格指标
+                  const sym = values.symbol
+                  if (typeof sym === 'string' && sym.includes(':')) {
+                    const idx = sym.indexOf(':')
+                    basePayload.market_category = sym.slice(0, idx) || basePayload.market_category
+                    basePayload.trading_config.symbol = sym.slice(idx + 1)
+                  } else {
+                    basePayload.trading_config.symbol = sym
+                  }
+                }
                 // 使用 createStrategy 创建单个策略
                 res = await createStrategy(basePayload)
               } else if (this.selectedSymbols.length === 1) {

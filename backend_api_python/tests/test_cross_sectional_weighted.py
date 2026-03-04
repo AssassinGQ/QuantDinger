@@ -6,12 +6,19 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from app.strategies.cross_sectional_weighted_indicator import run_cross_sectional_weighted_indicator
-from app.strategies.cross_sectional_weighted_signals import generate_cross_sectional_weighted_signals
+from app.strategies.cross_sectional_weighted_indicator import (
+    run_cross_sectional_weighted_indicator
+)
+from app.strategies.cross_sectional_weighted_signals import (
+    generate_cross_sectional_weighted_signals
+)
 from app.strategies.cross_sectional_weighted import CrossSectionalWeightedStrategy
 
 class TestCrossSectionalWeightedStrategy:
+    """Test suite for CrossSectionalWeightedStrategy class and related functions."""
+
     def test_indicator_run(self):
+        """Test basic execution of run_cross_sectional_weighted_indicator."""
         codes = {
             "BTC": "weight=0.5\nsignal='long'",
             "ETH": "weight=0.3\nsignal='short'",
@@ -38,6 +45,7 @@ class TestCrossSectionalWeightedStrategy:
         assert result["signals"]["XRP"] == 0
 
     def test_generate_signals(self):
+        """Test generation of signals from weights and current positions."""
         weights = {"BTC": 0.5, "ETH": 0.3}
         signals = {"BTC": 1, "ETH": -1, "SOL": 0}
 
@@ -68,6 +76,7 @@ class TestCrossSectionalWeightedStrategy:
         assert open_eth["target_weight"] == 0.3
 
     def test_indicator_run_edge_cases(self):
+        """Test indicator run edge cases, missing data, and invalid codes."""
         codes = {"A": "weight=1\nsignal=1", "B": "bad code"}
         data = {
             "A": pd.DataFrame(), # Empty df -> lines 42
@@ -75,8 +84,9 @@ class TestCrossSectionalWeightedStrategy:
             "C": pd.DataFrame({"c":[1]})  # No code -> lines 46-47
         }
         res = run_cross_sectional_weighted_indicator(codes, data, {})
-        assert not res["weights"]
-        assert not res["signals"]
+        # We expect B to return weight 0.0 because of the exception handler fallback
+        assert res["weights"] == {"B": 0.0}
+        assert res["signals"] == {"B": 0}
 
         # Test unexpected signal string
         codes2 = {"A": "weight=1\nsignal='unknown'"}
@@ -85,6 +95,7 @@ class TestCrossSectionalWeightedStrategy:
         assert res2["signals"]["A"] == 0
 
     def test_generate_signals_edge_cases(self):
+        """Test edge cases when generating signals like wrong side and zeros."""
         weights = {"A": 0.5, "B": 0.0, "C": -1} # <= 0 weight -> lines 59
         signals = {"A": 1, "B": 1, "C": 1}
         # expected_signal=1, side='short' -> line 49
@@ -104,22 +115,30 @@ class TestCrossSectionalWeightedStrategy:
         assert res2[0]["type"] == "close_long" and res[0]["symbol"] == "A"
 
     def test_strategy_class_edge_cases(self):
+        """Test edge cases in CrossSectionalWeightedStrategy."""
         strat = CrossSectionalWeightedStrategy()
 
         # Missing data
         res1 = strat.get_signals({"data": {}})
         assert res1 == ([], True, False, None)
 
+        mock_indicator = (
+            "app.strategies.cross_sectional_weighted.run_cross_sectional_weighted_indicator"
+        )
+        mock_gen_signals = (
+            "app.strategies.cross_sectional_weighted.generate_cross_sectional_weighted_signals"
+        )
+
         # Indicator returned empty
-        with patch("app.strategies.cross_sectional_weighted.run_cross_sectional_weighted_indicator") as mock_run:
+        with patch(mock_indicator) as mock_run:
             mock_run.return_value = {}
             res2 = strat.get_signals({"data": {"A": "df"}})
             assert res2 == ([], True, False, None)
 
         # Signals empty
-        with patch("app.strategies.cross_sectional_weighted.run_cross_sectional_weighted_indicator") as mock_run:
+        with patch(mock_indicator) as mock_run:
             mock_run.return_value = {"weights": {}, "signals": {}}
-            with patch("app.strategies.cross_sectional_weighted.generate_cross_sectional_weighted_signals") as mock_gen:
+            with patch(mock_gen_signals) as mock_gen:
                 mock_gen.return_value = []
                 res3 = strat.get_signals({"data": {"A": "df"}})
                 assert res3 == ([], True, True, None)
@@ -140,10 +159,10 @@ class TestCrossSectionalWeightedStrategy:
             "data": {"A": pd.DataFrame({"close": [1]})}
         }
 
-        with patch("app.strategies.cross_sectional_weighted.run_cross_sectional_weighted_indicator") as mock_run:
+        with patch(mock_indicator) as mock_run:
             mock_run.return_value = {"weights": {"A": 0.5}, "signals": {"A": 1}}
 
-            with patch("app.strategies.cross_sectional_weighted.generate_cross_sectional_weighted_signals") as mock_gen:
+            with patch(mock_gen_signals) as mock_gen:
                 mock_gen.return_value = [{"symbol": "A", "type": "open_long"}]
 
                 signals, keep_running, update_rebalance, _ = strat.get_signals(ctx)

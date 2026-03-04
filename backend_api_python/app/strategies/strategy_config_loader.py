@@ -147,6 +147,56 @@ def _normalize_indicator_code(strategy: Dict[str, Any], dh: 'DataHandler') -> bo
     return True
 
 
+def _parse_symbol_indicators(trading_config: Dict[str, Any], dh: Any) -> Dict[str, Any]:
+    """Parse symbol_indicators supporting both flat and nested dict formats."""
+    # pylint: disable=too-many-branches
+    symbol_indicator_codes = {}
+    symbol_indicators = trading_config.get("symbol_indicators", {})
+    if not isinstance(symbol_indicators, dict) or not symbol_indicators:
+        return symbol_indicator_codes
+
+    strategy_type = trading_config.get("strategy_type", "single")
+    symbol = trading_config.get("symbol", "")
+
+    # For cross_sectional_weighted, if keyed by style directly (single symbol regime)
+    is_flat_dict = not any(isinstance(v, dict) for v in symbol_indicators.values())
+    if strategy_type == "cross_sectional_weighted" and symbol and is_flat_dict:
+        nested_codes = {}
+        for style, ind in symbol_indicators.items():
+            if isinstance(ind, int):
+                code = dh.get_indicator_code(ind)
+                if code:
+                    nested_codes[style] = code
+            elif isinstance(ind, str):
+                nested_codes[style] = ind
+        if nested_codes:
+            symbol_indicator_codes[symbol] = nested_codes
+        return symbol_indicator_codes
+
+    # Old format or multi-symbol format: { sym: id } or { sym: { style: id } }
+    for sym, ind_or_dict in symbol_indicators.items():
+        if isinstance(ind_or_dict, dict):
+            nested_codes = {}
+            for style, ind in ind_or_dict.items():
+                if isinstance(ind, int):
+                    code = dh.get_indicator_code(ind)
+                    if code:
+                        nested_codes[style] = code
+                elif isinstance(ind, str):
+                    nested_codes[style] = ind
+            if nested_codes:
+                symbol_indicator_codes[sym] = nested_codes
+        else:
+            ind = ind_or_dict
+            if isinstance(ind, int):
+                code = dh.get_indicator_code(ind)
+                if code:
+                    symbol_indicator_codes[sym] = code
+            elif isinstance(ind, str):
+                symbol_indicator_codes[sym] = ind
+    return symbol_indicator_codes
+
+
 def load_strategy(
     strategy_id: int,
     data_handler: Optional["DataHandler"] = None,
@@ -199,17 +249,7 @@ def load_strategy(
 
         # 处理 cross_sectional_weighted 需要的 symbol_indicators
         trading_config = strategy.get("trading_config") or {}
-        symbol_indicators = trading_config.get("symbol_indicators", {})
-        symbol_indicator_codes = {}
-        if isinstance(symbol_indicators, dict):
-            for sym, ind in symbol_indicators.items():
-                if isinstance(ind, int):
-                    code = dh.get_indicator_code(ind)
-                    if code:
-                        symbol_indicator_codes[sym] = code
-                elif isinstance(ind, str):
-                    symbol_indicator_codes[sym] = ind
-        strategy["_symbol_indicator_codes"] = symbol_indicator_codes
+        strategy["_symbol_indicator_codes"] = _parse_symbol_indicators(trading_config, dh)
 
         return strategy
 
