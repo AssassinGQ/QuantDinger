@@ -17,8 +17,26 @@ from app.strategies.cross_sectional_weighted import CrossSectionalWeightedStrate
 class TestCrossSectionalWeightedStrategy:
     """Test suite for CrossSectionalWeightedStrategy class and related functions."""
 
-    def test_indicator_run(self):
-        """Test basic execution of run_cross_sectional_weighted_indicator."""
+    def test_indicator_run_buy_sell(self):
+        """Test execution using df['buy']/df['sell'] interface (standard)."""
+        codes = {
+            "BTC": "df['buy'] = [1]",
+            "ETH": "df['sell'] = [1]",
+            "XRP": "df['buy'] = [0]\ndf['sell'] = [0]"
+        }
+        data = {
+            "BTC": pd.DataFrame({"close": [1]}),
+            "ETH": pd.DataFrame({"close": [2]}),
+            "XRP": pd.DataFrame({"close": [3]}),
+        }
+        result = run_cross_sectional_weighted_indicator(codes, data, {})
+
+        assert result["signals"]["BTC"] == 1
+        assert result["signals"]["ETH"] == -1
+        assert result["signals"]["XRP"] == 0
+
+    def test_indicator_run_signal_fallback(self):
+        """Test fallback to signal variable when no df['buy']/df['sell']."""
         codes = {
             "BTC": "signal='long'",
             "ETH": "signal='short'",
@@ -29,16 +47,7 @@ class TestCrossSectionalWeightedStrategy:
             "ETH": pd.DataFrame({"close": [2]}),
             "XRP": pd.DataFrame({"close": [3]}),
         }
-        config = {}
-
-        result = run_cross_sectional_weighted_indicator(codes, data, config)
-
-        assert "weights" in result
-        assert "signals" in result
-
-        assert result["weights"]["BTC"] == 1
-        assert result["weights"]["ETH"] == 1
-        assert result["weights"]["XRP"] == 0
+        result = run_cross_sectional_weighted_indicator(codes, data, {})
 
         assert result["signals"]["BTC"] == 1
         assert result["signals"]["ETH"] == -1
@@ -73,17 +82,17 @@ class TestCrossSectionalWeightedStrategy:
         """Test nested format: multiple indicators per style, regime_weight evenly split."""
         codes = {
             "A": {
-                "aggressive": ["signal=1", "signal=1"],
-                "conservative": ["signal=-1"]
+                "aggressive": ["df['buy'] = [1]", "df['buy'] = [1]"],
+                "conservative": ["df['sell'] = [1]"]
             }
         }
         data = {"A": pd.DataFrame({"vix": [10], "vhsi": [10], "fear_greed": [80], "c": [1]})}
         # low_vol regime (vix=10 < 15): aggressive=0.6, conservative=0.1
         # aggressive has 2 codes => regime_weight = 0.6/2 = 0.3 each
-        # Code1: signal=1 * 0.3 = +0.3
-        # Code2: signal=1 * 0.3 = +0.3
+        # Code1: buy=1 => +1 * 0.3 = +0.3
+        # Code2: buy=1 => +1 * 0.3 = +0.3
         # conservative has 1 code => regime_weight = 0.1
-        # Code3: signal=-1 * 0.1 = -0.1
+        # Code3: sell=1 => -1 * 0.1 = -0.1
         # combined = +0.3 + 0.3 - 0.1 = +0.5
         res = run_cross_sectional_weighted_indicator(codes, data, {})
         assert res["signals"]["A"] == 1
@@ -93,8 +102,8 @@ class TestCrossSectionalWeightedStrategy:
         """Test that custom macro_indicators and primary_macro_indicator are respected."""
         codes = {
             "A": {
-                "aggressive": "signal=1",
-                "conservative": "signal=-1"
+                "aggressive": "df['buy'] = [1]",
+                "conservative": "df['sell'] = [1]"
             }
         }
         # primary_macro_indicator=fear_greed, fg=15 < fg_extreme_fear(20) => panic
@@ -108,13 +117,13 @@ class TestCrossSectionalWeightedStrategy:
         assert meta.get("primary_indicator") == "fear_greed"
         assert meta.get("current_regime") == "panic"
         # Panic regime: conservative=0.8, aggressive=0.0
-        # Only conservative contributes: signal=-1 * 0.8 = -0.8
+        # Only conservative contributes: sell=1 => -1 * 0.8 = -0.8
         assert res["signals"]["A"] == -1
         assert abs(res["weights"]["A"] - 0.8) < 1e-6
 
     def test_indicator_run_edge_cases(self):
         """Test indicator run edge cases: missing data, invalid codes, unknown signal."""
-        codes = {"A": "signal=1", "B": "bad code"}
+        codes = {"A": "df['buy'] = [1]", "B": "bad code"}
         data = {
             "A": pd.DataFrame(),
             "B": pd.DataFrame({"c": [1]}),
@@ -125,11 +134,18 @@ class TestCrossSectionalWeightedStrategy:
         assert res["weights"] == {"B": 0}
         assert res["signals"] == {"B": 0}
 
-        # Unknown signal string defaults to 0
+        # No buy/sell columns and unknown signal string => 0
         codes2 = {"A": "signal='unknown'"}
         data2 = {"A": pd.DataFrame({"c": [1]})}
         res2 = run_cross_sectional_weighted_indicator(codes2, data2, {})
         assert res2["signals"]["A"] == 0
+
+    def test_indicator_buy_sell_priority(self):
+        """Test that df['buy']/df['sell'] takes priority over signal variable."""
+        code = "df['buy'] = [1]\nsignal = -1"
+        data = {"A": pd.DataFrame({"c": [1]})}
+        res = run_cross_sectional_weighted_indicator({"A": code}, data, {})
+        assert res["signals"]["A"] == 1
 
     def test_generate_signals_edge_cases(self):
         """Test edge cases when generating signals like wrong side and zeros."""

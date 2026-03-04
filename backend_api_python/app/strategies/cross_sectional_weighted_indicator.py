@@ -20,12 +20,27 @@ def _execute_indicator_code(
     global_env: Dict[str, Any],
     df: pd.DataFrame
 ) -> int:
-    """Execute indicator code and return signal direction (1, -1, or 0)."""
+    """Execute indicator code and return signal: 1=buy, -1=sell, 0=neutral.
+
+    Reads df['buy']/df['sell'] last row first (standard indicator interface),
+    falls back to 'signal' variable for backward compatibility.
+    """
     local_env = {"df": df.copy()}
     try:
         exec(code, global_env, local_env) # pylint: disable=exec-used
-        ind_signal = local_env.get("signal", 0)
+        executed_df = local_env.get("df", df)
 
+        if "buy" in executed_df.columns or "sell" in executed_df.columns:
+            last = executed_df.iloc[-1]
+            buy_val = int(last.get("buy", 0) or 0)
+            sell_val = int(last.get("sell", 0) or 0)
+            if buy_val:
+                return 1
+            if sell_val:
+                return -1
+            return 0
+
+        ind_signal = local_env.get("signal", 0)
         if str(ind_signal).lower() in ("1", "1.0", "long", "buy"):
             return 1
         if str(ind_signal).lower() in ("-1", "-1.0", "short", "sell"):
