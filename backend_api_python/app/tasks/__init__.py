@@ -13,20 +13,9 @@ logger = get_logger(__name__)
 def register_all_tasks() -> None:
     """注册所有启用的插件定时任务到 APScheduler。"""
     from app.services.scheduler_service import register_scheduled_job
-    from app.tasks import regime_switch, kline_sync, portfolio_monitor_task
+    from app.tasks import kline_sync, portfolio_monitor_task
 
     registered = []
-
-    if regime_switch.ENABLED:
-        register_scheduled_job(
-            regime_switch.JOB_ID,
-            regime_switch.run,
-            regime_switch.INTERVAL_MINUTES,
-            run_immediately=True,
-        )
-        registered.append(regime_switch.JOB_ID)
-    else:
-        logger.info("regime_switch disabled (set ENABLE_REGIME_SWITCH=false to disable)")
 
     if kline_sync.ENABLED:
         register_scheduled_job(
