@@ -506,6 +506,20 @@
 
                 <!-- Regime 策略的动态指标与标的配置 -->
                 <template v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted'">
+                  <a-form-item :label="$t('trading-assistant.form.regimeStyle')">
+                    <a-select
+                      v-decorator="['regime_style', { initialValue: '' }]"
+                      :placeholder="$t('trading-assistant.placeholders.regimeStyle')"
+                      allow-clear
+                      style="width: 100%">
+                      <a-select-option value="">{{ $t('trading-assistant.form.regimeStyleNone') }}</a-select-option>
+                      <a-select-option value="conservative">{{ $t('trading-assistant.form.regimeStyleConservative') }}</a-select-option>
+                      <a-select-option value="balanced">{{ $t('trading-assistant.form.regimeStyleBalanced') }}</a-select-option>
+                      <a-select-option value="aggressive">{{ $t('trading-assistant.form.regimeStyleAggressive') }}</a-select-option>
+                    </a-select>
+                    <div class="form-item-hint">{{ $t('trading-assistant.form.regimeStyleHint') }}</div>
+                  </a-form-item>
+
                   <a-form-item :label="$t('trading-assistant.form.regimeSymbolIndicators')">
                     <div v-for="(item, index) in regimeSymbolIndicators" :key="item.uid" style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
                       <!-- 选择标的 -->
