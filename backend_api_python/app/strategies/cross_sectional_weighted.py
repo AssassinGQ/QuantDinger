@@ -1,7 +1,11 @@
 """
 带权重的截面策略 (Regime Cross Sectional Strategy)
 支持宏观数据注入，针对不同 symbol 可以配置不同的指标。
+
+指标计算在每个 tick 都执行（与单标策略保持一致），
+Rebalance（下单调仓）按配置的周期执行。
 """
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.strategies.base import DataRequest, IStrategyLoop, InputContext
@@ -17,10 +21,30 @@ class CrossSectionalWeightedStrategy(IStrategyLoop):
     带权重的截面策略：
     - 需要宏观数据 (need_macro_info() -> True)
     - 针对每个 symbol 使用各自配置的指标 (symbol_indicators)
-    - 生成带权重的开仓信号
+    - 每 tick 计算指标并更新 status_info
+    - 仅在 rebalance 周期到时执行下单调仓
     """
 
     def need_macro_info(self) -> bool:
+        return True
+
+    def should_rebalance(
+        self,
+        strategy: Dict[str, Any],
+        last_rebalance_time: Optional[datetime],
+    ) -> bool:
+        """判断是否到了调仓周期，与指标计算解耦。"""
+        if last_rebalance_time is None:
+            return True
+        trading_config = strategy.get("trading_config") or {}
+        rebalance_frequency = trading_config.get("rebalance_frequency", "daily")
+        delta = datetime.now() - last_rebalance_time
+        if rebalance_frequency == "daily":
+            return delta.days >= 1
+        if rebalance_frequency == "weekly":
+            return delta.days >= 7
+        if rebalance_frequency == "monthly":
+            return delta.days >= 30
         return True
 
     def get_data_request(
@@ -75,13 +99,18 @@ class CrossSectionalWeightedStrategy(IStrategyLoop):
             logger.warning("Cross-sectional weighted indicator returned no result")
             return [], True, False, None
 
+        metadata = raw_output.get("metadata")
+        should_trade = ctx.get("should_rebalance", False)
+
+        if not should_trade:
+            logger.info("Regime strategy %s: indicators calculated, not rebalance time", strategy_id)
+            return [], True, False, metadata
+
         signals = generate_cross_sectional_weighted_signals(
             raw_output.get("weights", {}),
             raw_output.get("signals", {}),
             ctx.get("positions", []),
         )
-
-        metadata = raw_output.get("metadata")
 
         if not signals:
             logger.info("No rebalancing needed for weighted strategy %s", strategy_id)

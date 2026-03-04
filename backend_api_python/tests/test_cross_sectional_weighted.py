@@ -2,6 +2,7 @@
 Test suite for cross sectional weighted strategy.
 """
 import time
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pandas as pd
@@ -185,11 +186,13 @@ class TestCrossSectionalWeightedStrategy:
             assert res2 == ([], True, False, None)
 
         with patch(mock_indicator) as mock_run:
-            mock_run.return_value = {"weights": {}, "signals": {}}
+            mock_run.return_value = {"weights": {}, "signals": {}, "metadata": {"r": 1}}
             with patch(mock_gen_signals) as mock_gen:
                 mock_gen.return_value = []
-                res3 = strat.get_signals({"data": {"A": "df"}})
-                assert res3 == ([], True, True, None)
+                res3 = strat.get_signals({"data": {"A": "df"}, "should_rebalance": True})
+                assert res3[0] == []
+                assert res3[2] is True
+                assert res3[3] == {"r": 1}
 
         strat = CrossSectionalWeightedStrategy()
         assert strat.need_macro_info() is True
@@ -202,21 +205,74 @@ class TestCrossSectionalWeightedStrategy:
         assert set(req["symbol_list"]) == {"A", "B"}
         assert req["need_macro"] is True
 
+    def test_should_execute_inherits_default(self):
+        """should_execute uses base class default (True) — no override needed."""
+        strat = CrossSectionalWeightedStrategy()
+        assert strat.should_execute(1, {}, None) is True
+        assert strat.should_execute(1, {}, datetime.now()) is True
+
+    def test_should_rebalance_period(self):
+        """should_rebalance respects rebalance_frequency config."""
+        strat = CrossSectionalWeightedStrategy()
+        strategy_daily = {"trading_config": {"rebalance_frequency": "daily"}}
+        strategy_weekly = {"trading_config": {"rebalance_frequency": "weekly"}}
+        strategy_monthly = {"trading_config": {"rebalance_frequency": "monthly"}}
+
+        assert strat.should_rebalance(strategy_daily, None) is True
+
+        recent = datetime.now() - timedelta(hours=12)
+        assert strat.should_rebalance(strategy_daily, recent) is False
+
+        old_1d = datetime.now() - timedelta(days=1, hours=1)
+        assert strat.should_rebalance(strategy_daily, old_1d) is True
+
+        recent_3d = datetime.now() - timedelta(days=3)
+        assert strat.should_rebalance(strategy_weekly, recent_3d) is False
+
+        old_8d = datetime.now() - timedelta(days=8)
+        assert strat.should_rebalance(strategy_weekly, old_8d) is True
+
+        recent_15d = datetime.now() - timedelta(days=15)
+        assert strat.should_rebalance(strategy_monthly, recent_15d) is False
+
+        old_31d = datetime.now() - timedelta(days=31)
+        assert strat.should_rebalance(strategy_monthly, old_31d) is True
+
+    def test_get_signals_skips_trade_when_not_rebalance(self):
+        """Indicators calculate every tick but signals only fire at rebalance time."""
+        strat = CrossSectionalWeightedStrategy()
+        mock_indicator = (
+            "app.strategies.cross_sectional_weighted.run_cross_sectional_weighted_indicator"
+        )
+        mock_gen_signals = (
+            "app.strategies.cross_sectional_weighted.generate_cross_sectional_weighted_signals"
+        )
+
         ctx = {
             "strategy_id": 1,
-            "trading_config": {"symbol_indicators": {"A": 1}},
-            "data": {"A": pd.DataFrame({"close": [1]})}
+            "data": {"A": pd.DataFrame({"close": [1]})},
+            "should_rebalance": False,
         }
-
         with patch(mock_indicator) as mock_run:
-            mock_run.return_value = {"weights": {"A": 0.5}, "signals": {"A": 1}}
+            mock_run.return_value = {
+                "weights": {"A": 0.5}, "signals": {"A": 1},
+                "metadata": {"current_regime": "normal"}
+            }
+            signals, keep, update_reb, meta = strat.get_signals(ctx)
+            assert signals == []
+            assert update_reb is False
+            assert meta is not None
+            mock_run.assert_called_once()
 
+        ctx["should_rebalance"] = True
+        with patch(mock_indicator) as mock_run:
+            mock_run.return_value = {
+                "weights": {"A": 0.5}, "signals": {"A": 1},
+                "metadata": {"current_regime": "normal"}
+            }
             with patch(mock_gen_signals) as mock_gen:
                 mock_gen.return_value = [{"symbol": "A", "type": "open_long"}]
-
-                signals, keep_running, update_rebalance, _ = strat.get_signals(ctx)
-
+                signals, keep, update_reb, meta = strat.get_signals(ctx)
                 assert len(signals) == 1
-                assert signals[0]["symbol"] == "A"
-                assert keep_running is True
-                assert update_rebalance is True
+                assert update_reb is True
+                mock_gen.assert_called_once()

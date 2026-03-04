@@ -54,17 +54,17 @@ class CrossSectionalRunner(BaseStrategyRunner):
 
         logger.info("Cross-sectional strategy %s loop exited", strategy_id)
 
-    def _run_single_tick(
+    def _build_context(
         self,
         strategy_id: int,
         strategy: Dict[str, Any],
         strat_instance: IStrategyLoop,
         current_time: float,
-    ) -> bool:
-        """运行单次 tick 逻辑。返回 False 表示策略要求停止。"""
+    ):
+        """构建上下文，返回 None 表示跳过本次 tick。"""
         last_rebalance = self.data_handler.get_last_rebalance_at(strategy_id)
         if not strat_instance.should_execute(strategy_id, strategy, last_rebalance):
-            return True
+            return None
 
         request = strat_instance.get_data_request(strategy_id, strategy, current_time)
         ctx = self.data_handler.get_input_context_cross(strategy_id, request)
@@ -72,30 +72,51 @@ class CrossSectionalRunner(BaseStrategyRunner):
             logger.warning(
                 "Strategy %s failed to get cross input context", strategy_id
             )
-            return True
+            return None
 
         ctx["strategy_id"] = strategy_id
         ctx["indicator_code"] = strategy.get("_indicator_code", "")
         ctx["symbol_indicator_codes"] = strategy.get("_symbol_indicator_codes", {})
         ctx["current_time"] = current_time
+        return ctx
 
-        signals, keep_running, update_rebalance, metadata = strat_instance.get_signals(ctx)
-        if not keep_running:
-            return False
-
+    def _dispatch_signals(
+        self, strategy_id, strategy, signals, update_rebalance, metadata
+    ):
+        """执行信号、更新 rebalance 时间戳和 status_info。"""
         if signals:
             positions = self.data_handler.get_all_positions(strategy_id)
             self.signal_executor.execute_batch(
                 strategy_ctx=strategy,
                 signals=signals,
                 all_positions=positions,
-                current_time=int(current_time),
+                current_time=int(self._last_current_time),
             )
-
         if update_rebalance:
             self.data_handler.update_last_rebalance(strategy_id)
-
         if metadata:
             self.data_handler.update_strategy_status_info(strategy_id, metadata)
 
+    def _run_single_tick(
+        self,
+        strategy_id: int,
+        strategy: Dict[str, Any],
+        strat_instance: IStrategyLoop,
+        current_time: float,
+    ) -> bool:
+        """截面策略的 tick 逻辑：受 rebalance 周期控制。"""
+        self._last_current_time = current_time
+        ctx = self._build_context(
+            strategy_id, strategy, strat_instance, current_time
+        )
+        if ctx is None:
+            return True
+
+        signals, keep_running, update_rebalance, metadata = strat_instance.get_signals(ctx)
+        if not keep_running:
+            return False
+
+        self._dispatch_signals(
+            strategy_id, strategy, signals, update_rebalance, metadata
+        )
         return True

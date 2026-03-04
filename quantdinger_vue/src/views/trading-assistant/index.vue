@@ -403,12 +403,6 @@
                     <template slot="style" slot-scope="text">
                       <a-tag :color="getRegimeStyleColor(text)">{{ getRegimeStyleName(text) }}</a-tag>
                     </template>
-                    <template slot="signal" slot-scope="text">
-                      <a-tag v-if="text === 1" color="green">买入 (1)</a-tag>
-                      <a-tag v-else-if="text === -1" color="red">卖出 (-1)</a-tag>
-                      <a-tag v-else-if="text === 0" color="orange">平仓 (0)</a-tag>
-                      <span v-else>{{ text }}</span>
-                    </template>
                   </a-table>
                 </div>
               </a-tab-pane>
@@ -1801,20 +1795,9 @@ export default {
           key: 'indicatorName'
         },
         {
-          title: '信号 (实时)',
-          dataIndex: 'signal',
-          key: 'signal',
-          scopedSlots: { customRender: 'signal' }
-        },
-        {
           title: 'Regime 权重',
           dataIndex: 'regime_weight',
           key: 'regime_weight'
-        },
-        {
-          title: '最终贡献',
-          dataIndex: 'contribution',
-          key: 'contribution'
         }
       ]
     },
@@ -3488,9 +3471,7 @@ export default {
             key: `regime_ind_${keyCounter++}`,
             style: style,
             indicatorName: indicator ? indicator.name : `ID: ${idStr}`,
-            signal: compData.signal !== undefined ? compData.signal : '-',
-            regime_weight: compData.regime_weight !== undefined ? compData.regime_weight : '-',
-            contribution: compData.contribution !== undefined ? compData.contribution : '-'
+            regime_weight: compData.regime_weight !== undefined ? compData.regime_weight : '-'
           })
         }
       }
