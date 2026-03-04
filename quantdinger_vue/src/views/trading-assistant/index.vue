@@ -2962,9 +2962,9 @@ export default {
 
           if (tc.symbol_indicators && typeof tc.symbol_indicators === 'object') {
             const pairs = []
-            // If it's a cross_sectional_weighted regime strategy, symbol_indicators should be a dict of styles -> indId
+            // If it's a cross_sectional_weighted regime strategy, symbol_indicators should be a dict of styles -> indId or styles -> [indId, ...]
             for (const [styleOrSym, val] of Object.entries(tc.symbol_indicators)) {
-              if (typeof val === 'object' && val !== null) {
+              if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
                 // Legacy support if it was { symbol: { style: id } }
                 for (const [style, indId] of Object.entries(val)) {
                   pairs.push({
@@ -2974,12 +2974,15 @@ export default {
                   })
                 }
               } else {
-                // New format: { style: id }
-                pairs.push({
-                  uid: Date.now() + Math.random(),
-                  indicator_id: String(val),
-                  regime_style: styleOrSym === 'default' ? '' : styleOrSym
-                })
+                // New format: { style: id } or { style: [id1, id2] }
+                const indicatorIds = Array.isArray(val) ? val : [val]
+                for (const indId of indicatorIds) {
+                  pairs.push({
+                    uid: Date.now() + Math.random(),
+                    indicator_id: String(indId),
+                    regime_style: styleOrSym === 'default' ? '' : styleOrSym
+                  })
+                }
               }
             }
             if (pairs.length > 0) {
@@ -2996,6 +2999,9 @@ export default {
           })
           this.crossSectionalSymbols = []
         }
+
+        // 确保 v-if/v-else 根据 strategy_type 更新 DOM，特别是 symbol 字段的渲染
+        await this.$nextTick()
 
         // Backward compatible: nested configs from indicator-analysis backtest modal
         const trendAddObj = scaleObj && scaleObj.trendAdd ? scaleObj.trendAdd : null
