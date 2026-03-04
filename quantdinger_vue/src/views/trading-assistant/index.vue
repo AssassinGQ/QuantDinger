@@ -135,6 +135,10 @@
                             <a-icon type="pause-circle" />
                             {{ $t('trading-assistant.stopStrategy') }}
                           </a-menu-item>
+                          <a-menu-item v-if="item.status === 'running' && item.trading_config && item.trading_config.strategy_type === 'cross_sectional_weighted'" key="rebalance">
+                            <a-icon type="reload" />
+                            {{ $t('trading-assistant.rebalanceStrategy') }}
+                          </a-menu-item>
                           <a-menu-divider />
                           <a-menu-item key="edit">
                             <a-icon type="edit" />
@@ -209,6 +213,10 @@
                       <a-menu-item v-if="item.status === 'running'" key="stop">
                         <a-icon type="pause-circle" />
                         {{ $t('trading-assistant.stopStrategy') }}
+                      </a-menu-item>
+                      <a-menu-item v-if="item.status === 'running' && item.trading_config && item.trading_config.strategy_type === 'cross_sectional_weighted'" key="rebalance">
+                        <a-icon type="reload" />
+                        {{ $t('trading-assistant.rebalanceStrategy') }}
                       </a-menu-item>
                       <a-menu-divider />
                       <a-menu-item key="edit">
@@ -390,83 +398,134 @@
             <!-- 指标策略：选择技术指标 -->
             <div v-if="strategyType === 'indicator'">
               <a-form :form="form" layout="vertical">
-                <a-form-item :label="$t('trading-assistant.form.indicator')">
-                  <a-select
-                    v-decorator="['indicator_id', { rules: [{ required: true, message: $t('trading-assistant.validation.indicatorRequired') }] }]"
-                    :placeholder="$t('trading-assistant.placeholders.selectIndicator')"
-                    show-search
-                    :filter-option="filterIndicatorOption"
-                    @focus="handleIndicatorSelectFocus"
-                    @change="handleIndicatorChange"
-                    :loading="loadingIndicators"
-                    :getPopupContainer="(triggerNode) => triggerNode.parentNode">
-                    <a-select-option
-                      v-for="indicator in availableIndicators"
-                      :key="String(indicator.id)"
-                      :value="String(indicator.id)">
-                      <div class="indicator-option">
-                        <span class="indicator-name">{{ indicator.name }}</span>
-                        <a-tag v-if="indicator.type" size="small" :color="getIndicatorTypeColor(indicator.type)">
-                          {{ getIndicatorTypeName(indicator.type) }}
-                        </a-tag>
-                      </div>
-                    </a-select-option>
-                  </a-select>
-                  <div class="form-item-hint">
-                    {{ $t('trading-assistant.form.indicatorHint') }}
-                  </div>
-                </a-form-item>
-
-                <a-form-item v-if="selectedIndicator" :label="$t('trading-assistant.form.indicatorDescription')">
-                  <div class="indicator-description">
-                    {{ selectedIndicator.description || $t('trading-assistant.form.noDescription') }}
-                  </div>
-                </a-form-item>
-
-                <!-- 指标参数配置 -->
-                <a-form-item v-if="indicatorParams.length > 0" :label="$t('trading-assistant.form.indicatorParams')">
-                  <div class="indicator-params-form">
-                    <a-row :gutter="16">
-                      <a-col v-for="param in indicatorParams" :key="param.name" :xs="24" :sm="12" :md="8">
-                        <div class="param-item">
-                          <label class="param-label">
-                            {{ param.name }}
-                            <a-tooltip v-if="param.description" :title="param.description">
-                              <a-icon type="question-circle" style="margin-left: 4px; color: #999;" />
-                            </a-tooltip>
-                          </label>
-                          <!-- 整数类型 -->
-                          <a-input-number
-                            v-if="param.type === 'int'"
-                            v-model="indicatorParamValues[param.name]"
-                            :precision="0"
-                            style="width: 100%;"
-                            size="small" />
-                          <!-- 浮点数类型 -->
-                          <a-input-number
-                            v-else-if="param.type === 'float'"
-                            v-model="indicatorParamValues[param.name]"
-                            :precision="4"
-                            style="width: 100%;"
-                            size="small" />
-                          <!-- 布尔类型 -->
-                          <a-switch
-                            v-else-if="param.type === 'bool'"
-                            v-model="indicatorParamValues[param.name]"
-                            size="small" />
-                          <!-- 字符串类型 -->
-                          <a-input
-                            v-else
-                            v-model="indicatorParamValues[param.name]"
-                            size="small" />
+                <template v-if="form.getFieldValue('cs_strategy_type') !== 'cross_sectional_weighted'">
+                  <a-form-item :label="$t('trading-assistant.form.indicator')">
+                    <a-select
+                      v-decorator="['indicator_id', { rules: [{ required: true, message: $t('trading-assistant.validation.indicatorRequired') }] }]"
+                      :placeholder="$t('trading-assistant.placeholders.selectIndicator')"
+                      show-search
+                      :filter-option="filterIndicatorOption"
+                      @focus="handleIndicatorSelectFocus"
+                      @change="handleIndicatorChange"
+                      :loading="loadingIndicators"
+                      :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                      <a-select-option
+                        v-for="indicator in availableIndicators"
+                        :key="String(indicator.id)"
+                        :value="String(indicator.id)">
+                        <div class="indicator-option">
+                          <span class="indicator-name">{{ indicator.name }}</span>
+                          <a-tag v-if="indicator.type" size="small" :color="getIndicatorTypeColor(indicator.type)">
+                            {{ getIndicatorTypeName(indicator.type) }}
+                          </a-tag>
                         </div>
-                      </a-col>
-                    </a-row>
-                    <div class="form-item-hint" style="margin-top: 8px;">
-                      {{ $t('trading-assistant.form.indicatorParamsHint') }}
+                      </a-select-option>
+                    </a-select>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.indicatorHint') }}
                     </div>
-                  </div>
-                </a-form-item>
+                  </a-form-item>
+
+                  <a-form-item v-if="selectedIndicator" :label="$t('trading-assistant.form.indicatorDescription')">
+                    <div class="indicator-description">
+                      {{ selectedIndicator.description || $t('trading-assistant.form.noDescription') }}
+                    </div>
+                  </a-form-item>
+
+                  <!-- 指标参数配置 -->
+                  <a-form-item v-if="indicatorParams.length > 0" :label="$t('trading-assistant.form.indicatorParams')">
+                    <div class="indicator-params-form">
+                      <a-row :gutter="16">
+                        <a-col v-for="param in indicatorParams" :key="param.name" :xs="24" :sm="12" :md="8">
+                          <div class="param-item">
+                            <label class="param-label">
+                              {{ param.name }}
+                              <a-tooltip v-if="param.description" :title="param.description">
+                                <a-icon type="question-circle" style="margin-left: 4px; color: #999;" />
+                              </a-tooltip>
+                            </label>
+                            <!-- 整数类型 -->
+                            <a-input-number
+                              v-if="param.type === 'int'"
+                              v-model="indicatorParamValues[param.name]"
+                              :precision="0"
+                              style="width: 100%;"
+                              size="small" />
+                            <!-- 浮点数类型 -->
+                            <a-input-number
+                              v-else-if="param.type === 'float'"
+                              v-model="indicatorParamValues[param.name]"
+                              :precision="4"
+                              style="width: 100%;"
+                              size="small" />
+                            <!-- 布尔类型 -->
+                            <a-switch
+                              v-else-if="param.type === 'bool'"
+                              v-model="indicatorParamValues[param.name]"
+                              size="small" />
+                            <!-- 字符串类型 -->
+                            <a-input
+                              v-else
+                              v-model="indicatorParamValues[param.name]"
+                              size="small" />
+                          </div>
+                        </a-col>
+                      </a-row>
+                      <div class="form-item-hint" style="margin-top: 8px;">
+                        {{ $t('trading-assistant.form.indicatorParamsHint') }}
+                      </div>
+                    </div>
+                  </a-form-item>
+                </template>
+
+                <!-- Regime 策略的动态指标与标的配置 -->
+                <template v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted'">
+                  <a-form-item :label="$t('trading-assistant.form.regimeSymbolIndicators')">
+                    <div v-for="(item, index) in regimeSymbolIndicators" :key="item.uid" style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
+                      <!-- 选择标的 -->
+                      <a-select
+                        v-model="item.symbol"
+                        style="flex: 1;"
+                        :placeholder="$t('trading-assistant.placeholders.selectSymbol')"
+                        show-search
+                        :filter-option="filterWatchlistOption"
+                        :loading="loadingWatchlist"
+                        :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                        <a-select-option
+                          v-for="symItem in watchlist"
+                          :key="`${symItem.market}:${symItem.symbol}`"
+                          :value="`${symItem.market}:${symItem.symbol}`">
+                          {{ symItem.market }}:{{ symItem.symbol }}
+                        </a-select-option>
+                      </a-select>
+                      <!-- 选择指标 -->
+                      <a-select
+                        v-model="item.indicator_id"
+                        style="flex: 1;"
+                        :placeholder="$t('trading-assistant.placeholders.selectIndicator')"
+                        show-search
+                        :filter-option="filterIndicatorOption"
+                        @focus="handleIndicatorSelectFocus"
+                        :loading="loadingIndicators"
+                        :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                        <a-select-option
+                          v-for="indicator in availableIndicators"
+                          :key="String(indicator.id)"
+                          :value="String(indicator.id)">
+                          {{ indicator.name }}
+                        </a-select-option>
+                      </a-select>
+                      <!-- 删除按钮 -->
+                      <a-button type="danger" icon="minus" @click="removeRegimePair(index)" :disabled="regimeSymbolIndicators.length <= 1" />
+                    </div>
+                    <a-button type="dashed" style="width: 100%; margin-top: 8px;" @click="addRegimePair">
+                      <a-icon type="plus" /> {{ $t('trading-assistant.form.addRegimePair') }}
+                    </a-button>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.regimeSymbolIndicatorsHint') }}
+                    </div>
+                  </a-form-item>
+                </template>
 
                 <a-divider />
 
@@ -482,20 +541,6 @@
                     placeholder="ungrouped" />
                 </a-form-item>
 
-                <a-form-item :label="$t('trading-assistant.form.regimeStyle')">
-                  <a-select
-                    v-decorator="['regime_style', { initialValue: '' }]"
-                    :placeholder="$t('trading-assistant.placeholders.regimeStyle')"
-                    allow-clear
-                    style="width: 100%">
-                    <a-select-option value="">{{ $t('trading-assistant.form.regimeStyleNone') }}</a-select-option>
-                    <a-select-option value="conservative">{{ $t('trading-assistant.form.regimeStyleConservative') }}</a-select-option>
-                    <a-select-option value="balanced">{{ $t('trading-assistant.form.regimeStyleBalanced') }}</a-select-option>
-                    <a-select-option value="aggressive">{{ $t('trading-assistant.form.regimeStyleAggressive') }}</a-select-option>
-                  </a-select>
-                  <div class="form-item-hint">{{ $t('trading-assistant.form.regimeStyleHint') }}</div>
-                </a-form-item>
-
                 <!-- 策略类型选择 -->
                 <a-form-item :label="$t('trading-assistant.form.strategyType')">
                   <a-radio-group
@@ -503,6 +548,7 @@
                     @change="handleStrategyTypeChange">
                     <a-radio value="single">{{ $t('trading-assistant.form.strategyTypeSingle') }}</a-radio>
                     <a-radio value="cross_sectional">{{ $t('trading-assistant.form.strategyTypeCrossSectional') }}</a-radio>
+                    <a-radio value="cross_sectional_weighted">{{ $t('trading-assistant.form.strategyTypeRegime') }}</a-radio>
                   </a-radio-group>
                   <div class="form-item-hint">
                     {{ $t('trading-assistant.form.strategyTypeHint') }}
@@ -592,7 +638,7 @@
 
                 <!-- 单标的策略：原有的标的选择 -->
                 <a-form-item
-                  v-if="form.getFieldValue('cs_strategy_type') !== 'cross_sectional'"
+                  v-if="form.getFieldValue('cs_strategy_type') === 'single'"
                   :label="isEditMode ? $t('trading-assistant.form.symbol') : $t('trading-assistant.form.symbols')">
                   <!-- 编辑模式：单选 -->
                   <a-select
@@ -1503,7 +1549,7 @@
 </template>
 
 <script>
-import { getStrategyList, startStrategy, stopStrategy, deleteStrategy, updateStrategy, createStrategy, testExchangeConnection, getStrategyEquityCurve, batchCreateStrategies, batchStartStrategies, batchStopStrategies, batchDeleteStrategies } from '@/api/strategy'
+import { getStrategyList, startStrategy, stopStrategy, deleteStrategy, updateStrategy, createStrategy, testExchangeConnection, getStrategyEquityCurve, batchCreateStrategies, batchStartStrategies, batchStopStrategies, batchDeleteStrategies, forceRebalanceStrategy } from '@/api/strategy'
 import { getWatchlist, addWatchlist, searchSymbols, getHotSymbols } from '@/api/market'
 import { listExchangeCredentials, getExchangeCredential, createExchangeCredential } from '@/api/credentials'
 import { getNotificationSettings } from '@/api/user'
@@ -1954,6 +2000,7 @@ export default {
       selectedSymbols: [],
       // 截面策略标的列表
       crossSectionalSymbols: [],
+      regimeSymbolIndicators: [{ uid: Date.now(), symbol: undefined, indicator_id: undefined }],
       // 策略组折叠状态
       collapsedGroups: {},
       // 分组模式: 'strategy' 或 'symbol'
@@ -2299,6 +2346,14 @@ export default {
         HShare: 'orange'
       }
       return colors[market] || 'default'
+    },
+    addRegimePair () {
+      this.regimeSymbolIndicators.push({ uid: Date.now(), symbol: undefined, indicator_id: undefined })
+    },
+    removeRegimePair (index) {
+      if (this.regimeSymbolIndicators.length > 1) {
+        this.regimeSymbolIndicators.splice(index, 1)
+      }
     },
     handleWatchlistSymbolChange (val) {
       // 检查是否点击了"添加"选项
@@ -2810,6 +2865,33 @@ export default {
           } else {
             this.crossSectionalSymbols = []
           }
+        } else if (strategyType === 'cross_sectional_weighted') {
+          this.form.setFieldsValue({
+            cs_strategy_type: 'cross_sectional_weighted',
+            portfolio_size: tc.portfolio_size || 10,
+            long_ratio: tc.long_ratio || 0.5,
+            rebalance_frequency: tc.rebalance_frequency || 'daily'
+          })
+
+          if (tc.symbol_indicators && typeof tc.symbol_indicators === 'object') {
+            const pairs = []
+            for (const [sym, indId] of Object.entries(tc.symbol_indicators)) {
+              // 补充市场前缀如果缺失（简易处理，默认用当前选定市场，实际上可能需要更好解析）
+              const fullSym = sym.includes(':') ? sym : `${this.selectedMarketCategory}:${sym}`
+              pairs.push({
+                uid: Date.now() + Math.random(),
+                symbol: fullSym,
+                indicator_id: String(indId)
+              })
+            }
+            if (pairs.length > 0) {
+              this.regimeSymbolIndicators = pairs
+            } else {
+              this.regimeSymbolIndicators = [{ uid: Date.now(), symbol: undefined, indicator_id: undefined }]
+            }
+          } else {
+            this.regimeSymbolIndicators = [{ uid: Date.now(), symbol: undefined, indicator_id: undefined }]
+          }
         } else {
           this.form.setFieldsValue({
             cs_strategy_type: 'single'
@@ -2861,8 +2943,7 @@ export default {
           adverse_reduce_max_times: (tc.adverse_reduce_max_times !== undefined) ? (tc.adverse_reduce_max_times || 0) : (adverseReduceObj ? (adverseReduceObj.maxTimes || 0) : 0),
           entry_pct: (tc.entry_pct === 0 || tc.entry_pct) ? tc.entry_pct : (posObj && posObj.entryPct ? posObj.entryPct : 100),
           // AI智能决策过滤
-          enable_ai_filter: aiFilterEnabled,
-          regime_style: (tc.regime_style && ['conservative', 'balanced', 'aggressive'].includes(tc.regime_style)) ? tc.regime_style : ''
+          enable_ai_filter: aiFilterEnabled
         })
 
         this.$nextTick(() => {
@@ -2946,12 +3027,27 @@ export default {
         case 'stop':
           this.handleStopStrategy(strategy.id)
           break
+        case 'rebalance':
+          this.handleForceRebalance(strategy.id)
+          break
         case 'edit':
           this.handleEditStrategy(strategy)
           break
         case 'delete':
           this.handleDeleteStrategy(strategy)
           break
+      }
+    },
+    async handleForceRebalance (strategyId) {
+      try {
+        const res = await forceRebalanceStrategy(strategyId)
+        if (res.code === 1) {
+          this.$message.success(this.$t('trading-assistant.messages.rebalanceSuccess') || 'Rebalance triggered successfully')
+        } else {
+          this.$message.error(res.msg || 'Rebalance trigger failed')
+        }
+      } catch (error) {
+        this.$message.error(error.message || 'Rebalance trigger error')
       }
     },
     toggleGroup (groupId) {
@@ -3883,8 +3979,14 @@ export default {
                 symbol_list: values.cs_strategy_type === 'cross_sectional' ? this.crossSectionalSymbols : undefined,
                 portfolio_size: values.cs_strategy_type === 'cross_sectional' ? (values.portfolio_size || 10) : undefined,
                 long_ratio: values.cs_strategy_type === 'cross_sectional' ? (values.long_ratio || 0.5) : undefined,
-                rebalance_frequency: values.cs_strategy_type === 'cross_sectional' ? (values.rebalance_frequency || 'daily') : undefined,
-                regime_style: (values.regime_style && ['conservative', 'balanced', 'aggressive'].includes(values.regime_style)) ? values.regime_style : undefined
+                rebalance_frequency: (values.cs_strategy_type === 'cross_sectional' || values.cs_strategy_type === 'cross_sectional_weighted') ? (values.rebalance_frequency || 'daily') : undefined,
+                symbol_indicators: values.cs_strategy_type === 'cross_sectional_weighted' ? this.regimeSymbolIndicators.reduce((acc, curr) => {
+                  if (curr.symbol && curr.indicator_id) {
+                    const sym = curr.symbol.includes(':') ? curr.symbol.split(':')[1] : curr.symbol
+                    acc[sym] = parseInt(curr.indicator_id)
+                  }
+                  return acc
+                }, {}) : undefined
               }
             }
 
@@ -3904,8 +4006,8 @@ export default {
               basePayload.user_id = 1
               basePayload.strategy_type = 'IndicatorStrategy'
 
-              // 如果是截面策略，只创建一个策略（使用 createStrategy）
-              if (values.cs_strategy_type === 'cross_sectional') {
+              // 如果是截面策略或加权截面策略，只创建一个策略（使用 createStrategy）
+              if (values.cs_strategy_type === 'cross_sectional' || values.cs_strategy_type === 'cross_sectional_weighted') {
                 // 截面策略：只创建一个策略，标的列表存储在 trading_config 中
                 basePayload.strategy_type = 'IndicatorStrategy' // 保持为 IndicatorStrategy，截面类型在 trading_config 中
                 // 截面策略不需要设置 symbol，因为它是多标的的

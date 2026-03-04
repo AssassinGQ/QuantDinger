@@ -17,7 +17,8 @@ const api = {
   trades: '/api/strategies/trades',
   positions: '/api/strategies/positions',
   equityCurve: '/api/strategies/equityCurve',
-  notifications: '/api/strategies/notifications'
+  notifications: '/api/strategies/notifications',
+  forceRebalance: '/api/strategies/force-rebalance'
 }
 
 /**
@@ -233,5 +234,17 @@ export function getStrategyNotifications (params = {}) {
     url: api.notifications,
     method: 'get',
     params
+  })
+}
+
+/**
+ * 触发策略重算
+ * @param {number} id - 策略ID
+ */
+export function forceRebalanceStrategy (id) {
+  return request({
+    url: api.forceRebalance,
+    method: 'post',
+    params: { id }
   })
 }
