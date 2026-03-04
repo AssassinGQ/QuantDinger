@@ -34,6 +34,10 @@ def _execute_indicator_code(
             last = executed_df.iloc[-1]
             buy_val = int(last.get("buy", 0) or 0)
             sell_val = int(last.get("sell", 0) or 0)
+            logger.debug(
+                "Indicator read df[buy]=%s, df[sell]=%s (last row)",
+                buy_val, sell_val
+            )
             if buy_val:
                 return 1
             if sell_val:
@@ -41,6 +45,7 @@ def _execute_indicator_code(
             return 0
 
         ind_signal = local_env.get("signal", 0)
+        logger.debug("Indicator fallback to signal variable: %s", ind_signal)
         if str(ind_signal).lower() in ("1", "1.0", "long", "buy"):
             return 1
         if str(ind_signal).lower() in ("-1", "-1.0", "short", "sell"):
@@ -116,9 +121,10 @@ def _process_nested_config(
         for code in codes:
             sig_val = _execute_indicator_code(code, global_env, df)
             combined_weight += sig_val * regime_weight
+            direction = {1: "buy", -1: "sell"}.get(sig_val, "neutral")
             logger.info(
-                "Regime Component - Style: %s, Signal: %d, RegimeWeight: %.2f",
-                style, sig_val, regime_weight
+                "Regime Component - Style: %s, Direction: %s(%d), RegimeWeight: %.2f",
+                style, direction, sig_val, regime_weight
             )
             components.append({
                 "style": style,
@@ -130,9 +136,10 @@ def _process_nested_config(
     final_weight = abs(combined_weight)
     final_signal = 1 if combined_weight > 0 else (-1 if combined_weight < 0 else 0)
 
+    final_dir = {1: "buy", -1: "sell"}.get(final_signal, "neutral")
     logger.info(
-        "Regime Result - Combined Weight: %.4f -> Final Signal: %d, Final Weight: %.4f",
-        combined_weight, final_signal, final_weight
+        "Regime Result - Combined Weight: %.4f -> Direction: %s(%d), Final Weight: %.4f",
+        combined_weight, final_dir, final_signal, final_weight
     )
 
     rounded_macro = {k: round(v, 2) for k, v in macro_values.items()}
