@@ -16,6 +16,12 @@ logger = get_logger(__name__)
 class CrossSectionalRunner(BaseStrategyRunner):
     """截面策略的运行流水线"""
 
+    def _get_tick_interval(self, strategy: Dict[str, Any]) -> int:
+        """返回 tick 间隔（秒），子类可覆盖。"""
+        trading_config = strategy.get("trading_config") or {}
+        interval = int(trading_config.get("decide_interval", 300))
+        return max(interval, 1)
+
     def run(
         self,
         strategy_id: int,
@@ -23,10 +29,7 @@ class CrossSectionalRunner(BaseStrategyRunner):
         strat_instance: IStrategyLoop,
         exchange: Any,
     ) -> None:
-        trading_config = strategy.get("trading_config") or {}
-        tick_interval_sec = int(trading_config.get("decide_interval", 300))
-        if tick_interval_sec < 1:
-            tick_interval_sec = 300
+        tick_interval_sec = self._get_tick_interval(strategy)
         last_tick_time = 0.0
 
         while True:

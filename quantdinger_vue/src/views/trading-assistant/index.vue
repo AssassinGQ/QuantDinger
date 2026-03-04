@@ -385,13 +385,6 @@
                       <strong>{{ item.label }}:</strong>
                       <span :style="item.key === selectedStrategy.status_info.primary_indicator ? 'font-weight:600;color:#1890ff' : ''">{{ item.value }}</span>
                     </div>
-                    <div><strong>策略总权重:</strong> {{ selectedStrategy.status_info.final_weight }}</div>
-                    <div>
-                      <strong>最终信号:</strong>
-                      <a-tag v-if="selectedStrategy.status_info.final_signal === 1" color="green">买入 (1)</a-tag>
-                      <a-tag v-else-if="selectedStrategy.status_info.final_signal === -1" color="red">卖出 (-1)</a-tag>
-                      <a-tag v-else-if="selectedStrategy.status_info.final_signal === 0" color="orange">平仓 (0)</a-tag>
-                    </div>
                   </div>
                   <a-table
                     :columns="regimeColumns"
@@ -3426,7 +3419,7 @@ export default {
       const si = this.selectedStrategy.status_info
       const reserved = new Set([
         'current_regime', 'primary_indicator', 'components',
-        'combined_weight', 'final_weight', 'final_signal'
+        'combined_weight'
       ])
       const items = []
       for (const [key, val] of Object.entries(si)) {

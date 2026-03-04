@@ -1,9 +1,12 @@
 """
 Regime 策略运行管道
 
-与截面策略的区别：每个 tick 都计算指标并更新 status_info，
-仅在 rebalance 周期到时才执行下单调仓。
+与截面策略的区别：
+1. tick 间隔与单标策略一致（默认 10 秒），而非截面策略的 5 分钟
+2. 每个 tick 都计算指标并更新 status_info
+3. 仅在 rebalance 周期到时才执行下单调仓
 """
+import os
 from typing import Any, Dict
 
 from app.strategies.runners.cross_sectional_runner import CrossSectionalRunner
@@ -15,6 +18,14 @@ logger = get_logger(__name__)
 
 class RegimeRunner(CrossSectionalRunner):
     """Regime 策略的运行流水线，继承截面策略 Runner。"""
+
+    def _get_tick_interval(self, strategy: Dict[str, Any]) -> int:
+        """与单标策略一致，默认 10 秒。"""
+        try:
+            interval = int(os.getenv("STRATEGY_TICK_INTERVAL_SEC", "10"))
+        except (ValueError, TypeError):
+            interval = 10
+        return max(interval, 1)
 
     def _run_single_tick(
         self,
