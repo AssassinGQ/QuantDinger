@@ -294,7 +294,7 @@ class DataHandler:
         """持久化通知到 qd_strategy_notifications"""
         if user_id is None:
             user_id = self.get_user_id(strategy_id)
-        
+
         self._execute_query(
             """
             INSERT INTO qd_strategy_notifications
@@ -394,6 +394,13 @@ class DataHandler:
         """更新上次调仓时间"""
         self._execute_query(
             "UPDATE qd_strategies_trading SET last_rebalance_at = NOW() WHERE id = %s",
+            (strategy_id,),
+        )
+
+    def force_rebalance(self, strategy_id: int) -> None:
+        """重置 last_rebalance_at，触发下次 tick 重算"""
+        self._execute_query(
+            "UPDATE qd_strategies_trading SET last_rebalance_at = '1970-01-01 00:00:00' WHERE id = %s",
             (strategy_id,),
         )
 

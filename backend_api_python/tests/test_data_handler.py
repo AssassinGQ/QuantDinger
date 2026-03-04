@@ -398,6 +398,17 @@ class TestDataHandlerUpdateLastRebalance:
         assert "last_rebalance_at" in str(mock_exec.call_args)
 
 
+class TestDataHandlerForceRebalance:
+    """force_rebalance 直接覆盖"""
+
+    @patch("app.services.data_handler.DataHandler._execute_query")
+    def test_executes_force_rebalance(self, mock_exec):
+        dh = DataHandler()
+        dh.force_rebalance(1)
+        mock_exec.assert_called_once()
+        assert "last_rebalance_at = '1970-01-01 00:00:00'" in str(mock_exec.call_args)
+
+
 class TestDataHandlerFindRecentPendingOrder:
     """find_recent_pending_order 直接覆盖"""
 
