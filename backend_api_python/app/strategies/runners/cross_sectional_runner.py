@@ -79,7 +79,7 @@ class CrossSectionalRunner(BaseStrategyRunner):
         ctx["symbol_indicator_codes"] = strategy.get("_symbol_indicator_codes", {})
         ctx["current_time"] = current_time
 
-        signals, keep_running, update_rebalance, _ = strat_instance.get_signals(ctx)
+        signals, keep_running, update_rebalance, metadata = strat_instance.get_signals(ctx)
         if not keep_running:
             return False
 
@@ -94,5 +94,8 @@ class CrossSectionalRunner(BaseStrategyRunner):
 
         if update_rebalance:
             self.data_handler.update_last_rebalance(strategy_id)
+
+        if metadata:
+            self.data_handler.update_strategy_status_info(strategy_id, metadata)
 
         return True

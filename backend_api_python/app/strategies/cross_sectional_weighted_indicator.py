@@ -44,7 +44,7 @@ def _process_nested_config(
     global_env: Dict[str, Any],
     regime_cfg: Dict[str, Any],
     regime_to_weights_map: Dict[str, Any]
-) -> tuple[float, int]:
+) -> tuple[float, int, Dict[str, Any]]:
     """处理嵌套的 regime style 配置，融合计算最终权重和信号。"""
     # pylint: disable=too-many-locals
     last_row = df.iloc[-1]
@@ -64,6 +64,7 @@ def _process_nested_config(
     )
 
     combined_weight = 0.0
+    components = []
 
     for style, code_or_codes in ind_config.items():
         target_ratio = style_weights.get(style, 0.0)
@@ -83,6 +84,13 @@ def _process_nested_config(
                 "Regime Component - Style: %s, Signal: %d, IndWeight: %.2f, StyleWeight: %.2f",
                 style, sig_val, ind_weight, style_weight
             )
+            components.append({
+                "style": style,
+                "signal": sig_val,
+                "indicator_weight": round(ind_weight, 4),
+                "style_weight": round(style_weight, 4),
+                "contribution": round(sig_val * ind_weight * style_weight, 4)
+            })
 
     final_weight = abs(combined_weight)
     final_signal = 1 if combined_weight > 0 else (-1 if combined_weight < 0 else 0)
@@ -92,7 +100,18 @@ def _process_nested_config(
         combined_weight, final_signal, final_weight
     )
 
-    return final_weight, final_signal
+    metadata = {
+        "current_regime": current_regime,
+        "vix": round(vix, 2),
+        "vhsi": round(vhsi, 2),
+        "fear_greed": round(fear_greed, 2),
+        "components": components,
+        "combined_weight": round(combined_weight, 4),
+        "final_weight": round(final_weight, 4),
+        "final_signal": final_signal,
+    }
+
+    return final_weight, final_signal, metadata
 
 
 def run_cross_sectional_weighted_indicator(
@@ -105,6 +124,7 @@ def run_cross_sectional_weighted_indicator(
     """
     weights = {}
     signals = {}
+    metadata_list = {}
 
     global_env = {"trading_config": trading_config}
 
@@ -130,14 +150,19 @@ def run_cross_sectional_weighted_indicator(
             continue
 
         if isinstance(ind_config, dict):
-            final_weight, final_signal = _process_nested_config(
+            final_weight, final_signal, metadata = _process_nested_config(
                 ind_config, df, global_env, regime_cfg, regime_to_weights_map
             )
             weights[symbol] = final_weight
             signals[symbol] = final_signal
+            metadata_list[symbol] = metadata
         else:
             final_weight, final_signal = _execute_indicator_code(ind_config, global_env, df)
             weights[symbol] = final_weight
             signals[symbol] = final_signal
+            metadata_list[symbol] = {"final_weight": final_weight, "final_signal": final_signal}
 
-    return {"weights": weights, "signals": signals}
+    # Only return metadata for the first symbol if it exists (since regime is single symbol)
+    main_metadata = next(iter(metadata_list.values())) if metadata_list else None
+
+    return {"weights": weights, "signals": signals, "metadata": main_metadata}

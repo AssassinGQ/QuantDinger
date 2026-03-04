@@ -13,14 +13,14 @@ logger = get_logger(__name__)
 
 class StrategyService:
     """Strategy service."""
-    
+
     # Class variable: limit connection test concurrency
     _connection_test_semaphore = threading.Semaphore(5)
-    
+
     def __init__(self):
         # Local deployment: do not use encryption/decryption.
         pass
-        
+
     def get_running_strategies(self) -> List[Dict[str, Any]]:
         """Get all running strategies (ID only)"""
         try:
@@ -47,15 +47,15 @@ class StrategyService:
                 cursor.execute(query)
                 results = cursor.fetchall()
                 cursor.close()
-                
+
                 strategies = [{'id': row['id'], 'strategy_type': row.get('strategy_type', '')} for row in results]
                 logger.info(f"Found {len(strategies)} running strategies: {strategies}")
                 return strategies
-                
+
         except Exception as e:
             logger.error(f"Failed to fetch running strategies: {str(e)}")
             return []
-    
+
     def get_exchange_symbols(self, exchange_config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Get exchange trading pairs (no API Key required)
@@ -63,7 +63,7 @@ class StrategyService:
         try:
             exchange_id = exchange_config.get('exchange_id', '')
             proxies = exchange_config.get('proxies')
-            
+
             if not exchange_id:
                 return {'success': False, 'message': 'Please select an exchange', 'symbols': []}
 
@@ -227,36 +227,36 @@ class StrategyService:
                     symbols = sorted(list(set(symbols)))
                     return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
                 return {'success': True, 'message': 'Success', 'symbols': symbols}
-            
+
             import ccxt
-            
+
             # Create exchange instance (public only)
             exchange_class = getattr(ccxt, exchange_id, None)
             if not exchange_class:
                 return {'success': False, 'message': f'Unsupported exchange: {exchange_id}', 'symbols': []}
-            
+
             exchange_config_dict = {
                 'enableRateLimit': True,
                 'options': {'defaultType': 'swap'}  # Default to swap
             }
             if proxies:
                 exchange_config_dict['proxies'] = proxies
-            
+
             exchange = exchange_class(exchange_config_dict)
             markets = exchange.load_markets()
-            
+
             symbols = []
             for symbol, market in markets.items():
                 if market.get('active', False) and market.get('quote') == 'USDT':
                     symbols.append(symbol)
-            
+
             symbols.sort()
             return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
-            
+
         except Exception as e:
             logger.error(f"Failed to fetch symbols: {str(e)}")
             return {'success': False, 'message': f'Failed to get trading pairs: {str(e)}', 'symbols': []}
-    
+
     def test_exchange_connection(self, exchange_config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Test exchange connection via direct REST clients (no ccxt).
@@ -498,6 +498,7 @@ class StrategyService:
                 tr = self._safe_json_loads(r.get('trading_config'), {})
                 ai = self._safe_json_loads(r.get('ai_model_config'), {})
                 notify = self._safe_json_loads(r.get('notification_config'), {})
+                status_info = self._safe_json_loads(r.get('status_info'), {})
                 display_group = r.get('display_group') or 'ungrouped'
                 out.append({
                     **r,
@@ -506,7 +507,8 @@ class StrategyService:
                     'indicator_config': ind,
                     'trading_config': tr,
                     'ai_model_config': ai,
-                    'notification_config': notify
+                    'notification_config': notify,
+                    'status_info': status_info
                 })
             return out
         except Exception as e:
@@ -532,6 +534,7 @@ class StrategyService:
             r['trading_config'] = self._safe_json_loads(r.get('trading_config'), {})
             r['ai_model_config'] = self._safe_json_loads(r.get('ai_model_config'), {})
             r['notification_config'] = self._safe_json_loads(r.get('notification_config'), {})
+            r['status_info'] = self._safe_json_loads(r.get('status_info'), {})
             return r
         except Exception as e:
             logger.error(f"get_strategy failed: {e}")
@@ -563,14 +566,14 @@ class StrategyService:
         initial_capital = (trading_config or {}).get('initial_capital') or payload.get('initial_capital') or 1000
         leverage = (trading_config or {}).get('leverage') or 1
         market_type = (trading_config or {}).get('market_type') or 'swap'
-        
+
         # Cross-sectional strategy fields (store in trading_config to avoid DB schema changes)
         cs_strategy_type = payload.get('cs_strategy_type') or trading_config.get('cs_strategy_type') or 'single'
         symbol_list = payload.get('symbol_list') or trading_config.get('symbol_list') or []
         portfolio_size = payload.get('portfolio_size') or trading_config.get('portfolio_size') or 10
         long_ratio = float(payload.get('long_ratio') or trading_config.get('long_ratio') or 0.5)
         rebalance_frequency = payload.get('rebalance_frequency') or trading_config.get('rebalance_frequency') or 'daily'
-        
+
         # Store cross-sectional config in trading_config
         if cs_strategy_type == 'cross_sectional':
             trading_config['cs_strategy_type'] = cs_strategy_type
@@ -622,10 +625,10 @@ class StrategyService:
     def batch_create_strategies(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Batch create strategies (multi-symbol)
-        
+
         Args:
             payload: Contains symbols (array) and other strategy config
-            
+
         Returns:
             {
                 'success': True/False,
@@ -637,17 +640,17 @@ class StrategyService:
         symbols = payload.get('symbols') or []
         if not symbols or not isinstance(symbols, list):
             raise ValueError("symbols array is required")
-        
+
         base_name = (payload.get('strategy_name') or '').strip()
         if not base_name:
             raise ValueError("strategy_name is required")
-        
+
         # Generate strategy group ID
         strategy_group_id = str(uuid.uuid4())[:8]
-        
+
         created_ids = []
         failed_symbols = []
-        
+
         display_group = (payload.get('display_group') or '').strip() or 'ungrouped'
         for symbol in symbols:
             try:
@@ -663,25 +666,25 @@ class StrategyService:
                 else:
                     market_category = payload.get('market_category') or 'Crypto'
                     symbol_name = symbol
-                
+
                 # Strategy name with symbol suffix
                 single_payload['strategy_name'] = f"{base_name}-{symbol_name}"
                 single_payload['strategy_group_id'] = strategy_group_id
                 single_payload['group_base_name'] = base_name
                 single_payload['market_category'] = market_category
-                
+
                 # Update symbol in trading_config
                 trading_config = dict(single_payload.get('trading_config') or {})
                 trading_config['symbol'] = symbol_name
                 single_payload['trading_config'] = trading_config
-                
+
                 new_id = self.create_strategy(single_payload)
                 created_ids.append(new_id)
-                
+
             except Exception as e:
                 logger.error(f"Failed to create strategy for symbol {symbol}: {e}")
                 failed_symbols.append({'symbol': symbol, 'error': str(e)})
-        
+
         return {
             'success': len(created_ids) > 0,
             'strategy_group_id': strategy_group_id,
@@ -696,7 +699,7 @@ class StrategyService:
         """Batch start strategies. If user_id is provided, verify ownership."""
         success_ids = []
         failed_ids = []
-        
+
         for sid in strategy_ids:
             try:
                 self.update_strategy_status(sid, 'running', user_id=user_id)
@@ -704,7 +707,7 @@ class StrategyService:
             except Exception as e:
                 logger.error(f"Failed to start strategy {sid}: {e}")
                 failed_ids.append({'id': sid, 'error': str(e)})
-        
+
         return {
             'success': len(success_ids) > 0,
             'success_ids': success_ids,
@@ -715,7 +718,7 @@ class StrategyService:
         """Batch stop strategies. If user_id is provided, verify ownership."""
         success_ids = []
         failed_ids = []
-        
+
         for sid in strategy_ids:
             try:
                 self.update_strategy_status(sid, 'stopped', user_id=user_id)
@@ -723,7 +726,7 @@ class StrategyService:
             except Exception as e:
                 logger.error(f"Failed to stop strategy {sid}: {e}")
                 failed_ids.append({'id': sid, 'error': str(e)})
-        
+
         return {
             'success': len(success_ids) > 0,
             'success_ids': success_ids,
@@ -734,7 +737,7 @@ class StrategyService:
         """Batch delete strategies. If user_id is provided, verify ownership."""
         success_ids = []
         failed_ids = []
-        
+
         for sid in strategy_ids:
             try:
                 self.delete_strategy(sid, user_id=user_id)
@@ -742,7 +745,7 @@ class StrategyService:
             except Exception as e:
                 logger.error(f"Failed to delete strategy {sid}: {e}")
                 failed_ids.append({'id': sid, 'error': str(e)})
-        
+
         return {
             'success': len(success_ids) > 0,
             'success_ids': success_ids,
@@ -786,7 +789,7 @@ class StrategyService:
         trading_config = payload.get('trading_config') if payload.get('trading_config') is not None else (existing.get('trading_config') or {})
         exchange_config = payload.get('exchange_config') if payload.get('exchange_config') is not None else (existing.get('exchange_config') or {})
         ai_model_config = payload.get('ai_model_config') if payload.get('ai_model_config') is not None else (existing.get('ai_model_config') or {})
-        
+
         # Handle cross-sectional strategy config updates
         if payload.get('cs_strategy_type') is not None:
             trading_config['cs_strategy_type'] = payload.get('cs_strategy_type')

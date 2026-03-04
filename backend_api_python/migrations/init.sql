@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS qd_strategies_trading (
     strategy_group_id VARCHAR(100) DEFAULT '',
     group_base_name VARCHAR(255) DEFAULT '',
     display_group VARCHAR(100) DEFAULT 'ungrouped',
+    status_info TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );

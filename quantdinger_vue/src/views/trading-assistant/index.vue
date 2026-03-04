@@ -366,6 +366,19 @@
             <a-tabs defaultActiveKey="positions">
               <a-tab-pane key="regime" :tab="$t('trading-assistant.form.strategyTypeRegime')" v-if="selectedStrategy.trading_config && selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted'">
                 <div style="padding: 16px;">
+                  <div v-if="selectedStrategy.status_info && selectedStrategy.status_info.current_regime" style="margin-bottom: 16px; display: flex; gap: 16px; flex-wrap: wrap; background: #fafafa; padding: 12px; border-radius: 4px;">
+                    <div><strong>宏观环境状态:</strong> <a-tag color="blue">{{ selectedStrategy.status_info.current_regime }}</a-tag></div>
+                    <div><strong>VIX:</strong> {{ selectedStrategy.status_info.vix }}</div>
+                    <div><strong>VHSI:</strong> {{ selectedStrategy.status_info.vhsi }}</div>
+                    <div><strong>贪婪恐慌:</strong> {{ selectedStrategy.status_info.fear_greed }}</div>
+                    <div><strong>策略总权重:</strong> {{ selectedStrategy.status_info.final_weight }}</div>
+                    <div>
+                      <strong>最终信号:</strong>
+                      <a-tag v-if="selectedStrategy.status_info.final_signal === 1" color="green">买入 (1)</a-tag>
+                      <a-tag v-else-if="selectedStrategy.status_info.final_signal === -1" color="red">卖出 (-1)</a-tag>
+                      <a-tag v-else-if="selectedStrategy.status_info.final_signal === 0" color="orange">平仓 (0)</a-tag>
+                    </div>
+                  </div>
                   <a-table
                     :columns="regimeColumns"
                     :data-source="getRegimeIndicatorsData()"
@@ -375,6 +388,12 @@
                   >
                     <template slot="style" slot-scope="text">
                       <a-tag :color="getRegimeStyleColor(text)">{{ getRegimeStyleName(text) }}</a-tag>
+                    </template>
+                    <template slot="signal" slot-scope="text">
+                      <a-tag v-if="text === 1" color="green">买入 (1)</a-tag>
+                      <a-tag v-else-if="text === -1" color="red">卖出 (-1)</a-tag>
+                      <a-tag v-else-if="text === 0" color="orange">平仓 (0)</a-tag>
+                      <span v-else>{{ text }}</span>
                     </template>
                   </a-table>
                 </div>
@@ -1732,6 +1751,27 @@ export default {
           title: this.$t('trading-assistant.form.selectIndicator'),
           dataIndex: 'indicatorName',
           key: 'indicatorName'
+        },
+        {
+          title: '信号 (实时)',
+          dataIndex: 'signal',
+          key: 'signal',
+          scopedSlots: { customRender: 'signal' }
+        },
+        {
+          title: '指标权重',
+          dataIndex: 'indicator_weight',
+          key: 'indicator_weight'
+        },
+        {
+          title: '风格权重',
+          dataIndex: 'style_weight',
+          key: 'style_weight'
+        },
+        {
+          title: '最终贡献',
+          dataIndex: 'contribution',
+          key: 'contribution'
         }
       ]
     },
@@ -3341,15 +3381,36 @@ export default {
       const symbolIndicators = tc.symbol_indicators
       let keyCounter = 0
 
+      const statusInfo = this.selectedStrategy.status_info || {}
+      const components = statusInfo.components || []
+      // Copy components to map them by style
+      const styleComponentsMap = {}
+      for (const comp of components) {
+        if (!styleComponentsMap[comp.style]) {
+          styleComponentsMap[comp.style] = []
+        }
+        styleComponentsMap[comp.style].push(comp)
+      }
+
       for (const [style, inds] of Object.entries(symbolIndicators)) {
         const indList = Array.isArray(inds) ? inds : [inds]
         for (const indId of indList) {
           const idStr = String(indId)
           const indicator = this.availableIndicators.find(ind => String(ind.id) === idStr)
+
+          let compData = {}
+          if (styleComponentsMap[style] && styleComponentsMap[style].length > 0) {
+             compData = styleComponentsMap[style].shift()
+          }
+
           data.push({
             key: `regime_ind_${keyCounter++}`,
             style: style,
-            indicatorName: indicator ? indicator.name : `ID: ${idStr}`
+            indicatorName: indicator ? indicator.name : `ID: ${idStr}`,
+            signal: compData.signal !== undefined ? compData.signal : '-',
+            indicator_weight: compData.indicator_weight !== undefined ? compData.indicator_weight : '-',
+            style_weight: compData.style_weight !== undefined ? compData.style_weight : '-',
+            contribution: compData.contribution !== undefined ? compData.contribution : '-'
           })
         }
       }

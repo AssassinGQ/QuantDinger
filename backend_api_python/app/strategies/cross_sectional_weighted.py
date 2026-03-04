@@ -76,9 +76,11 @@ class CrossSectionalWeightedStrategy(IStrategyLoop):
             ctx.get("positions", []),
         )
 
+        metadata = raw_output.get("metadata")
+
         if not signals:
             logger.info("No rebalancing needed for weighted strategy %s", strategy_id)
-            return [], True, True, None
+            return [], True, True, metadata
 
         logger.info("Generated %d signals for cross-sectional weighted strategy %s", len(signals), strategy_id)
-        return signals, True, True, None
+        return signals, True, True, metadata

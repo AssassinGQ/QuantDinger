@@ -181,12 +181,14 @@ class DataHandler:
         }
 
     def ensure_db_columns(self) -> None:
-        """确保 qd_strategy_positions 表存在 highest_price、lowest_price 列"""
+        """确保必需的数据库列存在"""
         try:
             db_type = os.getenv("DB_TYPE", "sqlite").lower()
             with get_db_connection() as db:
                 cursor = db.cursor()
-                col_names: set = set()
+
+                # Check qd_strategy_positions
+                col_names_pos: set = set()
                 if db_type == "postgresql":
                     try:
                         cursor.execute("""
@@ -194,43 +196,68 @@ class DataHandler:
                             WHERE table_name = 'qd_strategy_positions'
                         """)
                         cols = cursor.fetchall() or []
-                        col_names = {
+                        col_names_pos = {
                             c.get("column_name") or c.get("COLUMN_NAME")
                             for c in cols
                             if isinstance(c, dict)
                         }
                     except Exception as e:
                         logger.warning("Failed to read PostgreSQL column schema: %s", e)
-                        col_names = set()
                 else:
                     try:
                         cursor.execute("PRAGMA table_info(qd_strategy_positions)")
                         cols = cursor.fetchall() or []
-                        col_names = {c.get("name") for c in cols if isinstance(c, dict)}
+                        col_names_pos = {c.get("name") for c in cols if isinstance(c, dict)}
                     except Exception as e:
                         logger.warning("Failed to read SQLite column schema: %s", e)
-                        col_names = set()
 
-                if "highest_price" not in col_names:
+                if "highest_price" not in col_names_pos and col_names_pos:
                     logger.info("Adding highest_price column to qd_strategy_positions (%s)...", db_type)
                     if db_type == "postgresql":
-                        cursor.execute(
-                            "ALTER TABLE qd_strategy_positions ADD COLUMN IF NOT EXISTS "
-                            "highest_price DOUBLE PRECISION DEFAULT 0"
-                        )
+                        cursor.execute("ALTER TABLE qd_strategy_positions ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION DEFAULT 0")
                     else:
                         cursor.execute("ALTER TABLE qd_strategy_positions ADD COLUMN highest_price REAL DEFAULT 0")
                     db.commit()
-                if "lowest_price" not in col_names:
+                if "lowest_price" not in col_names_pos and col_names_pos:
                     logger.info("Adding lowest_price column to qd_strategy_positions (%s)...", db_type)
                     if db_type == "postgresql":
-                        cursor.execute(
-                            "ALTER TABLE qd_strategy_positions ADD COLUMN IF NOT EXISTS "
-                            "lowest_price DOUBLE PRECISION DEFAULT 0"
-                        )
+                        cursor.execute("ALTER TABLE qd_strategy_positions ADD COLUMN IF NOT EXISTS lowest_price DOUBLE PRECISION DEFAULT 0")
                     else:
                         cursor.execute("ALTER TABLE qd_strategy_positions ADD COLUMN lowest_price REAL DEFAULT 0")
                     db.commit()
+
+                # Check qd_strategies_trading
+                col_names_strat: set = set()
+                if db_type == "postgresql":
+                    try:
+                        cursor.execute("""
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_name = 'qd_strategies_trading'
+                        """)
+                        cols = cursor.fetchall() or []
+                        col_names_strat = {
+                            c.get("column_name") or c.get("COLUMN_NAME")
+                            for c in cols
+                            if isinstance(c, dict)
+                        }
+                    except Exception as e:
+                        logger.warning("Failed to read PostgreSQL strat column schema: %s", e)
+                else:
+                    try:
+                        cursor.execute("PRAGMA table_info(qd_strategies_trading)")
+                        cols = cursor.fetchall() or []
+                        col_names_strat = {c.get("name") for c in cols if isinstance(c, dict)}
+                    except Exception as e:
+                        logger.warning("Failed to read SQLite strat column schema: %s", e)
+
+                if "status_info" not in col_names_strat and col_names_strat:
+                    logger.info("Adding status_info column to qd_strategies_trading (%s)...", db_type)
+                    if db_type == "postgresql":
+                        cursor.execute("ALTER TABLE qd_strategies_trading ADD COLUMN IF NOT EXISTS status_info TEXT DEFAULT ''")
+                    else:
+                        cursor.execute("ALTER TABLE qd_strategies_trading ADD COLUMN status_info TEXT DEFAULT ''")
+                    db.commit()
+
                 cursor.close()
         except Exception as e:
             logger.error("Failed to check/ensure DB columns: %s", e)
@@ -242,6 +269,13 @@ class DataHandler:
             (status, strategy_id),
         )
 
+    def update_strategy_status_info(self, strategy_id: int, status_info: Dict[str, Any]) -> None:
+        """更新策略的运行时状态信息 (如实时权重等)"""
+        self._execute_query(
+            "UPDATE qd_strategies_trading SET status_info = %s WHERE id = %s",
+            (json.dumps(status_info, ensure_ascii=False), strategy_id),
+        )
+
     def get_strategy_row(self, strategy_id: int) -> Optional[Dict[str, Any]]:
         """从 qd_strategies_trading 获取策略原始行"""
         return self._fetch_one(
@@ -251,7 +285,7 @@ class DataHandler:
                 initial_capital, leverage, decide_interval,
                 execution_mode, notification_config,
                 indicator_config, exchange_config, trading_config, ai_model_config,
-                market_category
+                market_category, status_info
             FROM qd_strategies_trading
             WHERE id = %s
             """,
