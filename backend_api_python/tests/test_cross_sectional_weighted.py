@@ -3,7 +3,7 @@ Test suite for cross sectional weighted strategy.
 """
 import time
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pandas as pd
 
@@ -14,6 +14,7 @@ from app.strategies.cross_sectional_weighted_signals import (
     generate_cross_sectional_weighted_signals
 )
 from app.strategies.cross_sectional_weighted import CrossSectionalWeightedStrategy
+from app.strategies.runners.regime_runner import RegimeRunner
 
 class TestCrossSectionalWeightedStrategy:
     """Test suite for CrossSectionalWeightedStrategy class and related functions."""
@@ -276,3 +277,112 @@ class TestCrossSectionalWeightedStrategy:
                 assert len(signals) == 1
                 assert update_reb is True
                 mock_gen.assert_called_once()
+
+
+def _make_regime_runner():
+    dh = MagicMock()
+    se = MagicMock()
+    with patch("app.strategies.runners.base_runner.get_price_fetcher") as mock_pf:
+        mock_pf.return_value = MagicMock()
+        runner = RegimeRunner(data_handler=dh, signal_executor=se)
+    return runner, dh, se
+
+
+class TestRegimeRunnerRisk:
+    """SL/TP/Trailing Stop 在 RegimeRunner 中的触发测试。"""
+
+    def _base_strategy(self, **tc_overrides):
+        tc = {
+            "symbol_indicators": {"BTC/USDT": "code1"},
+            "timeframe": "1H",
+        }
+        tc.update(tc_overrides)
+        return {
+            "id": 1,
+            "trading_config": tc,
+            "_leverage": 1.0,
+            "_market_type": "swap",
+            "_market_category": "Crypto",
+        }
+
+    def test_regime_runner_sl_triggered(self):
+        """stop_loss_pct=5%, entry=100, price=94 => close_long"""
+        runner, dh, se = _make_regime_runner()
+        strategy = self._base_strategy(stop_loss_pct=5)
+
+        dh.get_current_positions.return_value = [
+            {"symbol": "BTC/USDT", "side": "long", "size": 1.0,
+             "entry_price": 100.0, "highest_price": 100.0}
+        ]
+        runner.price_fetcher.fetch_current_price.return_value = 94.0
+
+        runner._check_risk_signals(1, strategy)
+
+        se.execute.assert_called_once()
+        call_kwargs = se.execute.call_args
+        sig = call_kwargs.kwargs.get("signal") or call_kwargs[1].get("signal")
+        if sig is None:
+            sig = call_kwargs[0][1] if len(call_kwargs[0]) > 1 else call_kwargs.kwargs["signal"]
+        assert sig["type"] == "close_long"
+        assert sig["reason"] == "server_stop_loss"
+
+    def test_regime_runner_tp_triggered(self):
+        """take_profit_pct=10%, entry=100, price=111 => close_long"""
+        runner, dh, se = _make_regime_runner()
+        strategy = self._base_strategy(take_profit_pct=10)
+
+        dh.get_current_positions.return_value = [
+            {"symbol": "BTC/USDT", "side": "long", "size": 1.0,
+             "entry_price": 100.0, "highest_price": 111.0}
+        ]
+        runner.price_fetcher.fetch_current_price.return_value = 111.0
+
+        runner._check_risk_signals(1, strategy)
+
+        se.execute.assert_called_once()
+        call_kwargs = se.execute.call_args
+        sig = call_kwargs.kwargs.get("signal") or call_kwargs[1].get("signal")
+        if sig is None:
+            sig = call_kwargs[0][1] if len(call_kwargs[0]) > 1 else call_kwargs.kwargs["signal"]
+        assert sig["type"] == "close_long"
+        assert sig["reason"] == "server_take_profit"
+
+    def test_regime_runner_trailing_stop(self):
+        """trailing_enabled + trailing_stop_pct=5%, entry=100, highest=120, price=113 => close_long"""
+        runner, dh, se = _make_regime_runner()
+        strategy = self._base_strategy(
+            trailing_enabled=True,
+            trailing_stop_pct=5,
+            trailing_activation_pct=10,
+        )
+
+        dh.get_current_positions.return_value = [
+            {"symbol": "BTC/USDT", "side": "long", "size": 1.0,
+             "entry_price": 100.0, "highest_price": 120.0}
+        ]
+        runner.price_fetcher.fetch_current_price.return_value = 113.0
+
+        runner._check_risk_signals(1, strategy)
+
+        se.execute.assert_called_once()
+        call_kwargs = se.execute.call_args
+        sig = call_kwargs.kwargs.get("signal") or call_kwargs[1].get("signal")
+        if sig is None:
+            sig = call_kwargs[0][1] if len(call_kwargs[0]) > 1 else call_kwargs.kwargs["signal"]
+        assert sig["type"] == "close_long"
+        assert sig["reason"] == "server_trailing_stop"
+
+    def test_regime_runner_no_sl_when_not_configured(self):
+        """未配置 SL/TP => 不触发任何风控信号"""
+        runner, dh, se = _make_regime_runner()
+        strategy = self._base_strategy()
+
+        dh.get_current_positions.return_value = [
+            {"symbol": "BTC/USDT", "side": "long", "size": 1.0,
+             "entry_price": 100.0, "highest_price": 105.0}
+        ]
+        runner.price_fetcher.fetch_current_price.return_value = 95.0
+
+        runner._check_risk_signals(1, strategy)
+
+        se.execute.assert_not_called()

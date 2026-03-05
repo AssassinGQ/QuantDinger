@@ -30,7 +30,6 @@ const locale = {
   'menu.dashboard.aiQuant': 'AI 量化',
   'menu.dashboard.tradingAssistant': '交易助手',
   'menu.dashboard.portfolio': '资产监测',
-  'menu.dashboard.regimeSwitch': 'Regime 切换',
   'menu.dashboard.globalMarket': '全球金融',
   'menu.settings': '系统设置',
   'menu.dashboard.aiTradingAssistant': 'AI交易助手',
