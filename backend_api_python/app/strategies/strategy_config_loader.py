@@ -260,11 +260,16 @@ def load_strategy(
 
         _normalize_capital(strategy)
 
-        if not _normalize_indicator_code(strategy, dh):
-            return None
-
-        # 处理 cross_sectional_weighted 需要的 symbol_indicators
         trading_config = strategy.get("trading_config") or {}
+        cs_type = trading_config.get("strategy_type") or trading_config.get("cs_strategy_type") or "single"
+
+        if cs_type == "cross_sectional_weighted":
+            strategy["_indicator_code"] = ""
+            strategy["_indicator_id"] = None
+        else:
+            if not _normalize_indicator_code(strategy, dh):
+                return None
+
         strategy["_symbol_indicator_codes"] = _parse_symbol_indicators(trading_config, dh)
 
         return strategy
