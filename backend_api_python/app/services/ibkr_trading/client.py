@@ -253,9 +253,22 @@ class IBKRClient:
 
         if status not in self._TERMINAL_STATUSES:
             logger.warning(
-                "Order %s timed out in status '%s' after %ss",
-                trade.order.orderId, status, timeout,
+                "Order %s timed out in status '%s' after %ss (filled=%s)",
+                trade.order.orderId, status, timeout, filled,
             )
+            if filled <= 0:
+                return OrderResult(
+                    success=False,
+                    order_id=trade.order.orderId,
+                    filled=0, avg_price=0, status=status,
+                    message=f"Order timed out in '{status}' with 0 fills after {timeout}s",
+                    raw={
+                        "orderId": trade.order.orderId,
+                        "status": status,
+                        "filled": 0,
+                        "remaining": float(trade.orderStatus.remaining or 0),
+                    },
+                )
 
         return OrderResult(
             success=True,

@@ -388,12 +388,20 @@ class TestWaitForOrder:
         assert result.success is True
         assert client._ib.sleep.called
 
-    def test_timeout_returns_optimistic_success(self):
+    def test_timeout_zero_fills_returns_failure(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Submitted", filled=0, avg_price=0)
+        trade = _make_trade_mock(status="PreSubmitted", filled=0, avg_price=0)
+        result = client._wait_for_order(trade, timeout=0.5)
+        assert result.success is False
+        assert "timed out" in result.message
+        assert result.filled == 0
+
+    def test_timeout_with_partial_fills_returns_success(self):
+        client = _make_client_with_mock_ib()
+        trade = _make_trade_mock(status="Submitted", filled=5.0, avg_price=150.0)
         result = client._wait_for_order(trade, timeout=0.5)
         assert result.success is True
-        assert result.status == "Submitted"
+        assert result.filled == 5.0
 
     def test_filled_with_partial_fill(self):
         client = _make_client_with_mock_ib()

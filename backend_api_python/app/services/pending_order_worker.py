@@ -1981,11 +1981,8 @@ class PendingOrderWorker:
             avg_price = float(result.avg_price or 0.0)
             exchange_order_id = str(result.order_id or "")
 
-            # Use ref_price if avg_price not available
-            if avg_price <= 0 and ref_price > 0:
+            if filled > 0 and avg_price <= 0 and ref_price > 0:
                 avg_price = ref_price
-            if filled <= 0:
-                filled = amount
 
             executed_at = int(time.time())
 
@@ -2106,11 +2103,8 @@ class PendingOrderWorker:
             avg_price = float(result.price or 0.0)
             exchange_order_id = str(result.order_id or "")
 
-            # Use ref_price if avg_price not available
-            if avg_price <= 0 and ref_price > 0:
+            if filled > 0 and avg_price <= 0 and ref_price > 0:
                 avg_price = ref_price
-            if filled <= 0:
-                filled = amount
 
             executed_at = int(time.time())
 
