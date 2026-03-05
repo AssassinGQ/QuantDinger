@@ -62,7 +62,7 @@ class RegimeRunner(CrossSectionalRunner):
             return False
 
         if signals:
-            logger.info(
+            logger.debug(
                 "Strategy %s generated %d signals: %s",
                 strategy_id, len(signals),
                 [(s.get("symbol"), s.get("type"), s.get("target_weight")) for s in signals],

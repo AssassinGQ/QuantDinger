@@ -105,15 +105,15 @@ class CrossSectionalWeightedStrategy(IStrategyLoop):
         should_trade = ctx.get("should_rebalance", False)
 
         if not should_trade:
-            logger.info(
-                "Regime strategy %s: indicators done (weights=%s, signals=%s), not rebalance time",
-                strategy_id, weights, ind_signals,
+            logger.debug(
+                "Strategy %s: tick done (weights=%s), not rebalance time",
+                strategy_id, weights,
             )
             return [], True, False, metadata
 
         logger.info(
-            "Regime strategy %s: rebalance — weights=%s, signals=%s",
-            strategy_id, weights, ind_signals,
+            "Strategy %s rebalance: weights=%s",
+            strategy_id, weights,
         )
 
         signals = generate_cross_sectional_weighted_signals(
@@ -123,12 +123,8 @@ class CrossSectionalWeightedStrategy(IStrategyLoop):
         )
 
         if not signals:
-            logger.info("Regime strategy %s: no rebalancing needed (all neutral or no change)", strategy_id)
+            logger.debug("Strategy %s: rebalance skipped (all neutral)", strategy_id)
             return [], True, True, metadata
 
-        logger.info(
-            "Regime strategy %s: generated %d trade signals: %s",
-            strategy_id, len(signals),
-            [(s.get("symbol"), s.get("type"), s.get("target_weight")) for s in signals],
-        )
+        logger.info("Strategy %s: generated %d trade signals", strategy_id, len(signals))
         return signals, True, True, metadata

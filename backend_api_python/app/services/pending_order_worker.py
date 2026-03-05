@@ -97,9 +97,7 @@ class PendingOrderWorker:
             time.sleep(self.poll_interval_sec)
 
     def _tick(self) -> None:
-        # logger.info(f"[PendingOrderWorker] _tick start. last_sync={self._last_position_sync_ts}")
         orders = self._fetch_pending_orders(limit=self.batch_size)
-        # logger.info(f"[PendingOrderWorker] orders fetched: {len(orders)}")
         if not orders:
             self._maybe_sync_positions()
             return
@@ -438,10 +436,7 @@ class PendingOrderWorker:
                     logger.debug(f"position sync: skip unsupported market/client: sid={sid}, cfg={safe_cfg}, market_type={market_type}, client={type(client)}")
                     continue
 
-                # [DEBUG] Log all normalized exchange keys for inspection
-                logger.debug(f"[PositionSync] Strategy {sid} Exchange Keys: {list(exch_size.keys())}")
-
-                # [Log Optimization] Always log current positions every sync cycle (10s)
+                # Log current positions every sync cycle
                 pos_summary_parts = []
                 for _sym, _sides in exch_size.items():
                     for _side_key, _qty in _sides.items():

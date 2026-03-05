@@ -434,7 +434,7 @@ class SignalExecutor:
                     )
                     continue
 
-                logger.info(
+                logger.debug(
                     "execute_batch: %s %s price=%.4f weight=%s",
                     sig_symbol, signal.get("type"), price, signal.get("target_weight"),
                 )
@@ -455,17 +455,9 @@ class SignalExecutor:
                 try:
                     result = future.result(timeout=30)
                     if result:
-                        logger.info(
-                            "execute_batch: OK %s %s",
-                            signal["symbol"],
-                            signal["type"],
-                        )
+                        logger.debug("execute_batch: OK %s %s", signal["symbol"], signal["type"])
                     else:
-                        logger.info(
-                            "execute_batch: SKIPPED %s %s (returned False)",
-                            signal["symbol"],
-                            signal["type"],
-                        )
+                        logger.debug("execute_batch: SKIPPED %s %s", signal["symbol"], signal["type"])
                 except (ValueError, TypeError, KeyError, RuntimeError, OSError, TimeoutError) as e:
                     logger.error(
                         "execute_batch: FAILED %s %s: %s",

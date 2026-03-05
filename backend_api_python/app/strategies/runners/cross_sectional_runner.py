@@ -97,7 +97,7 @@ class CrossSectionalRunner(BaseStrategyRunner):
         if signals:
             try:
                 positions = self.data_handler.get_all_positions(strategy_id)
-                logger.info(
+                logger.debug(
                     "Strategy %s dispatching %d signals, positions=%d",
                     strategy_id, len(signals), len(positions),
                 )
