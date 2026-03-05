@@ -75,7 +75,7 @@ class PendingOrderEnqueuer:
             cooldown_sec = 30
 
             if last_id > 0:
-                if strict_candle_dedup:
+                if strict_candle_dedup and last_status not in ("failed",):
                     logger.info(
                         "enqueue_pending_order skipped (same candle): id=%s sid=%s sym=%s "
                         "sig=%s ts=%s status=%s",

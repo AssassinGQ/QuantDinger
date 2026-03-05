@@ -85,6 +85,17 @@ class SignalDeduplicator:
         except (ValueError, TypeError, KeyError):
             return False
 
+    def remove_key(self, strategy_id: int, symbol: str, signal_type: str, signal_ts: int):
+        """Remove a specific dedup key so the same signal can be retried."""
+        try:
+            key = self._dedup_key(strategy_id, symbol, signal_type, int(signal_ts or 0))
+            with self._signal_dedup_lock:
+                bucket = self._signal_dedup.get(int(strategy_id))
+                if bucket and key in bucket:
+                    del bucket[key]
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
     def clear(self):
         """Clear all deduplication records. Useful for testing."""
         with self._signal_dedup_lock:

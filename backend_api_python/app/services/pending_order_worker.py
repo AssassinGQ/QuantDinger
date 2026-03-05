@@ -815,8 +815,10 @@ class PendingOrderWorker:
         signal_type = payload.get("signal_type") or order_row.get("signal_type")
         symbol = payload.get("symbol") or order_row.get("symbol")
         amount = float(payload.get("amount") or order_row.get("amount") or 0.0)
+        _signal_ts_live = int(payload.get("signal_ts") or order_row.get("signal_ts") or 0)
+        _dedup_kw_live = dict(strategy_id=strategy_id, symbol=str(symbol or ""), signal_type=str(signal_type or ""), signal_ts=_signal_ts_live)
         if not symbol or not signal_type:
-            self._mark_failed(order_id=order_id, error="missing_symbol_or_signal_type")
+            self._mark_failed(order_id=order_id, error="missing_symbol_or_signal_type", **_dedup_kw_live)
             console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} missing symbol/signal_type")
             _notify_live_best_effort(status="failed", error="missing_symbol_or_signal_type")
             return
@@ -869,7 +871,7 @@ class PendingOrderWorker:
         try:
             client = create_client(exchange_config, market_type=market_type)
         except Exception as e:
-            self._mark_failed(order_id=order_id, error=f"create_client_failed:{e}")
+            self._mark_failed(order_id=order_id, error=f"create_client_failed:{e}", **_dedup_kw_live)
             console_print(f"[worker] create_client_failed: strategy_id={strategy_id} pending_id={order_id} err={e}")
             _notify_live_best_effort(status="failed", error=f"create_client_failed:{e}")
             return
@@ -1061,7 +1063,7 @@ class PendingOrderWorker:
                 # Safer default: do NOT place orders with an unintended leverage.
                 err = f"binance_set_leverage_failed:{e}"
                 logger.warning(f"live leverage set failed: pending_id={order_id}, strategy_id={strategy_id}, cfg={safe_cfg}, err={e}")
-                self._mark_failed(order_id=order_id, error=err)
+                self._mark_failed(order_id=order_id, error=err, **_dedup_kw_live)
                 console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {err}")
                 _notify_live_best_effort(status="failed", error=err, amount_hint=amount, price_hint=ref_price)
                 return
@@ -1820,13 +1822,13 @@ class PendingOrderWorker:
                     )
                     remaining = 0.0
                 else:
-                    self._mark_failed(order_id=order_id, error=str(e))
+                    self._mark_failed(order_id=order_id, error=str(e), **_dedup_kw_live)
                     console_print(f"[worker] order failed: strategy_id={strategy_id} pending_id={order_id} err={e}")
                     _notify_live_best_effort(status="failed", error=str(e), amount_hint=amount, price_hint=ref_price)
                     return
             except Exception as e:
                 logger.warning(f"live market phase unexpected error: pending_id={order_id}, strategy_id={strategy_id}, cfg={safe_cfg}, err={e}")
-                self._mark_failed(order_id=order_id, error=str(e))
+                self._mark_failed(order_id=order_id, error=str(e), **_dedup_kw_live)
                 console_print(f"[worker] order unexpected error: strategy_id={strategy_id} pending_id={order_id} err={e}")
                 _notify_live_best_effort(status="failed", error=str(e), amount_hint=amount, price_hint=ref_price)
                 return
@@ -1928,12 +1930,14 @@ class PendingOrderWorker:
         symbol = payload.get("symbol") or order_row.get("symbol")
         amount = float(payload.get("amount") or order_row.get("amount") or 0.0)
         ref_price = float(payload.get("ref_price") or payload.get("price") or order_row.get("price") or 0.0)
+        _signal_ts = int(payload.get("signal_ts") or order_row.get("signal_ts") or 0)
+        _dedup_kw = dict(strategy_id=strategy_id, symbol=str(symbol or ""), signal_type=str(signal_type or ""), signal_ts=_signal_ts)
 
         sig = str(signal_type or "").strip().lower()
 
         # Stocks: no short selling in basic implementation
         if "short" in sig:
-            self._mark_failed(order_id=order_id, error="ibkr_stock_short_not_supported")
+            self._mark_failed(order_id=order_id, error="ibkr_stock_short_not_supported", **_dedup_kw)
             console_print(f"[worker] IBKR order rejected: strategy_id={strategy_id} pending_id={order_id} short not supported")
             _notify_live_best_effort(status="failed", error="ibkr_stock_short_not_supported")
             return
@@ -1944,7 +1948,7 @@ class PendingOrderWorker:
         elif sig in ("close_long", "reduce_long"):
             action = "sell"
         else:
-            self._mark_failed(order_id=order_id, error=f"ibkr_unsupported_signal:{signal_type}")
+            self._mark_failed(order_id=order_id, error=f"ibkr_unsupported_signal:{signal_type}", **_dedup_kw)
             console_print(f"[worker] IBKR order rejected: strategy_id={strategy_id} pending_id={order_id} unsupported signal {signal_type}")
             _notify_live_best_effort(status="failed", error=f"ibkr_unsupported_signal:{signal_type}")
             return
@@ -1969,7 +1973,7 @@ class PendingOrderWorker:
             )
 
             if not result.success:
-                self._mark_failed(order_id=order_id, error=f"ibkr_order_failed:{result.message}")
+                self._mark_failed(order_id=order_id, error=f"ibkr_order_failed:{result.message}", **_dedup_kw)
                 console_print(f"[worker] IBKR order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
                 _notify_live_best_effort(status="failed", error=f"ibkr_order_failed:{result.message}")
                 return
@@ -2038,7 +2042,7 @@ class PendingOrderWorker:
 
         except Exception as e:
             logger.error(f"IBKR order execution failed: pending_id={order_id}, strategy_id={strategy_id}, err={e}")
-            self._mark_failed(order_id=order_id, error=f"ibkr_exception:{e}")
+            self._mark_failed(order_id=order_id, error=f"ibkr_exception:{e}", **_dedup_kw)
             console_print(f"[worker] IBKR order exception: strategy_id={strategy_id} pending_id={order_id} err={e}")
             _notify_live_best_effort(status="failed", error=str(e))
 
@@ -2212,7 +2216,16 @@ class PendingOrderWorker:
             db.commit()
             cur.close()
 
-    def _mark_failed(self, order_id: int, error: str) -> None:
+    def _mark_failed(
+        self,
+        order_id: int,
+        error: str,
+        *,
+        strategy_id: int = 0,
+        symbol: str = "",
+        signal_type: str = "",
+        signal_ts: int = 0,
+    ) -> None:
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
@@ -2227,6 +2240,17 @@ class PendingOrderWorker:
             )
             db.commit()
             cur.close()
+        if strategy_id and signal_ts and symbol and signal_type:
+            try:
+                from app.services.signal_deduplicator import get_signal_deduplicator as _get_dedup1
+                _get_dedup1().remove_key(int(strategy_id), str(symbol), str(signal_type), int(signal_ts))
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+            try:
+                from app.services.signal_processor import get_signal_deduplicator as _get_dedup2
+                _get_dedup2().remove_key(int(strategy_id), str(symbol), str(signal_type), int(signal_ts))
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
 
     def _mark_deferred(self, order_id: int, reason: str) -> None:
         with get_db_connection() as db:
