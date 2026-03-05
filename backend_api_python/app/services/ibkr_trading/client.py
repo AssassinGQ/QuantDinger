@@ -288,17 +288,17 @@ class IBKRClient:
         Returns:
             OrderResult
         """
+        import math
+        qty = math.floor(quantity)
+        if qty <= 0:
+            return OrderResult(
+                success=False,
+                message=f"Quantity too small after rounding to whole shares: {quantity} -> {qty}"
+            )
+
         try:
             self._ensure_connected()
             _ensure_ib_insync()
-            
-            import math
-            qty = math.floor(quantity)
-            if qty <= 0:
-                return OrderResult(
-                    success=False,
-                    message=f"Quantity too small after rounding to whole shares: {quantity} -> {qty}"
-                )
             
             contract = self._create_contract(symbol, market_type)
             if not self._qualify_contract(contract):
@@ -344,17 +344,17 @@ class IBKRClient:
         Returns:
             OrderResult
         """
+        import math
+        qty = math.floor(quantity)
+        if qty <= 0:
+            return OrderResult(
+                success=False,
+                message=f"Quantity too small after rounding to whole shares: {quantity} -> {qty}"
+            )
+
         try:
             self._ensure_connected()
             _ensure_ib_insync()
-            
-            import math
-            qty = math.floor(quantity)
-            if qty <= 0:
-                return OrderResult(
-                    success=False,
-                    message=f"Quantity too small after rounding to whole shares: {quantity} -> {qty}"
-                )
             
             contract = self._create_contract(symbol, market_type)
             if not self._qualify_contract(contract):
