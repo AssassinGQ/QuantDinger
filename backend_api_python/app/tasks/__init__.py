@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 def register_all_tasks() -> None:
     """注册所有启用的插件定时任务到 APScheduler。"""
     from app.services.scheduler_service import register_scheduled_job
-    from app.tasks import kline_sync, portfolio_monitor_task
+    from app.tasks import kline_sync
 
     registered = []
 
@@ -27,16 +27,6 @@ def register_all_tasks() -> None:
         registered.append(kline_sync.JOB_ID)
     else:
         logger.info("kline_sync plugin disabled (using existing /api/scheduler route)")
-
-    if portfolio_monitor_task.ENABLED:
-        register_scheduled_job(
-            portfolio_monitor_task.JOB_ID,
-            portfolio_monitor_task.run,
-            portfolio_monitor_task.INTERVAL_MINUTES,
-        )
-        registered.append(portfolio_monitor_task.JOB_ID)
-    else:
-        logger.info("portfolio_monitor_task disabled (set ENABLE_PORTFOLIO_MONITOR_TASK=false to disable)")
 
     if registered:
         logger.info("Plugin tasks registered: %s", ", ".join(registered))

@@ -233,7 +233,7 @@ def create_app(config_name='default'):
         start_portfolio_monitor()
         restore_running_strategies()
 
-        # Register plugin-style scheduled tasks (regime_switch, etc.)
+        # Register plugin-style scheduled tasks (kline_sync, etc.)
         try:
             from app.tasks import register_all_tasks
             register_all_tasks()

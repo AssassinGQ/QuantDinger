@@ -14,24 +14,11 @@ from app.services.pending_order_enqueuer import PendingOrderEnqueuer
 from app.services.data_handler import DataHandler
 from app.utils.logger import get_logger
 
-try:
-    from app.services.portfolio_allocator import get_portfolio_allocator
-except ImportError:
-    get_portfolio_allocator = None
-
 logger = get_logger(__name__)
 
 
 def _get_available_capital(strategy_id: int, initial_capital: float) -> float:
-    """获取可用资金：优先从 PortfolioAllocator 获取动态分配，fallback 到 initial_capital。"""
-    if get_portfolio_allocator:
-        try:
-            allocator = get_portfolio_allocator()
-            allocated = allocator.get_allocated_capital(strategy_id)
-            if allocated is not None:
-                return allocated
-        except (ValueError, TypeError, KeyError, RuntimeError, OSError):
-            pass
+    """返回策略可用资金。"""
     return initial_capital
 
 

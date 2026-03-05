@@ -89,7 +89,6 @@ class TestGetAllJobsStatus:
 
 class TestRegisterAllTasks:
     @patch("app.tasks.kline_sync.ENABLED", True)
-    @patch("app.tasks.portfolio_monitor_task.ENABLED", False)
     @patch("app.services.scheduler_service.register_scheduled_job")
     def test_registers_kline_sync_only(self, mock_reg):
         from app.tasks import register_all_tasks
@@ -97,11 +96,8 @@ class TestRegisterAllTasks:
 
         job_ids = [call.args[0] for call in mock_reg.call_args_list]
         assert "task_kline_sync" in job_ids
-        assert "task_regime_switch" not in job_ids
-        assert "task_portfolio_monitor" not in job_ids
 
     @patch("app.tasks.kline_sync.ENABLED", False)
-    @patch("app.tasks.portfolio_monitor_task.ENABLED", False)
     @patch("app.services.scheduler_service.register_scheduled_job")
     def test_registers_nothing_when_disabled(self, mock_reg):
         from app.tasks import register_all_tasks

@@ -305,16 +305,6 @@ class TestSignalExecutorExecute:
         assert result is True
         signal_executor.data_handler.record_trade.assert_called_once()
         signal_executor.data_handler.close_position.assert_called_once()
-        from app.services.signal_executor import _get_available_capital
-        with patch("app.services.portfolio_allocator.get_portfolio_allocator", side_effect=RuntimeError("Error")):
-            assert _get_available_capital(1, 1000.0) == 1000.0
-
-    def test_get_available_capital_none(self):
-        from app.services.signal_executor import _get_available_capital
-        mock_allocator = MagicMock()
-        mock_allocator.get_allocated_capital.return_value = None
-        with patch("app.services.portfolio_allocator.get_portfolio_allocator", return_value=mock_allocator):
-            assert _get_available_capital(1, 1000.0) == 1000.0
 
     @patch("app.services.signal_executor._get_available_capital", return_value=10000.0)
     def test_signal_mode_updates_db(self, _mock_capital, signal_executor):

@@ -9,8 +9,7 @@ import pandas as pd
 from app.strategies.base import RawIndicatorOutput
 from app.utils.logger import get_logger
 
-# Import regime logic
-from app.tasks.regime_switch import _load_config, compute_regime
+from app.strategies.regime_utils import compute_regime, load_regime_rules, load_regime_to_weights
 
 logger = get_logger(__name__)
 
@@ -169,15 +168,8 @@ def run_cross_sectional_weighted_indicator(
 
     global_env = {"trading_config": trading_config}
 
-    regime_cfg = _load_config()
-
-    regime_to_weights_map = regime_cfg.get("regime_to_weights") or \
-                            regime_cfg.get("multi_strategy", {}).get("regime_to_weights") or {
-        "panic": {"conservative": 0.8, "balanced": 0.2, "aggressive": 0.0},
-        "high_vol": {"conservative": 0.5, "balanced": 0.4, "aggressive": 0.1},
-        "normal": {"conservative": 0.2, "balanced": 0.6, "aggressive": 0.2},
-        "low_vol": {"conservative": 0.1, "balanced": 0.3, "aggressive": 0.6},
-    }
+    regime_cfg = {"regime_rules": load_regime_rules()}
+    regime_to_weights_map = load_regime_to_weights()
 
     for symbol, df in data.items():
         if df is None or len(df) == 0:
