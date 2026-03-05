@@ -524,6 +524,7 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
                  patch("app.strategies.cross_sectional.run_cross_sectional_indicator",
                        return_value=indicator_result), \
                  patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
+                 patch("app.services.signal_executor.SignalExecutor._fetch_price_for_signal", return_value=100.0), \
                  patch("app.strategies.cross_sectional.CrossSectionalStrategy.should_execute", return_value=True), \
                  patch.object(DataHandler, "update_last_rebalance"):
                 mock_exec_signal.return_value = True
@@ -560,6 +561,7 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
                  patch("app.strategies.cross_sectional.run_cross_sectional_indicator",
                        return_value=indicator_result), \
                  patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
+                 patch("app.services.signal_executor.SignalExecutor._fetch_price_for_signal", return_value=100.0), \
                  patch("app.strategies.cross_sectional.CrossSectionalStrategy.should_execute", return_value=True), \
                  patch.object(DataHandler, "update_last_rebalance"):
                 mock_exec_signal.return_value = True
@@ -725,6 +727,7 @@ class TestTE06bCloseSignalReceivesCorrectPositions:
                  patch("app.strategies.cross_sectional.generate_cross_sectional_signals",
                        return_value=[{"symbol": "A", "type": "close_long", "score": 0.5}]), \
                  patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
+                 patch("app.services.signal_executor.SignalExecutor._fetch_price_for_signal", return_value=100.0), \
                  patch.object(DataHandler, "update_last_rebalance"), \
                  patch.object(DataHandler, "get_current_positions", return_value=[pos_a]), \
                  patch.object(DataHandler, "get_all_positions", return_value=[pos_a]):

@@ -294,6 +294,7 @@ class TestRegimeRunnerRisk:
     def _base_strategy(self, **tc_overrides):
         tc = {
             "symbol_indicators": {"BTC/USDT": "code1"},
+            "symbol": "BTC/USDT",
             "timeframe": "1H",
         }
         tc.update(tc_overrides)
