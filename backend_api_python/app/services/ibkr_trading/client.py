@@ -4,6 +4,7 @@ Interactive Brokers Trading Client
 Uses ib_insync library to connect to TWS or IB Gateway for trading.
 """
 
+import os
 import time
 import threading
 import asyncio
@@ -61,6 +62,17 @@ class IBKRConfig:
     readonly: bool = False
     account: str = ""  # Leave empty to auto-select first account
     timeout: float = 20.0  # Connection timeout in seconds
+
+    @classmethod
+    def from_env(cls) -> "IBKRConfig":
+        """Create config from environment variables (IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, IBKR_ACCOUNT)."""
+        return cls(
+            host=os.environ.get("IBKR_HOST", "127.0.0.1"),
+            port=int(os.environ.get("IBKR_PORT", "7497")),
+            client_id=int(os.environ.get("IBKR_CLIENT_ID", "1")),
+            account=os.environ.get("IBKR_ACCOUNT", ""),
+            readonly=False,
+        )
 
 
 @dataclass
@@ -522,19 +534,25 @@ _global_lock = threading.Lock()
 
 def get_ibkr_client(config: Optional[IBKRConfig] = None) -> IBKRClient:
     """
-    Get global IBKR client singleton.
-    
+    Get global IBKR client singleton with auto-reconnect.
+
+    When no config is provided, reads from environment variables
+    (IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, IBKR_ACCOUNT).
+
     Args:
         config: Configuration (only effective on first call)
-        
+
     Returns:
-        IBKRClient instance
+        Connected IBKRClient instance
     """
     global _global_client
-    
+
     with _global_lock:
         if _global_client is None:
-            _global_client = IBKRClient(config)
+            cfg = config or IBKRConfig.from_env()
+            _global_client = IBKRClient(cfg)
+        if not _global_client.connected:
+            _global_client.connect()
         return _global_client
 
 

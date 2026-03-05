@@ -68,22 +68,25 @@ def connect():
     try:
         data = request.get_json() or {}
         
-        # Build config
-        config = IBKRConfig(
-            host=data.get('host', '127.0.0.1'),
-            port=int(data.get('port', 7497)),
-            client_id=int(data.get('clientId', 1)),
-            account=data.get('account', ''),
-            readonly=data.get('readonly', False),
-        )
+        has_custom = data.get('host') or data.get('port')
+        if has_custom:
+            config = IBKRConfig(
+                host=data.get('host', '127.0.0.1'),
+                port=int(data.get('port', 7497)),
+                client_id=int(data.get('clientId', 1)),
+                account=data.get('account', ''),
+                readonly=data.get('readonly', False),
+            )
+            if _client is not None and _client.connected:
+                _client.disconnect()
+            _client = IBKRClient(config)
+        else:
+            _client = get_ibkr_client()
         
-        # Disconnect existing connection
-        if _client is not None and _client.connected:
-            _client.disconnect()
-        
-        # Create new client and connect
-        _client = IBKRClient(config)
-        success = _client.connect()
+        if not _client.connected:
+            success = _client.connect()
+        else:
+            success = True
         
         if success:
             return jsonify({
@@ -94,7 +97,7 @@ def connect():
         else:
             return jsonify({
                 "success": False,
-                "error": "Connection failed. Please check if TWS/Gateway is running."
+                "error": "Connection failed. Please check if IB Gateway is running."
             }), 400
             
     except ImportError as e:

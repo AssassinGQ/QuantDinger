@@ -1313,6 +1313,8 @@ const locale = {
   'trading-assistant.form.localDeploymentHint': 'IBKR 和 MT5 属于外挂类实盘接口，需要本地部署运行 QuantDinger，不支持云端 SaaS 模式。请确保您已在本地安装并配置相关交易软件（TWS/IB Gateway 或 MT5 终端）。',
   'trading-assistant.form.ibkrConnectionTitle': '盈透证券连接配置',
   'trading-assistant.form.ibkrConnectionHint': '请确保 TWS 或 IB Gateway 已启动并启用 API 连接',
+  'trading-assistant.form.ibkrGatewayManagedTitle': '连接由系统统一管理',
+  'trading-assistant.form.ibkrGatewayManagedHint': 'IB Gateway 连接参数（主机、端口、账户）已由管理员在后端环境变量中统一配置，无需手动填写。点击下方「测试连接」可验证 Gateway 是否可用。',
   'trading-assistant.validation.brokerRequired': '请选择券商',
   'trading-assistant.placeholders.selectBroker': '选择券商',
   'trading-assistant.brokerNames': {

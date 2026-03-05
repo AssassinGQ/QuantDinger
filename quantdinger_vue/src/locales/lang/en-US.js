@@ -1436,6 +1436,8 @@ const locale = {
   'trading-assistant.form.localDeploymentHint': 'IBKR and MT5 are external trading interfaces that require local deployment of QuantDinger. Cloud SaaS mode is not supported. Please ensure you have installed and configured the trading software (TWS/IB Gateway or MT5 terminal) on your local machine.',
   'trading-assistant.form.ibkrConnectionTitle': 'Interactive Brokers Connection',
   'trading-assistant.form.ibkrConnectionHint': 'Make sure TWS or IB Gateway is running with API enabled',
+  'trading-assistant.form.ibkrGatewayManagedTitle': 'Connection managed by system',
+  'trading-assistant.form.ibkrGatewayManagedHint': 'IB Gateway connection parameters (host, port, account) are centrally configured via backend environment variables. Click "Test Connection" below to verify Gateway availability.',
   'trading-assistant.validation.brokerRequired': 'Please select a broker',
   'trading-assistant.placeholders.selectBroker': 'Select broker',
   'trading-assistant.brokerNames': {

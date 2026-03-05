@@ -148,17 +148,15 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
 
 def create_ibkr_client(exchange_config: Dict[str, Any]):
     """
-    Create IBKR client for US/HK stock trading.
+    Create or retrieve IBKR client for US/HK stock trading.
 
-    exchange_config should contain:
-    - ibkr_host: TWS/Gateway host (default: 127.0.0.1)
-    - ibkr_port: TWS/Gateway port (default: 7497)
-    - ibkr_client_id: Client ID (default: 1)
-    - ibkr_account: Account ID (optional, auto-select if empty)
+    If exchange_config contains explicit ibkr_host/ibkr_port, creates a
+    standalone client (backward compatible).  Otherwise uses the global
+    singleton whose connection params come from environment variables
+    (IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, IBKR_ACCOUNT).
     """
     global IBKRClient, IBKRConfig
 
-    # Lazy import to avoid ImportError if ib_insync not installed
     if IBKRClient is None or IBKRConfig is None:
         try:
             from app.services.ibkr_trading import IBKRClient as _IBKRClient, IBKRConfig as _IBKRConfig
@@ -166,6 +164,11 @@ def create_ibkr_client(exchange_config: Dict[str, Any]):
             IBKRConfig = _IBKRConfig
         except ImportError:
             raise LiveTradingError("IBKR trading requires ib_insync. Run: pip install ib_insync")
+
+    has_strategy_level_config = exchange_config.get("ibkr_host") or exchange_config.get("ibkr_port")
+    if not has_strategy_level_config:
+        from app.services.ibkr_trading.client import get_ibkr_client
+        return get_ibkr_client()
 
     host = str(exchange_config.get("ibkr_host") or "127.0.0.1").strip()
     port = int(exchange_config.get("ibkr_port") or 7497)
@@ -182,7 +185,6 @@ def create_ibkr_client(exchange_config: Dict[str, Any]):
 
     client = IBKRClient(config)
 
-    # Connect immediately (IBKR requires active connection)
     if not client.connect():
         raise LiveTradingError("Failed to connect to IBKR TWS/Gateway. Please check if it's running.")
 

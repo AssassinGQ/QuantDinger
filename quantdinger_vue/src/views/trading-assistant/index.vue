@@ -1287,56 +1287,14 @@
                     </a-select>
                   </a-form-item>
 
-                  <!-- IBKR specific configuration -->
+                  <!-- IBKR specific configuration (connection managed by backend env) -->
                   <template v-if="currentBrokerId === 'ibkr'">
-                    <a-alert
-                      type="warning"
-                      show-icon
-                      style="margin-bottom: 16px;"
-                      :message="$t('trading-assistant.form.localDeploymentRequired')"
-                      :description="$t('trading-assistant.form.localDeploymentHint')" />
                     <a-alert
                       type="info"
                       show-icon
                       style="margin-bottom: 16px;"
-                      :message="$t('trading-assistant.form.ibkrConnectionTitle')"
-                      :description="$t('trading-assistant.form.ibkrConnectionHint')" />
-
-                    <a-form-item :label="$t('trading-assistant.form.ibkrHost')">
-                      <a-input
-                        v-decorator="['ibkr_host', { initialValue: '127.0.0.1' }]"
-                        placeholder="127.0.0.1"
-                        @change="handleApiConfigChange" />
-                    </a-form-item>
-
-                    <a-form-item :label="$t('trading-assistant.form.ibkrPort')">
-                      <a-input-number
-                        v-decorator="['ibkr_port', { initialValue: 7497 }]"
-                        placeholder="7497"
-                        :min="1"
-                        :max="65535"
-                        style="width: 100%"
-                        @change="handleApiConfigChange" />
-                      <div class="form-item-hint">{{ $t('trading-assistant.form.ibkrPortHint') }}</div>
-                    </a-form-item>
-
-                    <a-form-item :label="$t('trading-assistant.form.ibkrClientId')">
-                      <a-input-number
-                        v-decorator="['ibkr_client_id', { initialValue: 1 }]"
-                        placeholder="1"
-                        :min="1"
-                        :max="999"
-                        style="width: 100%"
-                        @change="handleApiConfigChange" />
-                    </a-form-item>
-
-                    <a-form-item :label="$t('trading-assistant.form.ibkrAccount')">
-                      <a-input
-                        v-decorator="['ibkr_account', { initialValue: '' }]"
-                        :placeholder="$t('trading-assistant.placeholders.ibkrAccount')"
-                        @change="handleApiConfigChange" />
-                      <div class="form-item-hint">{{ $t('trading-assistant.form.ibkrAccountHint') }}</div>
-                    </a-form-item>
+                      :message="$t('trading-assistant.form.ibkrGatewayManagedTitle')"
+                      :description="$t('trading-assistant.form.ibkrGatewayManagedHint')" />
                   </template>
 
                   <!-- Future broker configurations can be added here -->
@@ -2914,14 +2872,9 @@ export default {
 
         if (isLive && supportsLiveTrading) {
           if (isBrokerMarket) {
-            // Broker configuration (US/HK stocks)
             this.currentBrokerId = exchangeId || 'ibkr'
             this.form.setFieldsValue({
-              broker_id: exchangeId || 'ibkr',
-              ibkr_host: strategy.exchange_config.ibkr_host || '127.0.0.1',
-              ibkr_port: strategy.exchange_config.ibkr_port || 7497,
-              ibkr_client_id: strategy.exchange_config.ibkr_client_id || 1,
-              ibkr_account: strategy.exchange_config.ibkr_account || ''
+              broker_id: exchangeId || 'ibkr'
             })
           } else if (isForexMarket) {
             // MT5 configuration (Forex)
@@ -3872,22 +3825,11 @@ export default {
       this.testing = true
 
       try {
-        // IBKR uses different connection test (host/port instead of api_key/secret)
+        // IBKR uses backend-managed connection (env vars)
         if (this.isIBKRMarket) {
-          const values = this.form.getFieldsValue(['ibkr_host', 'ibkr_port', 'ibkr_client_id', 'ibkr_account'])
-          const host = values.ibkr_host || '127.0.0.1'
-          const port = values.ibkr_port || 7497
-          const clientId = values.ibkr_client_id || 1
-          const account = values.ibkr_account || ''
-
           try {
-            // Call IBKR connect API
-            const res = await this.$http.post('/api/ibkr/connect', {
-              host: host,
-              port: parseInt(port),
-              clientId: parseInt(clientId),
-              account: account
-            })
+            // Call IBKR connect API (no params - uses backend env config)
+            const res = await this.$http.post('/api/ibkr/connect', {})
 
             // Note: request.js interceptor returns response.data directly, so res is the JSON object
             if (res && res.success) {
@@ -4216,13 +4158,7 @@ export default {
                 indicator_code: indicator.code || ''
               },
               exchange_config: isLive ? (this.isIBKRMarket ? {
-                // Broker configuration (US/HK stocks)
-                exchange_id: values.broker_id || this.currentBrokerId || 'ibkr',
-                // IBKR specific fields
-                ibkr_host: values.ibkr_host || '127.0.0.1',
-                ibkr_port: values.ibkr_port || 7497,
-                ibkr_client_id: values.ibkr_client_id || 1,
-                ibkr_account: values.ibkr_account || ''
+                exchange_id: values.broker_id || this.currentBrokerId || 'ibkr'
               } : this.isMT5Market ? {
                 // MT5/Forex broker configuration
                 exchange_id: values.forex_broker_id || this.currentBrokerId || 'mt5',

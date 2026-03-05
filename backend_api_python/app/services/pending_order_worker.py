@@ -1960,7 +1960,7 @@ class PendingOrderWorker:
             # Place market order via IBKR
             result = client.place_market_order(
                 symbol=symbol,
-                action=action,
+                side=action,
                 quantity=amount,
                 market_type=market_type,
             )
