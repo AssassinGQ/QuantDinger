@@ -2776,15 +2776,6 @@ export default {
 
       // Delay loading to ensure modal/form items are mounted.
       this.$nextTick(async () => {
-        const fieldsAfterReset = Object.keys(this.form.getFieldsValue())
-        console.log('[DIAG-0] handleEditStrategy $nextTick entry', {
-          csType: this.form.getFieldValue('cs_strategy_type'),
-          hasSymbol: fieldsAfterReset.includes('symbol'),
-          fields: fieldsAfterReset,
-          strategyType: strategy.strategy_type,
-          strategyName: strategy.strategy_name,
-          tcStrategyType: strategy.trading_config?.strategy_type
-        })
         // Keep data sources in sync (same as create flow)
         // Must await loadWatchlist so options exist before setFieldsValue sets symbol
         await this.loadWatchlist()
@@ -3054,13 +3045,8 @@ export default {
         }
 
         // 确保 v-if/v-else 根据 strategy_type 更新 DOM，特别是 symbol 字段的渲染
-        // Need two $nextTick cycles: first for v-if to toggle DOM, second for v-decorator to register the field
         await this.$nextTick()
         await this.$nextTick()
-
-        const csType1 = this.form.getFieldValue('cs_strategy_type')
-        const fields1 = Object.keys(this.form.getFieldsValue())
-        console.log('[DIAG-1] after 2x nextTick', { csType: csType1, hasSymbol: fields1.includes('symbol'), fields: fields1 })
 
         // Backward compatible: nested configs from indicator-analysis backtest modal
         const trendAddObj = scaleObj && scaleObj.trendAdd ? scaleObj.trendAdd : null
@@ -3084,16 +3070,6 @@ export default {
             this.watchlist.push({ market: parts[0], symbol: parts[1], name: '' })
           }
         }
-
-        const fields2 = Object.keys(this.form.getFieldsValue())
-        console.log('[DIAG-2] before main setFieldsValue', {
-          symbolValue,
-          hasSymbol: fields2.includes('symbol'),
-          fields: fields2,
-          csType: this.form.getFieldValue('cs_strategy_type'),
-          watchlistLen: this.watchlist.length,
-          symbolInWatchlist: symbolValue ? this.watchlist.some(w => `${w.market}:${w.symbol}` === symbolValue) : null
-        })
 
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
@@ -3134,13 +3110,24 @@ export default {
         this.$nextTick(() => {
           this.recalcEntryPctMaxUi()
           this.normalizeEntryPct()
-          const fields3 = Object.keys(this.form.getFieldsValue())
-          console.log('[DIAG-3] after final setFieldsValue + nextTick', {
-            symbolNow: this.form.getFieldValue('symbol'),
-            csTypeNow: this.form.getFieldValue('cs_strategy_type'),
-            hasSymbol: fields3.includes('symbol'),
-            fields: fields3
-          })
+
+          // v-decorator for 'symbol' may not be registered yet after cs_strategy_type
+          // switch (Ant Design Vue 1.x needs extra render cycles).
+          // Retry with setTimeout to ensure the field is registered and value sticks.
+          if (symbolValue && !this.form.getFieldValue('symbol')) {
+            const retrySetSymbol = (attempts) => {
+              if (attempts <= 0) return
+              setTimeout(() => {
+                if (!this.form.getFieldValue('symbol')) {
+                  this.form.setFieldsValue({ symbol: symbolValue })
+                  if (!this.form.getFieldValue('symbol') && attempts > 1) {
+                    retrySetSymbol(attempts - 1)
+                  }
+                }
+              }, 50)
+            }
+            retrySetSymbol(5)
+          }
         })
       }
     },
