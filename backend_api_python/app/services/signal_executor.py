@@ -383,6 +383,22 @@ class SignalExecutor:
             logger.error("Failed to execute signal: %s", e)
             return False
 
+    def _fetch_price_for_signal(self, symbol: str, strategy_ctx: Dict[str, Any]) -> float:
+        """Fetch current price for a signal's symbol using the strategy's market context."""
+        try:
+            from app.services.price_fetcher import PriceFetcher
+            market_type = strategy_ctx.get("_market_type", "swap")
+            market_category = strategy_ctx.get("_market_category", "Crypto")
+            pf = PriceFetcher()
+            price = pf.fetch_current_price(
+                exchange=None, symbol=symbol,
+                market_type=market_type, market_category=market_category,
+            )
+            return float(price) if price else 0.0
+        except Exception as e:
+            logger.warning("Failed to fetch price for %s: %s", symbol, e)
+            return 0.0
+
     def execute_batch(
         self,
         strategy_ctx: Dict[str, Any],
@@ -400,16 +416,22 @@ class SignalExecutor:
                     if (p.get("symbol") or "").split(":")[0] == sig_symbol.split(":")[0]
                 ]
 
-                # Default timestamp if missing
                 if not signal.get("timestamp"):
                     signal["timestamp"] = int(current_time)
+
+                price = self._fetch_price_for_signal(sig_symbol, strategy_ctx)
+                if price <= 0:
+                    logger.warning(
+                        "Skipping signal for %s: could not fetch current price", sig_symbol
+                    )
+                    continue
 
                 future = pool.submit(
                     self.execute,
                     strategy_ctx=strategy_ctx,
                     signal=signal,
                     symbol=signal["symbol"],
-                    current_price=0.0,
+                    current_price=price,
                     current_positions=symbol_positions,
                     exchange=None,
                 )

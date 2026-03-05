@@ -3071,6 +3071,8 @@ export default {
         }
 
         // 确保 v-if/v-else 根据 strategy_type 更新 DOM，特别是 symbol 字段的渲染
+        // Need two $nextTick cycles: first for v-if to toggle DOM, second for v-decorator to register the field
+        await this.$nextTick()
         await this.$nextTick()
 
         // Backward compatible: nested configs from indicator-analysis backtest modal
@@ -3095,6 +3097,14 @@ export default {
             this.watchlist.push({ market: parts[0], symbol: parts[1], name: '' })
           }
         }
+
+        console.log('[DEBUG loadStrategyDataToForm]', {
+          rawSymbol,
+          symbolValue,
+          csType: this.form.getFieldValue('cs_strategy_type'),
+          watchlistLen: this.watchlist.length,
+          registeredFields: Object.keys(this.form.getFieldsValue())
+        })
 
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
