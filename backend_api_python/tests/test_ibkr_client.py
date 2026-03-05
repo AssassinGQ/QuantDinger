@@ -397,3 +397,59 @@ class TestPlaceOrderIntegration:
 
         placed_order = client._ib.placeOrder.call_args[0][1]
         assert placed_order.action == "SELL"
+
+
+# ===========================================================================
+# Connection retry tests
+# ===========================================================================
+
+class TestConnectionRetry:
+    """Verify _ensure_connected retries on failure."""
+
+    def test_succeeds_on_first_attempt(self):
+        client = _make_client_with_mock_ib()
+        client._ib.isConnected.return_value = True
+        client._ensure_connected()
+
+    def test_retries_and_succeeds_on_second_attempt(self):
+        client = IBKRClient.__new__(IBKRClient)
+        client.config = IBKRConfig()
+        client._ib = MagicMock()
+        client._connected = False
+        client._account = ""
+        client._lock = __import__("threading").Lock()
+
+        call_count = {"n": 0}
+        def mock_connect_side_effect():
+            call_count["n"] += 1
+            if call_count["n"] < 2:
+                return False
+            client._ib.isConnected.return_value = True
+            client._connected = True
+            client._ib.managedAccounts.return_value = ["DU999"]
+            return True
+
+        client._ib.isConnected.return_value = False
+        with patch.object(client, "connect", side_effect=mock_connect_side_effect):
+            client._ensure_connected(retries=3, delay=0.01)
+        assert call_count["n"] == 2
+
+    def test_raises_after_all_retries_exhausted(self):
+        client = IBKRClient.__new__(IBKRClient)
+        client.config = IBKRConfig()
+        client._ib = MagicMock()
+        client._connected = False
+        client._account = ""
+        client._lock = __import__("threading").Lock()
+        client._ib.isConnected.return_value = False
+
+        with patch.object(client, "connect", return_value=False):
+            with pytest.raises(ConnectionError, match="Cannot connect to IBKR after 3 attempts"):
+                client._ensure_connected(retries=3, delay=0.01)
+
+    def test_no_retry_when_already_connected(self):
+        client = _make_client_with_mock_ib()
+        client._ib.isConnected.return_value = True
+        with patch.object(client, "connect") as mock_connect:
+            client._ensure_connected()
+            mock_connect.assert_not_called()

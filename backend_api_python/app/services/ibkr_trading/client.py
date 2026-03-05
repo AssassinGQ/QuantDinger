@@ -178,13 +178,18 @@ class IBKRClient:
                     self._connected = False
                     logger.info("IBKR disconnected")
     
-    def _ensure_connected(self):
-        """Ensure connection is established."""
-        # Ensure event loop exists (may be called from different threads)
+    def _ensure_connected(self, retries: int = 3, delay: float = 2.0):
+        """Ensure connection is established, with retry on failure."""
         _ensure_event_loop()
-        if not self.connected:
-            if not self.connect():
-                raise ConnectionError("Cannot connect to IBKR")
+        if self.connected:
+            return
+        for attempt in range(1, retries + 1):
+            if self.connect():
+                return
+            if attempt < retries:
+                logger.warning("IBKR connect attempt %d/%d failed, retrying in %.1fs", attempt, retries, delay)
+                time.sleep(delay)
+        raise ConnectionError(f"Cannot connect to IBKR after {retries} attempts")
     
     def _create_contract(self, symbol: str, market_type: str):
         """
