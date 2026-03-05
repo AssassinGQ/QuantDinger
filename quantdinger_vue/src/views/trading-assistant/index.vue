@@ -3098,6 +3098,16 @@ export default {
           }
         }
 
+        // [DEBUG] Temporary - remove after diagnosing symbol display issue
+        console.log('[DEBUG loadStrategyDataToForm] before setFieldsValue', {
+          symbolValue,
+          watchlistCount: this.watchlist.length,
+          csType: this.form.getFieldValue('cs_strategy_type'),
+          symbolInWatchlist: symbolValue ? this.watchlist.some(w => `${w.market}:${w.symbol}` === symbolValue) : null,
+          registeredFields: Object.keys(this.form.getFieldsValue()),
+          hasSymbolField: 'symbol' in this.form.getFieldsValue()
+        })
+
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
           symbol: symbolValue,
@@ -3137,6 +3147,11 @@ export default {
         this.$nextTick(() => {
           this.recalcEntryPctMaxUi()
           this.normalizeEntryPct()
+          // [DEBUG] Verify symbol was set
+          console.log('[DEBUG loadStrategyDataToForm] after setFieldsValue', {
+            symbolNow: this.form.getFieldValue('symbol'),
+            csTypeNow: this.form.getFieldValue('cs_strategy_type')
+          })
         })
       }
     },
