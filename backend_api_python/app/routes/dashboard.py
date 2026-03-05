@@ -278,7 +278,7 @@ def summary():
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT id, strategy_name, strategy_type, status, initial_capital, trading_config
+                SELECT id, strategy_name, strategy_type, status, initial_capital, trading_config, market_category
                 FROM qd_strategies_trading
                 WHERE user_id = ?
                 """,
