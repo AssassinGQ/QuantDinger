@@ -4,6 +4,7 @@
 import math
 from typing import Any, Dict
 
+import numpy as np
 import pandas as pd
 
 from app.strategies.base import RawIndicatorOutput
@@ -166,7 +167,7 @@ def run_cross_sectional_weighted_indicator(
     signals = {}
     metadata_list = {}
 
-    global_env = {"trading_config": trading_config}
+    global_env = {"np": np, "pd": pd, "trading_config": trading_config}
 
     regime_cfg = {"regime_rules": load_regime_rules()}
     regime_to_weights_map = load_regime_to_weights()
