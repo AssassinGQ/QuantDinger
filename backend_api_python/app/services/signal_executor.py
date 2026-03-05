@@ -353,6 +353,19 @@ class SignalExecutor:
                 strategy_ctx, signal, sig, current_price, current_positions
             )
 
+            _exc_cfg = strategy_ctx.get("exchange_config") or {}
+            _exc_id = str(_exc_cfg.get("exchange_id") or "").strip().lower()
+            if str(execution_mode).strip().lower() == "live" and _exc_id == "ibkr":
+                from app.services.ibkr_trading.order_normalizer import get_normalizer
+                normalizer = get_normalizer(market_category)
+                raw_amount = amount
+                amount = normalizer.normalize(amount, symbol)
+                if raw_amount != amount:
+                    logger.info(
+                        "IBKR order quantity normalized: %.4f -> %d (strategy=%s symbol=%s)",
+                        raw_amount, amount, strategy_id, symbol,
+                    )
+
             if amount <= 0:
                 logger.debug("Amount %s <= 0, returning False", amount)
                 return False

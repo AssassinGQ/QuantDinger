@@ -1964,7 +1964,6 @@ class PendingOrderWorker:
         ).strip()
 
         try:
-            # Place market order via IBKR
             result = client.place_market_order(
                 symbol=symbol,
                 side=action,

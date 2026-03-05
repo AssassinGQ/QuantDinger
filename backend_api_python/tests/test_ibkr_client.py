@@ -87,64 +87,39 @@ def _make_client_with_mock_ib():
 
 
 # ===========================================================================
-# Fractional share rounding tests
+# Whole-number quantity guard tests
 # ===========================================================================
 
-class TestFractionalShareRounding:
-    """Verify quantity is floored to whole shares."""
+class TestQuantityGuard:
+    """Client rejects non-whole-number and non-positive quantities."""
 
     @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_floors_quantity(self):
+    def test_market_order_accepts_whole_number(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Filled", filled=7, avg_price=150.0)
         client._ib.placeOrder.return_value = trade_mock
 
-        result = client.place_market_order("AAPL", "buy", 7.8, "USStock")
+        result = client.place_market_order("AAPL", "buy", 7, "USStock")
 
         placed_order = client._ib.placeOrder.call_args[0][1]
         assert placed_order.totalQuantity == 7
         assert result.success is True
 
     @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_limit_order_floors_quantity(self):
+    def test_limit_order_accepts_whole_number(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Filled", filled=3, avg_price=180.0)
         client._ib.placeOrder.return_value = trade_mock
 
-        result = client.place_limit_order("GOOGL", "buy", 3.99, 180.0, "USStock")
+        result = client.place_limit_order("GOOGL", "buy", 3, 180.0, "USStock")
 
         placed_order = client._ib.placeOrder.call_args[0][1]
         assert placed_order.totalQuantity == 3
         assert result.success is True
 
     @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_rejects_sub_one(self):
-        client = _make_client_with_mock_ib()
-        result = client.place_market_order("AAPL", "buy", 0.5, "USStock")
-
-        assert result.success is False
-        assert "too small" in result.message.lower()
-        client._ib.placeOrder.assert_not_called()
-
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_limit_order_rejects_sub_one(self):
-        client = _make_client_with_mock_ib()
-        result = client.place_limit_order("AAPL", "buy", 0.3, 150.0, "USStock")
-
-        assert result.success is False
-        assert "too small" in result.message.lower()
-        client._ib.placeOrder.assert_not_called()
-
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_rejects_zero(self):
-        client = _make_client_with_mock_ib()
-        result = client.place_market_order("AAPL", "buy", 0.0, "USStock")
-
-        assert result.success is False
-        client._ib.placeOrder.assert_not_called()
-
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_whole_number_unchanged(self):
+    def test_market_order_accepts_float_whole(self):
+        """10.0 is a whole number, should be accepted."""
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)
         client._ib.placeOrder.return_value = trade_mock
@@ -152,16 +127,67 @@ class TestFractionalShareRounding:
         result = client.place_market_order("AAPL", "buy", 10.0, "USStock")
 
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.totalQuantity == 10
+        assert placed_order.totalQuantity == 10.0
         assert result.success is True
 
     @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_negative_quantity(self):
+    def test_market_order_rejects_fractional(self):
         client = _make_client_with_mock_ib()
-        result = client.place_market_order("AAPL", "buy", -5.0, "USStock")
+        result = client.place_market_order("AAPL", "buy", 7.8, "USStock")
+        assert result.success is False
+        assert "whole number" in result.message.lower()
+        client._ib.placeOrder.assert_not_called()
 
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_limit_order_rejects_fractional(self):
+        client = _make_client_with_mock_ib()
+        result = client.place_limit_order("AAPL", "buy", 3.5, 150.0, "USStock")
+        assert result.success is False
+        assert "whole number" in result.message.lower()
+        client._ib.placeOrder.assert_not_called()
+
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_market_order_rejects_zero(self):
+        client = _make_client_with_mock_ib()
+        result = client.place_market_order("AAPL", "buy", 0, "USStock")
         assert result.success is False
         client._ib.placeOrder.assert_not_called()
+
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_market_order_rejects_negative(self):
+        client = _make_client_with_mock_ib()
+        result = client.place_market_order("AAPL", "buy", -5, "USStock")
+        assert result.success is False
+        client._ib.placeOrder.assert_not_called()
+
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_hshare_rejects_non_lot_multiple(self):
+        """HK stock 00005 requires multiples of 400."""
+        client = _make_client_with_mock_ib()
+        result = client.place_market_order("00005", "buy", 3, "HShare")
+        assert result.success is False
+        assert "400" in result.message
+        client._ib.placeOrder.assert_not_called()
+
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_hshare_accepts_lot_multiple(self):
+        """HK stock 00005 at 400 shares should pass check."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Filled", filled=400, avg_price=130.0)
+        client._ib.placeOrder.return_value = trade_mock
+
+        result = client.place_market_order("00005", "buy", 400, "HShare")
+        assert result.success is True
+
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_hshare_unknown_symbol_accepts_any_integer(self):
+        """Unknown HK symbol defaults to lot_size=1, any positive integer ok."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Filled", filled=7, avg_price=50.0)
+        client._ib.placeOrder.return_value = trade_mock
+
+        result = client.place_market_order("00388", "buy", 7, "HShare")
+        assert result.success is True
 
 
 # ===========================================================================
@@ -339,25 +365,26 @@ class TestPlaceOrderIntegration:
 
     @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_fractional_rejected(self):
-        """Simulate IBKR rejecting fractional shares via API error."""
+        """Client guard rejects fractional quantity before connecting."""
         client = _make_client_with_mock_ib()
 
         result = client.place_market_order("AAPL", "buy", 0.7, "USStock")
 
         assert result.success is False
-        assert "too small" in result.message.lower()
+        assert "whole number" in result.message.lower()
+        client._ib.placeOrder.assert_not_called()
 
     @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_filled_success(self):
         """Normal successful fill."""
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=100, avg_price=65.5)
+        trade = _make_trade_mock(status="Filled", filled=400, avg_price=65.5)
         client._ib.placeOrder.return_value = trade
 
-        result = client.place_market_order("5", "buy", 100, "HShare")
+        result = client.place_market_order("5", "buy", 400, "HShare")
 
         assert result.success is True
-        assert result.filled == 100
+        assert result.filled == 400
         assert result.avg_price == 65.5
 
     @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())

@@ -288,14 +288,10 @@ class IBKRClient:
         Returns:
             OrderResult
         """
-        import math
-        qty = math.floor(quantity)
-        if qty <= 0:
-            return OrderResult(
-                success=False,
-                message=f"Quantity too small after rounding to whole shares: {quantity} -> {qty}"
-            )
-
+        from app.services.ibkr_trading.order_normalizer import get_normalizer
+        ok, reason = get_normalizer(market_type).check(quantity, symbol)
+        if not ok:
+            return OrderResult(success=False, message=reason)
         try:
             self._ensure_connected()
             _ensure_ib_insync()
@@ -309,7 +305,7 @@ class IBKRClient:
             
             order = ib_insync.MarketOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
-                totalQuantity=qty,
+                totalQuantity=quantity,
                 account=self._account
             )
             
@@ -344,14 +340,10 @@ class IBKRClient:
         Returns:
             OrderResult
         """
-        import math
-        qty = math.floor(quantity)
-        if qty <= 0:
-            return OrderResult(
-                success=False,
-                message=f"Quantity too small after rounding to whole shares: {quantity} -> {qty}"
-            )
-
+        from app.services.ibkr_trading.order_normalizer import get_normalizer
+        ok, reason = get_normalizer(market_type).check(quantity, symbol)
+        if not ok:
+            return OrderResult(success=False, message=reason)
         try:
             self._ensure_connected()
             _ensure_ib_insync()
@@ -365,7 +357,7 @@ class IBKRClient:
             
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
-                totalQuantity=qty,
+                totalQuantity=quantity,
                 lmtPrice=price,
                 account=self._account
             )
