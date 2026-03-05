@@ -86,19 +86,25 @@ class CrossSectionalRunner(BaseStrategyRunner):
     def _dispatch_signals(
         self, strategy_id, strategy, signals, update_rebalance, metadata
     ):
-        """执行信号、更新 rebalance 时间戳和 status_info。"""
-        if signals:
-            positions = self.data_handler.get_all_positions(strategy_id)
-            self.signal_executor.execute_batch(
-                strategy_ctx=strategy,
-                signals=signals,
-                all_positions=positions,
-                current_time=int(self._last_current_time),
-            )
-        if update_rebalance:
-            self.data_handler.update_last_rebalance(strategy_id)
+        """执行信号、更新 rebalance 时间戳和 status_info。
+
+        metadata 保存不受信号执行失败影响。
+        """
         if metadata:
             self.data_handler.update_strategy_status_info(strategy_id, metadata)
+        if update_rebalance:
+            self.data_handler.update_last_rebalance(strategy_id)
+        if signals:
+            try:
+                positions = self.data_handler.get_all_positions(strategy_id)
+                self.signal_executor.execute_batch(
+                    strategy_ctx=strategy,
+                    signals=signals,
+                    all_positions=positions,
+                    current_time=int(self._last_current_time),
+                )
+            except Exception as exc:
+                logger.error("Strategy %s signal execution failed: %s", strategy_id, exc)
 
     def _run_single_tick(
         self,
