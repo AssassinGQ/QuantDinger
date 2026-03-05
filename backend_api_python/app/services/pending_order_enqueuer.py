@@ -71,7 +71,11 @@ class PendingOrderEnqueuer:
             )
             last_id = int((last or {}).get("id") or 0)
             last_status = str((last or {}).get("status") or "").strip().lower()
-            last_created = int((last or {}).get("created_at") or 0)
+            _raw_created = (last or {}).get("created_at")
+            if hasattr(_raw_created, "timestamp"):
+                last_created = int(_raw_created.timestamp())
+            else:
+                last_created = int(_raw_created or 0)
             cooldown_sec = 30
 
             if last_id > 0:
