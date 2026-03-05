@@ -90,9 +90,9 @@
                         <div class="strategy-name-wrapper">
                           <!-- 按策略分组：显示 Symbol -->
                           <template v-if="groupByMode === 'strategy'">
-                            <span class="info-item" v-if="item.trading_config && item.trading_config.symbol">
+                            <span class="info-item" v-if="(item.trading_config && item.trading_config.symbol) || item.symbol">
                               <a-icon type="dollar" />
-                              {{ item.trading_config.symbol }}
+                              {{ (item.trading_config && item.trading_config.symbol) || item.symbol }}
                             </span>
                           </template>
                           <!-- 按 Symbol / 自定义 分组：显示策略名称、周期、指标 -->
@@ -186,9 +186,9 @@
                     </div>
                   </div>
                   <div class="strategy-item-info">
-                    <span class="info-item" v-if="item.trading_config && item.trading_config.symbol">
+                    <span class="info-item" v-if="(item.trading_config && item.trading_config.symbol) || item.symbol">
                       <a-icon type="dollar" />
-                      {{ item.trading_config.symbol }}
+                      {{ (item.trading_config && item.trading_config.symbol) || item.symbol }}
                     </span>
                     <span v-if="getDisplayCapital(item)" class="capital-badge" :title="$t('regime.allocatedCapital')">
                       <a-icon type="bank" />{{ formatCapital(getDisplayCapital(item)) }}
@@ -306,7 +306,7 @@
                 <div class="strategy-tags">
                   <div class="tag-item" v-if="selectedStrategy.trading_config">
                     <a-icon type="stock" />
-                    <span>{{ selectedStrategy.trading_config.symbol }}</span>
+                    <span>{{ selectedStrategy.trading_config.symbol || selectedStrategy.symbol }}</span>
                   </div>
                   <div
                     class="tag-item"
@@ -3079,14 +3079,17 @@ export default {
         const adverseReduceObj = scaleObj && scaleObj.adverseReduce ? scaleObj.adverseReduce : null
 
         // Backward compatible: show symbol as "Market:SYMBOL" for watchlist dropdown
-        const rawSymbol = tc.symbol
-        const symbolValue = (typeof rawSymbol === 'string' && rawSymbol.includes(':'))
-          ? rawSymbol
-          : `${this.selectedMarketCategory}:${rawSymbol}`
+        // Fallback to top-level strategy.symbol when tc.symbol is missing (e.g. legacy regime strategies)
+        const rawSymbol = tc.symbol || strategy.symbol || ''
+        const symbolValue = rawSymbol
+          ? ((typeof rawSymbol === 'string' && rawSymbol.includes(':'))
+              ? rawSymbol
+              : `${this.selectedMarketCategory}:${rawSymbol}`)
+          : undefined
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
           symbol: symbolValue,
-          initial_capital: tc.initial_capital,
+          initial_capital: strategy.initial_capital || tc.initial_capital,
           leverage: tc.leverage,
           trade_direction: tc.trade_direction || 'long',
           timeframe: tc.timeframe || '1H',
@@ -3147,7 +3150,7 @@ export default {
             const last = res.data[res.data.length - 1]
             this.currentEquity = last.equity
           } else {
-            const base = this.selectedStrategy.trading_config?.initial_capital || this.selectedStrategy.initial_capital
+            const base = this.selectedStrategy.initial_capital || this.selectedStrategy.trading_config?.initial_capital
             this.currentEquity = base || null
           }
         }

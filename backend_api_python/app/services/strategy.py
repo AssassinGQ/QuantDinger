@@ -567,6 +567,10 @@ class StrategyService:
         leverage = (trading_config or {}).get('leverage') or 1
         market_type = (trading_config or {}).get('market_type') or 'swap'
 
+        # Keep trading_config.initial_capital in sync with DB column (single source of truth)
+        if trading_config is not None:
+            trading_config['initial_capital'] = float(initial_capital)
+
         # Cross-sectional strategy fields (store in trading_config to avoid DB schema changes)
         cs_strategy_type = (
             payload.get('cs_strategy_type')
@@ -812,6 +816,10 @@ class StrategyService:
         initial_capital = (trading_config or {}).get('initial_capital') or existing.get('initial_capital') or 1000
         leverage = (trading_config or {}).get('leverage') or existing.get('leverage') or 1
         market_type = (trading_config or {}).get('market_type') or existing.get('market_type') or 'swap'
+
+        # Keep trading_config.initial_capital in sync with DB column
+        if trading_config is not None:
+            trading_config['initial_capital'] = float(initial_capital)
 
         with get_db_connection() as db:
             cur = db.cursor()

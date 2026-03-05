@@ -102,6 +102,24 @@ def _normalize_capital(strategy: Dict[str, Any]) -> None:
             strategy.get("initial_capital"),
         )
         initial_capital = 1000.0
+
+    # Also sync trading_config.initial_capital so all consumers see the same value
+    tc = strategy.get("trading_config")
+    if isinstance(tc, dict):
+        tc_capital = tc.get("initial_capital")
+        if tc_capital is not None:
+            try:
+                tc_capital_f = float(tc_capital)
+                if tc_capital_f != initial_capital:
+                    logger.info(
+                        "Strategy %s: DB initial_capital=%.2f differs from "
+                        "trading_config.initial_capital=%.2f, using DB value",
+                        strategy_id, initial_capital, tc_capital_f,
+                    )
+            except (TypeError, ValueError):
+                pass
+        tc["initial_capital"] = initial_capital
+
     strategy["_initial_capital"] = initial_capital
 
 

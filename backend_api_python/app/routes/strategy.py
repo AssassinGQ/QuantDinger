@@ -470,6 +470,7 @@ def get_equity_curve():
         st = get_strategy_service().get_strategy(strategy_id, user_id=user_id) or {}
         if not st:
             return jsonify({'code': 0, 'msg': 'Strategy not found', 'data': []}), 404
+        # DB column is the single source of truth; trading_config is fallback for legacy data
         initial = float(st.get('initial_capital') or (st.get('trading_config') or {}).get('initial_capital') or 0)
         if initial <= 0:
             initial = 1000.0
