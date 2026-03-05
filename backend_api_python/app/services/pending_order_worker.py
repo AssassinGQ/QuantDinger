@@ -892,6 +892,7 @@ class PendingOrderWorker:
                 client=client,
                 strategy_id=strategy_id,
                 exchange_config=exchange_config,
+                market_category=market_category,
                 _notify_live_best_effort=_notify_live_best_effort,
                 console_print=console_print,
             )
@@ -1911,6 +1912,7 @@ class PendingOrderWorker:
         client,  # IBKRClient instance
         strategy_id: int,
         exchange_config: Dict[str, Any],
+        market_category: str = "USStock",
         _notify_live_best_effort,
         console_print,
     ) -> None:
@@ -1947,8 +1949,9 @@ class PendingOrderWorker:
             _notify_live_best_effort(status="failed", error=f"ibkr_unsupported_signal:{signal_type}")
             return
 
-        # Get market type (USStock or HShare)
+        # Get market type (USStock or HShare) — prefer the strategy-level market_category
         market_type = str(
+            market_category or
             payload.get("market_type") or
             payload.get("market_category") or
             exchange_config.get("market_type") or

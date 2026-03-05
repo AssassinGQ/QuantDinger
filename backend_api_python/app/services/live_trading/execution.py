@@ -170,6 +170,7 @@ def place_order_from_signal(
             signal_type=signal_type,
             symbol=symbol,
             amount=qty,
+            market_type=market_type,
             exchange_config=exchange_config,
         )
 
@@ -200,6 +201,7 @@ def _place_ibkr_order(
     signal_type: str,
     symbol: str,
     amount: float,
+    market_type: str = "USStock",
     exchange_config: Optional[Dict[str, Any]] = None,
 ) -> LiveOrderResult:
     """
@@ -224,16 +226,19 @@ def _place_ibkr_order(
     else:
         raise LiveTradingError(f"Unsupported signal_type for IBKR: {signal_type}")
 
-    # Get market type from config
+    # Resolve market type: prefer explicit param, then exchange_config, then default
     cfg = exchange_config if isinstance(exchange_config, dict) else {}
-    market_type = str(cfg.get("market_type") or cfg.get("market_category") or "USStock").strip()
+    resolved_market = str(
+        market_type or
+        cfg.get("market_type") or cfg.get("market_category") or
+        "USStock"
+    ).strip()
 
-    # Place market order
     result = client.place_market_order(
         symbol=symbol,
         side=action,
         quantity=amount,
-        market_type=market_type,
+        market_type=resolved_market,
     )
 
     # Convert IBKRClient result to LiveOrderResult format
