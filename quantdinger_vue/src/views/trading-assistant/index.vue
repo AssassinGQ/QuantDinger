@@ -465,36 +465,10 @@
                     placeholder="ungrouped" />
                 </a-form-item>
 
-                <!-- 标的配置 (单标的 或 Regime策略 共用) -->
-                <template v-if="['single', 'cross_sectional_weighted'].includes(form.getFieldValue('cs_strategy_type'))">
+                <!-- Regime 策略的标的配置 (独立 v-decorator 避免与 single 模式冲突) -->
+                <template v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted'">
                   <a-form-item :label="$t('trading-assistant.form.symbol')">
                     <a-select
-                      v-if="!isEditMode && form.getFieldValue('cs_strategy_type') === 'single'"
-                      v-model="selectedSymbols"
-                      mode="multiple"
-                      :placeholder="$t('trading-assistant.placeholders.selectSymbol')"
-                      show-search
-                      :filter-option="filterWatchlistOption"
-                      :loading="loadingWatchlist"
-                      @change="handleSymbolChange"
-                      :getPopupContainer="(triggerNode) => triggerNode.parentNode"
-                      :maxTagCount="3">
-                      <a-select-option
-                        v-for="item in watchlist"
-                        :key="`${item.market}:${item.symbol}`"
-                        :value="`${item.market}:${item.symbol}`">
-                        <div class="symbol-option">
-                          <a-tag :color="getMarketColor(item.market)" style="margin-right: 8px; margin-bottom: 0;">
-                            {{ item.market }}
-                          </a-tag>
-                          <span class="symbol-name">{{ item.symbol }}</span>
-                          <span v-if="item.name" class="symbol-name-extra">{{ item.name }}</span>
-                        </div>
-                      </a-select-option>
-                    </a-select>
-                    <!-- 编辑模式 或 Regime策略下单标的策略只能单选 -->
-                    <a-select
-                      v-else
                       v-decorator="['symbol', { rules: [{ required: true, message: $t('trading-assistant.validation.symbolRequired') }] }]"
                       :placeholder="$t('trading-assistant.placeholders.selectSymbol')"
                       show-search
@@ -3098,16 +3072,6 @@ export default {
           }
         }
 
-        // [DEBUG] Temporary - remove after diagnosing symbol display issue
-        console.log('[DEBUG loadStrategyDataToForm] before setFieldsValue', {
-          symbolValue,
-          watchlistCount: this.watchlist.length,
-          csType: this.form.getFieldValue('cs_strategy_type'),
-          symbolInWatchlist: symbolValue ? this.watchlist.some(w => `${w.market}:${w.symbol}` === symbolValue) : null,
-          registeredFields: Object.keys(this.form.getFieldsValue()),
-          hasSymbolField: 'symbol' in this.form.getFieldsValue()
-        })
-
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
           symbol: symbolValue,
@@ -3147,11 +3111,6 @@ export default {
         this.$nextTick(() => {
           this.recalcEntryPctMaxUi()
           this.normalizeEntryPct()
-          // [DEBUG] Verify symbol was set
-          console.log('[DEBUG loadStrategyDataToForm] after setFieldsValue', {
-            symbolNow: this.form.getFieldValue('symbol'),
-            csTypeNow: this.form.getFieldValue('cs_strategy_type')
-          })
         })
       }
     },
