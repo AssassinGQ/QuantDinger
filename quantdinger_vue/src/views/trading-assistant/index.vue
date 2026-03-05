@@ -3098,14 +3098,6 @@ export default {
           }
         }
 
-        console.log('[DEBUG loadStrategyDataToForm]', {
-          rawSymbol,
-          symbolValue,
-          csType: this.form.getFieldValue('cs_strategy_type'),
-          watchlistLen: this.watchlist.length,
-          registeredFields: Object.keys(this.form.getFieldsValue())
-        })
-
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
           symbol: symbolValue,

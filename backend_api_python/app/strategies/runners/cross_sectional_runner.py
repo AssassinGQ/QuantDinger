@@ -97,6 +97,10 @@ class CrossSectionalRunner(BaseStrategyRunner):
         if signals:
             try:
                 positions = self.data_handler.get_all_positions(strategy_id)
+                logger.info(
+                    "Strategy %s dispatching %d signals, positions=%d",
+                    strategy_id, len(signals), len(positions),
+                )
                 self.signal_executor.execute_batch(
                     strategy_ctx=strategy,
                     signals=signals,
@@ -104,7 +108,10 @@ class CrossSectionalRunner(BaseStrategyRunner):
                     current_time=int(self._last_current_time),
                 )
             except Exception as exc:
-                logger.error("Strategy %s signal execution failed: %s", strategy_id, exc)
+                logger.error(
+                    "Strategy %s signal execution failed: %s", strategy_id, exc,
+                    exc_info=True,
+                )
 
     def _run_single_tick(
         self,

@@ -380,7 +380,7 @@ class SignalExecutor:
             return True
 
         except (ValueError, TypeError, KeyError, RuntimeError, OSError) as e:
-            logger.error("Failed to execute signal: %s", e)
+            logger.error("Failed to execute signal: %s", e, exc_info=True)
             return False
 
     def _fetch_price_for_signal(self, symbol: str, strategy_ctx: Dict[str, Any]) -> float:
@@ -407,6 +407,13 @@ class SignalExecutor:
         current_time: int,
     ) -> None:
         """并发执行批量信号"""
+        strategy_id = strategy_ctx.get("id", "?")
+        market_category = strategy_ctx.get("_market_category", "?")
+        logger.info(
+            "execute_batch: strategy=%s market=%s signals=%d positions=%d",
+            strategy_id, market_category, len(signals), len(all_positions),
+        )
+
         with ThreadPoolExecutor(max_workers=min(10, len(signals))) as pool:
             futures = {}
             for signal in signals:
@@ -422,9 +429,15 @@ class SignalExecutor:
                 price = self._fetch_price_for_signal(sig_symbol, strategy_ctx)
                 if price <= 0:
                     logger.warning(
-                        "Skipping signal for %s: could not fetch current price", sig_symbol
+                        "execute_batch: skip %s %s — price=0 (market=%s)",
+                        sig_symbol, signal.get("type"), market_category,
                     )
                     continue
+
+                logger.info(
+                    "execute_batch: %s %s price=%.4f weight=%s",
+                    sig_symbol, signal.get("type"), price, signal.get("target_weight"),
+                )
 
                 future = pool.submit(
                     self.execute,
@@ -443,14 +456,21 @@ class SignalExecutor:
                     result = future.result(timeout=30)
                     if result:
                         logger.info(
-                            "Successfully executed signal: %s %s",
+                            "execute_batch: OK %s %s",
+                            signal["symbol"],
+                            signal["type"],
+                        )
+                    else:
+                        logger.info(
+                            "execute_batch: SKIPPED %s %s (returned False)",
                             signal["symbol"],
                             signal["type"],
                         )
                 except (ValueError, TypeError, KeyError, RuntimeError, OSError, TimeoutError) as e:
                     logger.error(
-                        "Failed to execute signal %s %s: %s",
+                        "execute_batch: FAILED %s %s: %s",
                         signal["symbol"],
                         signal["type"],
                         e,
+                        exc_info=True,
                     )

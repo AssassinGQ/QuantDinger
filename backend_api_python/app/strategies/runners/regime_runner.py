@@ -51,9 +51,22 @@ class RegimeRunner(CrossSectionalRunner):
         rebalance_now = strat_instance.should_rebalance(strategy, last_rebalance)
         ctx["should_rebalance"] = rebalance_now
 
+        if rebalance_now:
+            logger.info(
+                "Strategy %s rebalance triggered (last_rebalance=%s)",
+                strategy_id, last_rebalance,
+            )
+
         signals, keep_running, update_rebalance, metadata = strat_instance.get_signals(ctx)
         if not keep_running:
             return False
+
+        if signals:
+            logger.info(
+                "Strategy %s generated %d signals: %s",
+                strategy_id, len(signals),
+                [(s.get("symbol"), s.get("type"), s.get("target_weight")) for s in signals],
+            )
 
         self._dispatch_signals(
             strategy_id, strategy, signals, update_rebalance, metadata
@@ -82,16 +95,20 @@ class RegimeRunner(CrossSectionalRunner):
 
     def _check_risk_signals(self, strategy_id: int, strategy: Dict[str, Any]):
         trading_config = strategy.get("trading_config") or {}
-        symbol_indicators = trading_config.get("symbol_indicators") or {}
-        if not symbol_indicators:
+
+        # For regime strategies, symbol_indicators keys are style names (aggressive/balanced/etc),
+        # NOT actual symbols. Use the strategy's main symbol for risk checks instead.
+        main_symbol = trading_config.get("symbol") or strategy.get("symbol") or ""
+        if not main_symbol:
             return
+        symbols_to_check = [main_symbol]
 
         leverage = float(strategy.get("_leverage", 1.0))
         market_type = strategy.get("_market_type", "swap")
         tf_str = trading_config.get("timeframe", "1H")
         timeframe_seconds = TIMEFRAME_SECONDS.get(tf_str, 3600)
 
-        for symbol in symbol_indicators:
+        for symbol in symbols_to_check:
             current_price = self._get_current_price(strategy_id, symbol, strategy)
             if not current_price:
                 continue

@@ -100,21 +100,35 @@ class CrossSectionalWeightedStrategy(IStrategyLoop):
             return [], True, False, None
 
         metadata = raw_output.get("metadata")
+        weights = raw_output.get("weights", {})
+        ind_signals = raw_output.get("signals", {})
         should_trade = ctx.get("should_rebalance", False)
 
         if not should_trade:
-            logger.info("Regime strategy %s: indicators calculated, not rebalance time", strategy_id)
+            logger.info(
+                "Regime strategy %s: indicators done (weights=%s, signals=%s), not rebalance time",
+                strategy_id, weights, ind_signals,
+            )
             return [], True, False, metadata
 
+        logger.info(
+            "Regime strategy %s: rebalance — weights=%s, signals=%s",
+            strategy_id, weights, ind_signals,
+        )
+
         signals = generate_cross_sectional_weighted_signals(
-            raw_output.get("weights", {}),
-            raw_output.get("signals", {}),
+            weights,
+            ind_signals,
             ctx.get("positions", []),
         )
 
         if not signals:
-            logger.info("No rebalancing needed for weighted strategy %s", strategy_id)
+            logger.info("Regime strategy %s: no rebalancing needed (all neutral or no change)", strategy_id)
             return [], True, True, metadata
 
-        logger.info("Generated %d signals for cross-sectional weighted strategy %s", len(signals), strategy_id)
+        logger.info(
+            "Regime strategy %s: generated %d trade signals: %s",
+            strategy_id, len(signals),
+            [(s.get("symbol"), s.get("type"), s.get("target_weight")) for s in signals],
+        )
         return signals, True, True, metadata
