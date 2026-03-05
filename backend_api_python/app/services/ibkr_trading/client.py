@@ -256,19 +256,41 @@ class IBKRClient:
             trade = self._ib.placeOrder(contract, order)
             
             # Wait for order status update
-            self._ib.sleep(2)
+            self._ib.sleep(3)
+            
+            status = trade.orderStatus.status
+            filled = float(trade.orderStatus.filled or 0)
+            avg_price = float(trade.orderStatus.avgFillPrice or 0)
+            
+            rejected = status in ("Cancelled", "ApiCancelled", "Inactive", "ApiError", "ValidationError")
+            if rejected:
+                error_msgs = [entry.message for entry in (trade.log or []) if entry.message]
+                return OrderResult(
+                    success=False,
+                    order_id=trade.order.orderId,
+                    filled=0,
+                    avg_price=0,
+                    status=status,
+                    message=f"Order {status}: {'; '.join(error_msgs) or 'rejected by IBKR'}",
+                    raw={
+                        "orderId": trade.order.orderId,
+                        "status": status,
+                        "filled": 0,
+                        "remaining": 0,
+                    }
+                )
             
             return OrderResult(
                 success=True,
                 order_id=trade.order.orderId,
-                filled=float(trade.orderStatus.filled or 0),
-                avg_price=float(trade.orderStatus.avgFillPrice or 0),
-                status=trade.orderStatus.status,
+                filled=filled,
+                avg_price=avg_price,
+                status=status,
                 message="Order submitted",
                 raw={
                     "orderId": trade.order.orderId,
-                    "status": trade.orderStatus.status,
-                    "filled": float(trade.orderStatus.filled or 0),
+                    "status": status,
+                    "filled": filled,
                     "remaining": float(trade.orderStatus.remaining or 0),
                 }
             )
@@ -320,18 +342,32 @@ class IBKRClient:
             )
             
             trade = self._ib.placeOrder(contract, order)
-            self._ib.sleep(1)
+            self._ib.sleep(2)
+            
+            status = trade.orderStatus.status
+            rejected = status in ("Cancelled", "ApiCancelled", "Inactive", "ApiError", "ValidationError")
+            if rejected:
+                error_msgs = [entry.message for entry in (trade.log or []) if entry.message]
+                return OrderResult(
+                    success=False,
+                    order_id=trade.order.orderId,
+                    filled=0,
+                    avg_price=0,
+                    status=status,
+                    message=f"Order {status}: {'; '.join(error_msgs) or 'rejected by IBKR'}",
+                    raw={"orderId": trade.order.orderId, "status": status}
+                )
             
             return OrderResult(
                 success=True,
                 order_id=trade.order.orderId,
                 filled=float(trade.orderStatus.filled or 0),
                 avg_price=float(trade.orderStatus.avgFillPrice or 0),
-                status=trade.orderStatus.status,
+                status=status,
                 message="Limit order submitted",
                 raw={
                     "orderId": trade.order.orderId,
-                    "status": trade.orderStatus.status,
+                    "status": status,
                     "limitPrice": price,
                 }
             )
