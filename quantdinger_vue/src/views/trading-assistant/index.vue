@@ -2803,7 +2803,8 @@ export default {
       // Delay loading to ensure modal/form items are mounted.
       this.$nextTick(async () => {
         // Keep data sources in sync (same as create flow)
-        this.loadWatchlist()
+        // Must await loadWatchlist so options exist before setFieldsValue sets symbol
+        await this.loadWatchlist()
         this.loadIndicators()
         this.loadExchangeCredentials()
         await this.loadStrategyDataToForm(strategy)
@@ -3086,6 +3087,15 @@ export default {
               ? rawSymbol
               : `${this.selectedMarketCategory}:${rawSymbol}`)
           : undefined
+
+        // Ensure strategy's symbol exists in watchlist options, otherwise a-select shows blank
+        if (symbolValue && !this.watchlist.some(w => `${w.market}:${w.symbol}` === symbolValue)) {
+          const parts = symbolValue.split(':')
+          if (parts.length === 2) {
+            this.watchlist.push({ market: parts[0], symbol: parts[1], name: '' })
+          }
+        }
+
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
           symbol: symbolValue,
