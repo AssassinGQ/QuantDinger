@@ -380,18 +380,44 @@ def summary():
         # Compute per-strategy statistics
         strategy_stats = _compute_strategy_stats(recent_trades, strategies)
 
-        # Total equity/pnl (best-effort)
+        # Total equity/pnl (best-effort, normalized to HKD)
+        from app.services.currency import convert_to_base, BASE_CURRENCY
+
+        strategy_market_map = {
+            int(s.get("id") or 0): str(s.get("market_category") or "Crypto")
+            for s in strategies
+        }
+
         total_initial_capital = 0.0
         for s in strategies:
             try:
-                total_initial_capital += float(s.get("initial_capital") or 0.0)
+                cap = float(s.get("initial_capital") or 0.0)
+                mc = str(s.get("market_category") or "Crypto")
+                total_initial_capital += convert_to_base(cap, mc)
             except Exception:
                 pass
 
-        # Include realized PnL from trades
-        total_realized_pnl = sum(_safe_float(t.get("profit"), 0.0) for t in recent_trades)
-        total_pnl = float(total_unrealized_pnl + total_realized_pnl)
+        # Unrealized PnL: convert each position's PnL by its strategy's market currency
+        total_unrealized_pnl_base = 0.0
+        for p in current_positions:
+            pnl_val = float(p.get("unrealized_pnl") or 0.0)
+            sid = _safe_int(p.get("strategy_id"), 0)
+            mc = strategy_market_map.get(sid, "Crypto")
+            total_unrealized_pnl_base += convert_to_base(pnl_val, mc)
+
+        # Realized PnL: convert each trade's profit by its strategy's market currency
+        total_realized_pnl_base = 0.0
+        for t in recent_trades:
+            profit = _safe_float(t.get("profit"), 0.0)
+            sid = _safe_int(t.get("strategy_id"), 0)
+            mc = strategy_market_map.get(sid, "Crypto")
+            total_realized_pnl_base += convert_to_base(profit, mc)
+
+        total_pnl = float(total_unrealized_pnl_base + total_realized_pnl_base)
         total_equity = float(total_initial_capital + total_pnl)
+
+        # Raw values (not currency-normalized) for backward compat
+        total_realized_pnl = sum(_safe_float(t.get("profit"), 0.0) for t in recent_trades)
 
         # Daily PnL chart (uses realized profit field if present, otherwise 0)
         # Keep output stable even if profit is mostly empty.
@@ -498,10 +524,11 @@ def summary():
                 "data": {
                     "ai_strategy_count": int(ai_enabled_strategy_count),
                     "indicator_strategy_count": int(indicator_strategy_count),
+                    "base_currency": BASE_CURRENCY,
                     "total_equity": round(total_equity, 2),
                     "total_pnl": round(total_pnl, 2),
                     "total_realized_pnl": round(total_realized_pnl, 2),
-                    "total_unrealized_pnl": round(total_unrealized_pnl, 2),
+                    "total_unrealized_pnl": round(total_unrealized_pnl_base, 2),
                     # Performance KPIs
                     "performance": perf_stats,
                     # Strategy-level stats

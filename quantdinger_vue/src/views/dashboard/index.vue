@@ -14,7 +14,7 @@
             <span class="kpi-label">{{ $t('dashboard.totalEquity') }}</span>
           </div>
           <div class="kpi-value">
-            <span class="currency">$</span>
+            <span class="currency">{{ summary.base_currency || 'HKD' }} </span>
             <span class="amount">{{ formatNumber(summary.total_equity) }}</span>
           </div>
           <div class="kpi-sub">

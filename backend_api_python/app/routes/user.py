@@ -1075,10 +1075,18 @@ def get_system_strategies():
                 'updated_at': updated_at
             })
 
-        # Compute summary stats
+        # Compute summary stats (currency-normalized to HKD)
+        from app.services.currency import convert_to_base, BASE_CURRENCY
+
         all_running = [i for i in items if i['status'] == 'running']
-        total_capital = sum(i['initial_capital'] for i in items)
-        total_system_pnl = sum(i['total_pnl'] for i in items)
+        total_capital = sum(
+            convert_to_base(i['initial_capital'], i.get('market_category') or 'Crypto')
+            for i in items
+        )
+        total_system_pnl = sum(
+            convert_to_base(i['total_pnl'], i.get('market_category') or 'Crypto')
+            for i in items
+        )
         total_running = len(all_running)
 
         return jsonify({
@@ -1090,6 +1098,7 @@ def get_system_strategies():
                 'page': page,
                 'page_size': page_size,
                 'summary': {
+                    'base_currency': BASE_CURRENCY,
                     'total_strategies': total,
                     'running_strategies': total_running,
                     'total_capital': round(total_capital, 2),
