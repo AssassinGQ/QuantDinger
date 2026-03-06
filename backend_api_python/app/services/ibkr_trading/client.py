@@ -430,26 +430,68 @@ class IBKRClient(ExchangeEngine):
 
     def get_positions(self) -> List[Dict[str, Any]]:
         def _do():
+            import math
             self._ensure_connected()
             positions = self._ib.positions(self._account)
+
+            con_ids = []
+            for pos in positions:
+                cid = pos.contract.conId
+                if cid:
+                    try:
+                        self._ib.reqPnLSingle(self._account, "", cid)
+                        con_ids.append(cid)
+                    except (AssertionError, Exception):
+                        pass
+            if con_ids:
+                self._ib.sleep(1)
+
+            pnl_map = {}
+            for ps in self._ib.pnlSingle(self._account):
+                pnl_map[ps.conId] = ps
+
+            for cid in con_ids:
+                try:
+                    self._ib.cancelPnLSingle(self._account, "", cid)
+                except Exception:
+                    pass
+
             result = []
             for pos in positions:
                 contract = pos.contract
                 exchange = contract.exchange or contract.primaryExchange or "SMART"
+                qty = float(pos.position)
+                avg = float(pos.avgCost)
+                cost = qty * avg
+
+                ps = pnl_map.get(contract.conId)
+                unrealized = 0.0
+                mkt_value = cost
+                daily_pnl = 0.0
+                if ps:
+                    if not math.isnan(ps.unrealizedPnL):
+                        unrealized = float(ps.unrealizedPnL)
+                    if not math.isnan(ps.value):
+                        mkt_value = float(ps.value)
+                    if not math.isnan(ps.dailyPnL):
+                        daily_pnl = float(ps.dailyPnL)
+
                 result.append({
                     "symbol": format_display_symbol(contract.symbol, exchange),
                     "ib_symbol": contract.symbol,
                     "secType": contract.secType,
                     "exchange": exchange,
                     "currency": contract.currency,
-                    "quantity": float(pos.position),
-                    "avgCost": float(pos.avgCost),
-                    "marketValue": float(pos.position) * float(pos.avgCost),
+                    "quantity": qty,
+                    "avgCost": avg,
+                    "marketValue": mkt_value,
+                    "unrealizedPnL": unrealized,
+                    "dailyPnL": daily_pnl,
                 })
             return result
 
         try:
-            return self._submit(_do, timeout=15.0)
+            return self._submit(_do, timeout=30.0)
         except Exception as e:
             logger.error("Get positions failed: %s", e)
             return []

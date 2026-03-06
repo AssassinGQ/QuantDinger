@@ -195,6 +195,11 @@
           <template slot="marketValue" slot-scope="text, record">
             <div>{{ record.currency }} {{ formatNumber(text) }}</div>
           </template>
+          <template slot="unrealizedPnL" slot-scope="text">
+            <span :class="text >= 0 ? 'positive' : 'negative'">
+              {{ text >= 0 ? '+' : '' }}{{ formatNumber(text) }}
+            </span>
+          </template>
         </a-table>
       </div>
 
@@ -362,18 +367,7 @@ export default {
       return this.getAccountValue('NetLiquidation')
     },
     unrealizedPnl () {
-      const live = this.getAccountValue('UnrealizedPnL')
-      if (live !== 0) return live
-      let sum = 0
-      for (const p of this.positions) {
-        const qty = Number(p.quantity || 0)
-        const avg = Number(p.avgCost || 0)
-        const mkt = Number(p.marketValue || 0)
-        if (qty !== 0 && avg > 0) {
-          sum += mkt - (avg * qty)
-        }
-      }
-      return sum
+      return this.getAccountValue('UnrealizedPnL')
     },
     realizedPnl () {
       const live = this.getAccountValue('RealizedPnL')
@@ -385,7 +379,8 @@ export default {
         { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', scopedSlots: { customRender: 'symbol' }, width: 160 },
         { title: this.$t('broker.col.quantity'), dataIndex: 'quantity', scopedSlots: { customRender: 'quantity' }, width: 100, align: 'right' },
         { title: this.$t('broker.col.avgCost'), dataIndex: 'avgCost', scopedSlots: { customRender: 'avgCost' }, width: 120, align: 'right' },
-        { title: this.$t('broker.col.marketValue'), dataIndex: 'marketValue', scopedSlots: { customRender: 'marketValue' }, width: 150, align: 'right' }
+        { title: this.$t('broker.col.marketValue'), dataIndex: 'marketValue', scopedSlots: { customRender: 'marketValue' }, width: 150, align: 'right' },
+        { title: this.$t('broker.unrealizedPnl'), dataIndex: 'unrealizedPnL', scopedSlots: { customRender: 'unrealizedPnL' }, width: 150, align: 'right' }
       ]
     },
     orderColumns () {
