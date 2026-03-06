@@ -1897,9 +1897,16 @@ class PendingOrderWorker:
             )
 
             if not result.success:
-                self._mark_failed(order_id=order_id, error=f"{eid}_order_failed:{result.message}", **_dedup_kw)
-                console_print(f"[worker] {eid} order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
-                _notify_live_best_effort(status="failed", error=f"{eid}_order_failed:{result.message}")
+                msg = result.message or ""
+                is_market_closed = "market closed" in msg.lower()
+                if is_market_closed:
+                    self._mark_deferred(order_id=order_id, reason=f"{eid}_market_closed:{msg}")
+                    console_print(f"[worker] {eid} order deferred (market closed): strategy_id={strategy_id} pending_id={order_id}")
+                    _notify_live_best_effort(status="deferred", error=f"{eid}_market_closed:{msg}")
+                else:
+                    self._mark_failed(order_id=order_id, error=f"{eid}_order_failed:{msg}", **_dedup_kw)
+                    console_print(f"[worker] {eid} order failed: strategy_id={strategy_id} pending_id={order_id} err={msg}")
+                    _notify_live_best_effort(status="failed", error=f"{eid}_order_failed:{msg}")
                 return
 
             filled = float(result.filled or 0.0)

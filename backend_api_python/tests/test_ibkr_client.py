@@ -390,11 +390,30 @@ class TestWaitForOrder:
 
     def test_timeout_zero_fills_returns_failure(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="PreSubmitted", filled=0, avg_price=0)
+        trade = _make_trade_mock(status="PendingSubmit", filled=0, avg_price=0)
         result = client._wait_for_order(trade, timeout=0.5)
         assert result.success is False
         assert "timed out" in result.message
         assert result.filled == 0
+
+    @patch.dict("os.environ", {"IBKR_ALLOW_PRESUBMIT": ""})
+    def test_presubmitted_auto_cancelled(self):
+        client = _make_client_with_mock_ib()
+        trade = _make_trade_mock(status="PreSubmitted", filled=0, avg_price=0)
+        result = client._wait_for_order(trade, timeout=5.0)
+        assert result.success is False
+        assert "PreSubmitted" in result.message
+        assert "market closed" in result.message.lower()
+        client._ib.cancelOrder.assert_called_once_with(trade.order)
+
+    @patch.dict("os.environ", {"IBKR_ALLOW_PRESUBMIT": "true"})
+    def test_presubmitted_allowed_when_env_set(self):
+        client = _make_client_with_mock_ib()
+        trade = _make_trade_mock(status="PreSubmitted", filled=0, avg_price=0)
+        result = client._wait_for_order(trade, timeout=0.5)
+        assert result.success is False
+        assert "timed out" in result.message
+        client._ib.cancelOrder.assert_not_called()
 
     def test_timeout_with_partial_fills_returns_success(self):
         client = _make_client_with_mock_ib()

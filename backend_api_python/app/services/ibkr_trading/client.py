@@ -233,13 +233,21 @@ class IBKRClient(ExchangeEngine):
 
     # ── order helpers (run on worker thread) ────────────────────────
 
+    @staticmethod
+    def _allow_presubmit() -> bool:
+        val = os.environ.get("IBKR_ALLOW_PRESUBMIT", "").strip().lower()
+        return val in ("1", "true", "yes")
+
     def _wait_for_order(self, trade, timeout: float = 30.0) -> OrderResult:
         import time as _time
         deadline = _time.monotonic() + timeout
         while _time.monotonic() < deadline:
             self._ib.sleep(0.2)
-            if trade.orderStatus.status in self._TERMINAL_STATUSES:
+            status = trade.orderStatus.status
+            if status in self._TERMINAL_STATUSES:
                 break
+            if status == "PreSubmitted" and not self._allow_presubmit():
+                return self._cancel_presubmitted(trade)
 
         status = trade.orderStatus.status
         filled = float(trade.orderStatus.filled or 0)
@@ -288,6 +296,26 @@ class IBKRClient(ExchangeEngine):
                 "filled": filled,
                 "remaining": float(trade.orderStatus.remaining or 0),
             },
+        )
+
+    def _cancel_presubmitted(self, trade) -> OrderResult:
+        oid = trade.order.orderId
+        logger.info(
+            "Order %s entered PreSubmitted (market closed); "
+            "cancelling to avoid queued presubmit orders", oid,
+        )
+        try:
+            self._ib.cancelOrder(trade.order)
+            self._ib.sleep(1)
+        except Exception as e:
+            logger.warning("Cancel of PreSubmitted order %s failed: %s", oid, e)
+        return OrderResult(
+            success=False,
+            order_id=oid,
+            filled=0, avg_price=0, status="PreSubmitted",
+            exchange_id=self.engine_id,
+            message="Order PreSubmitted (market closed) – cancelled to avoid queue buildup",
+            raw={"orderId": oid, "status": "PreSubmitted", "action": "auto_cancelled"},
         )
 
     # ── order execution (ExchangeEngine) ───────────────────────────
