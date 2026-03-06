@@ -738,13 +738,26 @@ def send_test_notification():
         result = notifier.notify_signal(
             strategy_id=0,
             strategy_name='QuantDinger Test',
-            symbol='TEST',
-            signal_type='test',
-            price=0.0,
-            stake_amount=0.0,
+            symbol='AAPL',
+            signal_type='close_long',
+            price=187.50,
+            stake_amount=100.0,
             direction='long',
             notification_config=notification_config,
-            extra={'test': True},
+            extra={
+                'test': True,
+                'status': 'filled',
+                'symbol_name': '苹果公司',
+                'market_category': 'USStock',
+                'market_type': 'stock',
+                'exchange_id': 'SMART',
+                'filled_price': 188.25,
+                'filled_amount': 100.0,
+                'entry_price': 172.30,
+                'profit': 1595.0,
+                'position_opened_at': '2026-02-15 09:30',
+                'mode': 'live',
+            },
         )
 
         logger.info(f"send_test_notification result: {result}")
