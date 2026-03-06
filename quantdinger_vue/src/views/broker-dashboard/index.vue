@@ -362,10 +362,23 @@ export default {
       return this.getAccountValue('NetLiquidation')
     },
     unrealizedPnl () {
-      return this.getAccountValue('UnrealizedPnL')
+      const live = this.getAccountValue('UnrealizedPnL')
+      if (live !== 0) return live
+      let sum = 0
+      for (const p of this.positions) {
+        const qty = Number(p.quantity || 0)
+        const avg = Number(p.avgCost || 0)
+        const mkt = Number(p.marketValue || 0)
+        if (qty !== 0 && avg > 0) {
+          sum += mkt - (avg * qty)
+        }
+      }
+      return sum
     },
     realizedPnl () {
-      return this.getAccountValue('RealizedPnL')
+      const live = this.getAccountValue('RealizedPnL')
+      if (live !== 0) return live
+      return this.performance.total_realized_pnl || 0
     },
     positionColumns () {
       return [

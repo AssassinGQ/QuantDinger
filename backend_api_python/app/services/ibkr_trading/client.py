@@ -403,6 +403,31 @@ class IBKRClient(ExchangeEngine):
             logger.error("Get account summary failed: %s", e)
             return {"success": False, "error": str(e)}
 
+    def get_pnl(self) -> Dict[str, Any]:
+        def _do():
+            self._ensure_connected()
+            import math
+            pnl_list = self._ib.pnl(self._account)
+            if not pnl_list:
+                pnl_obj = self._ib.reqPnL(self._account)
+                self._ib.sleep(1)
+                pnl_list = self._ib.pnl(self._account)
+            if pnl_list:
+                p = pnl_list[0]
+                return {
+                    "success": True,
+                    "dailyPnL": 0.0 if math.isnan(p.dailyPnL) else float(p.dailyPnL),
+                    "unrealizedPnL": 0.0 if math.isnan(p.unrealizedPnL) else float(p.unrealizedPnL),
+                    "realizedPnL": 0.0 if math.isnan(p.realizedPnL) else float(p.realizedPnL),
+                }
+            return {"success": True, "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
+
+        try:
+            return self._submit(_do, timeout=15.0)
+        except Exception as e:
+            logger.error("Get PnL failed: %s", e)
+            return {"success": False, "error": str(e), "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
+
     def get_positions(self) -> List[Dict[str, Any]]:
         def _do():
             self._ensure_connected()

@@ -420,6 +420,7 @@ def _compute_ibkr_trade_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
             "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
             "win_rate": 0.0, "profit_factor": 0.0,
             "total_profit": 0.0, "total_loss": 0.0,
+            "total_realized_pnl": 0.0,
             "avg_win": 0.0, "avg_loss": 0.0,
         }
 
@@ -432,6 +433,7 @@ def _compute_ibkr_trade_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     win_rate = (winning / total * 100) if total > 0 else 0.0
     total_profit = sum(wins)
     total_loss = abs(sum(losses))
+    total_realized_pnl = sum(profits)
     profit_factor = (total_profit / total_loss) if total_loss > 0 else (total_profit if total_profit > 0 else 0.0)
     avg_win = (total_profit / winning) if winning > 0 else 0.0
     avg_loss = (total_loss / losing) if losing > 0 else 0.0
@@ -444,6 +446,7 @@ def _compute_ibkr_trade_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
         "profit_factor": round(profit_factor, 2),
         "total_profit": round(total_profit, 2),
         "total_loss": round(total_loss, 2),
+        "total_realized_pnl": round(total_realized_pnl, 2),
         "avg_win": round(avg_win, 2),
         "avg_loss": round(avg_loss, 2),
     }
@@ -483,8 +486,8 @@ def ibkr_dashboard():
                 summary = acct.get("summary", {})
                 key_tags = [
                     "NetLiquidation", "TotalCashValue", "StockMarketValue",
-                    "AvailableFunds", "BuyingPower", "UnrealizedPnL",
-                    "RealizedPnL", "GrossPositionValue", "InitMarginReq",
+                    "AvailableFunds", "BuyingPower",
+                    "GrossPositionValue", "InitMarginReq",
                     "MaintMarginReq", "AccruedCash",
                 ]
                 parsed = {}
@@ -494,13 +497,22 @@ def ibkr_dashboard():
                             "value": _safe_float(summary[tag].get("value")),
                             "currency": summary[tag].get("currency", ""),
                         }
+
+                currency = (parsed.get("NetLiquidation") or {}).get("currency", "USD")
+
+                # PnL via dedicated reqPnL (accountSummary tags don't include PnL)
+                pnl = client.get_pnl()
+                parsed["UnrealizedPnL"] = {"value": pnl.get("unrealizedPnL", 0.0), "currency": currency}
+                parsed["RealizedPnL"] = {"value": pnl.get("realizedPnL", 0.0), "currency": currency}
+                parsed["DailyPnL"] = {"value": pnl.get("dailyPnL", 0.0), "currency": currency}
+
                 data["account"] = {
                     "account_id": acct.get("account", ""),
                     "items": parsed,
                     "net_liquidation": _safe_float(
                         (parsed.get("NetLiquidation") or {}).get("value")
                     ),
-                    "currency": (parsed.get("NetLiquidation") or {}).get("currency", "USD"),
+                    "currency": currency,
                 }
 
             # Positions

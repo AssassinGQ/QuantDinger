@@ -83,6 +83,7 @@ class TestComputeTradeStats:
         assert stats["total_trades"] == 0
         assert stats["win_rate"] == 0.0
         assert stats["profit_factor"] == 0.0
+        assert stats["total_realized_pnl"] == 0.0
 
     def test_all_winners(self):
         trades = [
@@ -133,6 +134,7 @@ class TestComputeTradeStats:
         assert stats["profit_factor"] == 4.0  # 300/75
         assert stats["avg_win"] == 150.0  # 300/2
         assert stats["avg_loss"] == 37.5   # 75/2
+        assert stats["total_realized_pnl"] == 225.0  # 100-50+200-25+0
 
     def test_string_profit_values(self):
         trades = [
@@ -227,10 +229,15 @@ class TestIbkrDashboardEndpoint:
             "account": "DU123",
             "summary": {
                 "NetLiquidation": {"value": "150000.50", "currency": "USD"},
-                "UnrealizedPnL": {"value": "1200.00", "currency": "USD"},
                 "AvailableFunds": {"value": "80000.00", "currency": "USD"},
                 "BuyingPower": {"value": "320000.00", "currency": "USD"},
             },
+        }
+        client.get_pnl.return_value = {
+            "success": True,
+            "dailyPnL": -350.0,
+            "unrealizedPnL": 1200.0,
+            "realizedPnL": 850.0,
         }
         client.get_positions.return_value = [
             {"symbol": "AAPL", "quantity": 100, "avgCost": 150.0}
@@ -253,6 +260,10 @@ class TestIbkrDashboardEndpoint:
             assert data["account"]["account_id"] == "DU123"
             assert data["account"]["net_liquidation"] == 150000.50
             assert data["account"]["currency"] == "USD"
+            items = data["account"]["items"]
+            assert items["UnrealizedPnL"]["value"] == 1200.0
+            assert items["RealizedPnL"]["value"] == 850.0
+            assert items["DailyPnL"]["value"] == -350.0
             assert len(data["positions"]) == 1
             assert data["positions"][0]["symbol"] == "AAPL"
             assert len(data["open_orders"]) == 1
