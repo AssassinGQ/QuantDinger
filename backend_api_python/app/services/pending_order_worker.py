@@ -1989,15 +1989,9 @@ class PendingOrderWorker:
 
             if not result.success:
                 msg = result.message or ""
-                is_market_closed = "market closed" in msg.lower()
-                if is_market_closed:
-                    self._mark_deferred(order_id=order_id, reason=f"{eid}_market_closed:{msg}")
-                    console_print(f"[worker] {eid} order deferred (market closed): strategy_id={strategy_id} pending_id={order_id}")
-                    _notify_live_best_effort(status="deferred", error=f"{eid}_market_closed:{msg}")
-                else:
-                    self._mark_failed(order_id=order_id, error=f"{eid}_order_failed:{msg}", **_dedup_kw)
-                    console_print(f"[worker] {eid} order failed: strategy_id={strategy_id} pending_id={order_id} err={msg}")
-                    _notify_live_best_effort(status="failed", error=f"{eid}_order_failed:{msg}")
+                self._mark_failed(order_id=order_id, error=f"{eid}_order_failed:{msg}", **_dedup_kw)
+                console_print(f"[worker] {eid} order failed: strategy_id={strategy_id} pending_id={order_id} err={msg}")
+                _notify_live_best_effort(status="failed", error=f"{eid}_order_failed:{msg}")
                 return
 
             filled = float(result.filled or 0.0)
@@ -2160,20 +2154,5 @@ class PendingOrderWorker:
             except Exception:  # pylint: disable=broad-exception-caught
                 pass
 
-    def _mark_deferred(self, order_id: int, reason: str) -> None:
-        with get_db_connection() as db:
-            cur = db.cursor()
-            cur.execute(
-                """
-                UPDATE pending_orders
-                SET status = 'deferred',
-                    last_error = %s,
-                    updated_at = NOW()
-                WHERE id = %s
-                """,
-                (str(reason or "deferred"), int(order_id)),
-            )
-            db.commit()
-            cur.close()
 
 
