@@ -264,6 +264,8 @@ class SignalNotifier:
         except Exception:
             pending_id = None
 
+        ex = extra or {}
+
         return {
             "event": "qd.signal",
             "version": 1,
@@ -275,6 +277,7 @@ class SignalNotifier:
             },
             "instrument": {
                 "symbol": str(symbol or ""),
+                "display_name": str(ex.get("symbol_name") or ""),
             },
             "signal": {
                 "type": meta.get("type") or str(signal_type or ""),
@@ -286,77 +289,178 @@ class SignalNotifier:
                 "ref_price": float(price or 0.0),
                 "stake_amount": float(stake_amount or 0.0),
             },
+            "execution": {
+                "status": str(ex.get("status") or ""),
+                "error": str(ex.get("error") or ""),
+                "exchange_id": str(ex.get("exchange_id") or ""),
+                "exchange_order_id": str(ex.get("exchange_order_id") or ""),
+                "market_category": str(ex.get("market_category") or ""),
+                "market_type": str(ex.get("market_type") or ""),
+                "filled_price": float(ex.get("filled_price") or 0.0),
+                "filled_amount": float(ex.get("filled_amount") or 0.0),
+                "profit": ex.get("profit"),
+                "entry_price": float(ex.get("entry_price") or 0.0),
+                "position_opened_at": str(ex.get("position_opened_at") or ""),
+            },
             "trace": {
                 "pending_order_id": pending_id,
-                "mode": str((extra or {}).get("mode") or ""),
+                "mode": str(ex.get("mode") or ""),
             },
             "extra": extra or {},
         }
 
-    def _render_messages(self, payload: Dict[str, Any]) -> Dict[str, str]:
+    @staticmethod
+    def _extract_render_ctx(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract all fields needed by _render_messages into a flat dict."""
         strategy = (payload or {}).get("strategy") or {}
         instrument = (payload or {}).get("instrument") or {}
         sig = (payload or {}).get("signal") or {}
         order = (payload or {}).get("order") or {}
         trace = (payload or {}).get("trace") or {}
+        execution = (payload or {}).get("execution") or {}
 
         symbol = str(instrument.get("symbol") or "")
-        stype = str(sig.get("type") or "")
+        display_name = str(instrument.get("display_name") or "")
         action = str(sig.get("action") or "").upper()
-        side = str(sig.get("side") or "").upper()
-        title = f"QD Signal | {symbol} | {action} {side}".strip()
-
-        price_s = _fmt_float(order.get("ref_price") or 0.0, max_decimals=10)
-        stake_s = _fmt_float(order.get("stake_amount") or 0.0, max_decimals=12)
-        pending_id = int(trace.get("pending_order_id") or 0) if trace.get("pending_order_id") else 0
+        exec_status = str(execution.get("status") or "")
         mode = str(trace.get("mode") or "")
-        ts_iso = str(payload.get("timestamp_iso") or "")
+        is_close = action in ("CLOSE", "REDUCE")
 
+        filled_price = float(execution.get("filled_price") or 0.0)
+        filled_amount = float(execution.get("filled_amount") or 0.0)
+        entry_price = float(execution.get("entry_price") or 0.0)
+
+        raw_profit = execution.get("profit")
+        profit = None
+        if raw_profit is not None:
+            try:
+                profit = float(raw_profit)
+            except (TypeError, ValueError):
+                pass
+
+        status_tag = f" [{exec_status.upper()}]" if exec_status else ""
+        symbol_label = f"{symbol} ({display_name})" if display_name else symbol
+        t_strategy = f"{strategy.get('name') or ''} (#{int(strategy.get('id') or 0)})"
+
+        return {
+            "symbol_label": symbol_label,
+            "stype": str(sig.get("type") or ""),
+            "action": action,
+            "side": str(sig.get("side") or "").upper(),
+            "is_close": is_close,
+            "mode": mode,
+            "exec_status": exec_status,
+            "exec_error": str(execution.get("error") or ""),
+            "exchange_id": str(execution.get("exchange_id") or ""),
+            "exchange_order_id": str(execution.get("exchange_order_id") or ""),
+            "market_category": str(execution.get("market_category") or ""),
+            "filled_price": filled_price,
+            "filled_amount": filled_amount,
+            "entry_price": entry_price,
+            "position_opened_at": str(execution.get("position_opened_at") or ""),
+            "profit": profit,
+            "title": f"QD {mode.upper() or 'Signal'} | {symbol_label} | {action} {str(sig.get('side') or '').upper()}{status_tag}".strip(),
+            "price_s": _fmt_float(order.get("ref_price") or 0.0, max_decimals=10),
+            "stake_s": _fmt_float(order.get("stake_amount") or 0.0, max_decimals=12),
+            "pending_id": int(trace.get("pending_order_id") or 0) if trace.get("pending_order_id") else 0,
+            "ts_iso": str(payload.get("timestamp_iso") or ""),
+            "t_strategy": t_strategy,
+        }
+
+    @staticmethod
+    def _build_optional_rows(ctx: Dict[str, Any]) -> List[Tuple[str, str]]:
+        """Build a list of (label, value) for optional fields present in ctx."""
+        rows: List[Tuple[str, str]] = []
+        # Simple string fields: (label, ctx_key)
+        _STR_FIELDS = [
+            ("Market", "market_category"), ("Exchange", "exchange_id"), ("Mode", "mode"),
+            ("Status", "exec_status"),
+        ]
+        for label, key in _STR_FIELDS:
+            if ctx[key]:
+                rows.append((label, ctx[key]))
+        # Numeric fill fields
+        if ctx["filled_price"] > 0:
+            rows.append(("Filled Price", _fmt_float(ctx["filled_price"], max_decimals=10)))
+        if ctx["filled_amount"] > 0:
+            rows.append(("Filled Amount", _fmt_float(ctx["filled_amount"], max_decimals=12)))
+        # Close-specific fields
+        if ctx["is_close"]:
+            if ctx["entry_price"] > 0:
+                rows.append(("Entry Price", _fmt_float(ctx["entry_price"], max_decimals=10)))
+            if ctx["profit"] is not None:
+                pnl_sign = "+" if ctx["profit"] >= 0 else ""
+                rows.append(("P&L", f"{pnl_sign}{_fmt_float(ctx['profit'], max_decimals=4)}"))
+            if ctx["position_opened_at"]:
+                rows.append(("Position Opened", ctx["position_opened_at"]))
+        # Trailing fields
+        _TAIL_FIELDS = [("Order ID", "exchange_order_id"), ("Error", "exec_error")]
+        for label, key in _TAIL_FIELDS:
+            val = ctx[key]
+            if val:
+                rows.append((label, val[:500] if label == "Error" else val))
+        if ctx["pending_id"]:
+            rows.append(("PendingOrder", str(int(ctx["pending_id"]))))
+        if ctx["ts_iso"]:
+            rows.append(("Time (UTC)", ctx["ts_iso"]))
+        return rows
+
+    def _render_messages(self, payload: Dict[str, Any]) -> Dict[str, str]:
+        ctx = self._extract_render_ctx(payload)
+        title = ctx["title"]
+        opt_rows = self._build_optional_rows(ctx)
+
+        # -- plain text --
         plain_lines = [
             "QuantDinger Signal",
-            f"Strategy: {strategy.get('name') or ''} (#{int(strategy.get('id') or 0)})",
-            f"Symbol: {symbol}",
-            f"Signal: {stype}",
-            f"Price: {price_s}",
-            f"Stake: {stake_s}",
+            f"Strategy: {ctx['t_strategy']}",
+            f"Symbol: {ctx['symbol_label']}",
+            f"Signal: {ctx['stype']}",
+            f"Ref Price: {ctx['price_s']}",
+            f"Amount: {ctx['stake_s']}",
         ]
-        if pending_id:
-            plain_lines.append(f"PendingOrder: {pending_id}")
-        if mode:
-            plain_lines.append(f"Mode: {mode}")
-        if ts_iso:
-            plain_lines.append(f"Time(UTC): {ts_iso}")
+        for label, val in opt_rows:
+            plain_lines.append(f"{label}: {val}")
 
-        # Telegram (HTML) message. Escape all dynamic values.
-        t_strategy = f"{strategy.get('name') or ''} (#{int(strategy.get('id') or 0)})"
+        # -- Telegram (HTML) message --
         telegram_lines = [
             "<b>QuantDinger Signal</b>",
             "",
-            f"<b>Strategy</b>: <code>{html.escape(str(t_strategy))}</code>",
-            f"<b>Symbol</b>: <code>{html.escape(symbol)}</code>",
-            f"<b>Signal</b>: <code>{html.escape(stype)}</code>",
-            f"<b>Price</b>: <code>{html.escape(price_s)}</code>",
-            f"<b>Stake</b>: <code>{html.escape(stake_s)}</code>",
+            f"<b>Strategy</b>: <code>{html.escape(ctx['t_strategy'])}</code>",
+            f"<b>Symbol</b>: <code>{html.escape(ctx['symbol_label'])}</code>",
+            f"<b>Signal</b>: <code>{html.escape(ctx['stype'])}</code>",
+            f"<b>Ref Price</b>: <code>{html.escape(ctx['price_s'])}</code>",
+            f"<b>Amount</b>: <code>{html.escape(ctx['stake_s'])}</code>",
         ]
-        if pending_id:
-            telegram_lines.append(f"<b>PendingOrder</b>: <code>{pending_id}</code>")
-        if mode:
-            telegram_lines.append(f"<b>Mode</b>: <code>{html.escape(mode)}</code>")
-        if ts_iso:
-            telegram_lines.append(f"<b>Time (UTC)</b>: <code>{html.escape(ts_iso)}</code>")
-        telegram_html = "\n".join([x for x in telegram_lines if x is not None])
+        _STATUS_EMOJI = {"filled": "\u2705", "failed": "\u274c", "deferred": "\u23f3"}
+        for label, val in opt_rows:
+            v_esc = html.escape(str(val))
+            if label == "Status":
+                emoji = _STATUS_EMOJI.get(val.lower(), "\u2139\ufe0f")
+                telegram_lines.append(f"<b>{label}</b>: {emoji} <code>{v_esc}</code>")
+            elif label == "P&L":
+                pnl_emoji = "\U0001f4c8" if val.startswith("+") else "\U0001f4c9"
+                telegram_lines.append(f"{pnl_emoji} <b>P&amp;L</b>: <code>{v_esc}</code>")
+            elif label == "Error":
+                telegram_lines.append(f"\n\u26a0\ufe0f <b>Error</b>: <code>{v_esc}</code>")
+            else:
+                telegram_lines.append(f"<b>{html.escape(label)}</b>: <code>{v_esc}</code>")
+        telegram_html = "\n".join(telegram_lines)
 
-        # Email (HTML) message. Keep inline CSS for maximum compatibility.
+        # -- Email (HTML) message --
+        email_rows: List[Tuple[str, str]] = [
+            ("Strategy", ctx["t_strategy"]),
+            ("Symbol", ctx["symbol_label"]),
+            ("Signal", ctx["stype"]),
+            ("Ref Price", ctx["price_s"]),
+            ("Amount", ctx["stake_s"]),
+        ] + opt_rows
+
         email_html = self._build_email_html(
-            title_text="QuantDinger Signal",
-            strategy_text=t_strategy,
-            symbol=symbol,
-            signal_type=stype,
-            price_text=price_s,
-            stake_text=stake_s,
-            pending_id=pending_id or None,
-            mode_text=mode or "",
-            timestamp_iso=ts_iso or "",
+            title_text=title,
+            rows=email_rows,
+            timestamp_iso=ctx["ts_iso"],
+            status=ctx["exec_status"],
         )
 
         return {
@@ -370,41 +474,58 @@ class SignalNotifier:
         self,
         *,
         title_text: str,
-        strategy_text: str,
-        symbol: str,
-        signal_type: str,
-        price_text: str,
-        stake_text: str,
-        pending_id: Optional[int],
-        mode_text: str,
-        timestamp_iso: str,
+        rows: List[Tuple[str, str]],
+        timestamp_iso: str = "",
+        status: str = "",
     ) -> str:
         def esc(s: Any) -> str:
             return html.escape(str(s or ""))
 
-        rows: List[Tuple[str, str]] = [
-            ("Strategy", strategy_text),
-            ("Symbol", symbol),
-            ("Signal", signal_type),
-            ("Price", price_text),
-            ("Stake", stake_text),
-        ]
-        if pending_id:
-            rows.append(("PendingOrder", str(int(pending_id))))
-        if mode_text:
-            rows.append(("Mode", mode_text))
-        if timestamp_iso:
-            rows.append(("Time (UTC)", timestamp_iso))
+        _STATUS_COLORS = {
+            "filled": ("#0d6e3b", "#dcfce7"),
+            "failed": ("#991b1b", "#fee2e2"),
+            "deferred": ("#92400e", "#fef3c7"),
+        }
+        header_bg = "#111827"
+        st_lower = (status or "").strip().lower()
+        accent_color, _ = _STATUS_COLORS.get(st_lower, (None, None))
+
+        def _render_value(key: str, val: str) -> str:
+            k_lower = key.lower()
+            v_esc = esc(val)
+            if k_lower == "status" and st_lower in _STATUS_COLORS:
+                fg, bg = _STATUS_COLORS[st_lower]
+                return (
+                    f"<span style='display:inline-block;padding:2px 10px;border-radius:4px;"
+                    f"background:{bg};color:{fg};font-weight:600;'>{v_esc}</span>"
+                )
+            if k_lower == "error" and val:
+                return (
+                    f"<span style='color:#991b1b;background:#fee2e2;padding:2px 8px;"
+                    f"border-radius:4px;word-break:break-all;'>{v_esc}</span>"
+                )
+            if k_lower == "p&l" and val:
+                is_positive = val.strip().startswith("+") or (val.strip() and val.strip()[0].isdigit())
+                fg = "#0d6e3b" if is_positive else "#991b1b"
+                bg = "#dcfce7" if is_positive else "#fee2e2"
+                return (
+                    f"<span style='display:inline-block;padding:2px 10px;border-radius:4px;"
+                    f"background:{bg};color:{fg};font-weight:700;font-size:15px;'>{v_esc}</span>"
+                )
+            return v_esc
 
         tr_html = "\n".join(
             [
                 (
                     "<tr>"
-                    "<td style='padding:10px 12px;border-top:1px solid #eaecef;color:#57606a;width:160px;'>"
+                    "<td style='padding:10px 12px;border-top:1px solid #eaecef;color:#57606a;width:160px;"
+                    "font-size:13px;vertical-align:top;'>"
                     f"{esc(k)}"
                     "</td>"
-                    "<td style='padding:10px 12px;border-top:1px solid #eaecef;color:#24292f;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace;'>"
-                    f"{esc(v)}"
+                    "<td style='padding:10px 12px;border-top:1px solid #eaecef;color:#24292f;"
+                    "font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "
+                    "\"Liberation Mono\", \"Courier New\", monospace;font-size:14px;'>"
+                    f"{_render_value(k, v)}"
                     "</td>"
                     "</tr>"
                 )
@@ -417,7 +538,7 @@ class SignalNotifier:
 <html>
   <body style="margin:0;padding:0;background:#f6f8fa;">
     <div style="max-width:640px;margin:0 auto;padding:24px;">
-      <div style="background:#111827;color:#ffffff;padding:16px 18px;border-radius:12px 12px 0 0;">
+      <div style="background:{header_bg};color:#ffffff;padding:16px 18px;border-radius:12px 12px 0 0;">
         <div style="font-size:16px;letter-spacing:0.2px;font-weight:600;">{esc(title_text)}</div>
         <div style="margin-top:6px;font-size:12px;color:#d1d5db;">{esc(timestamp_iso) if timestamp_iso else ""}</div>
       </div>

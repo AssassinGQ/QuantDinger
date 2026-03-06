@@ -640,6 +640,15 @@ class PendingOrderWorker:
             if (not notification_config) and strategy_id:
                 notification_config = self._load_notification_config(int(strategy_id))
 
+            _sig_mkt_cat = str(payload.get("market_category") or "")
+            _sig_sym_name = ""
+            if _sig_mkt_cat:
+                try:
+                    from app.services.symbol_name import resolve_symbol_name
+                    _sig_sym_name = resolve_symbol_name(_sig_mkt_cat, str(symbol)) or ""
+                except Exception:
+                    pass
+
             results = self._notifier.notify_signal(
                 strategy_id=int(strategy_id or 0),
                 strategy_name=str(strategy_name or ""),
@@ -649,7 +658,13 @@ class PendingOrderWorker:
                 stake_amount=float(amount or 0.0),
                 direction=str(direction or "long"),
                 notification_config=notification_config if isinstance(notification_config, dict) else {},
-                extra={"pending_order_id": order_id, "mode": mode},
+                extra={
+                    "pending_order_id": order_id,
+                    "mode": mode,
+                    "market_category": _sig_mkt_cat,
+                    "market_type": str(payload.get("market_type") or ""),
+                    "symbol_name": _sig_sym_name,
+                },
             )
 
             attempted = list(results.keys())
@@ -712,6 +727,32 @@ class PendingOrderWorker:
         except Exception:
             return ""
 
+    def _load_position_opened_at(self, strategy_id: int, symbol: str, signal_type: str) -> str:
+        """Find the earliest open_* trade for this strategy+symbol+side to determine holding period start."""
+        side = "long" if "long" in signal_type else ("short" if "short" in signal_type else "")
+        if not side:
+            return ""
+        open_types = ("open_long", "add_long") if side == "long" else ("open_short", "add_short")
+        try:
+            with get_db_connection() as db:
+                cur = db.cursor()
+                cur.execute(
+                    """SELECT MIN(created_at) AS opened_at FROM qd_strategy_trades
+                       WHERE strategy_id = ? AND symbol = ? AND type IN (?, ?)
+                    """,
+                    (int(strategy_id), str(symbol), open_types[0], open_types[1]),
+                )
+                row = cur.fetchone() or {}
+                cur.close()
+            opened = row.get("opened_at")
+            if opened is None:
+                return ""
+            if hasattr(opened, "strftime"):
+                return opened.strftime("%Y-%m-%d %H:%M")
+            return str(opened)[:16]
+        except Exception:
+            return ""
+
     def _execute_live_order(self, *, order_id: int, order_row: Dict[str, Any], payload: Dict[str, Any]) -> None:
         """
         Execute a pending order using direct exchange REST clients (no ccxt).
@@ -721,6 +762,9 @@ class PendingOrderWorker:
             self._mark_failed(order_id=order_id, error="missing_strategy_id")
             return
 
+        # Mutable container so inner closures defined later can share market context.
+        _live_ctx: Dict[str, Any] = {"market_category": "", "market_type": "", "exchange_id": ""}
+
         def _notify_live_best_effort(
             *,
             status: str,
@@ -729,13 +773,11 @@ class PendingOrderWorker:
             exchange_order_id: str = "",
             price_hint: Optional[float] = None,
             amount_hint: Optional[float] = None,
+            filled_price: float = 0.0,
+            filled_amount: float = 0.0,
+            profit: Optional[float] = None,
+            entry_price: float = 0.0,
         ) -> None:
-            """
-            Best-effort notifications for live execution.
-
-            Historically this worker only notified in execution_mode='signal'. For real trading ('live'),
-            users still want Telegram/browser alerts. This hook never blocks or changes order status.
-            """
             try:
                 notification_config = payload.get("notification_config") or {}
                 if (not notification_config) and strategy_id:
@@ -755,6 +797,46 @@ class PendingOrderWorker:
                 px = float(price_hint) if (price_hint is not None and float(price_hint or 0.0) > 0) else ref0
                 amt = float(amount_hint) if (amount_hint is not None and float(amount_hint or 0.0) > 0) else amt0
 
+                # Resolve display name and position opened time for close signals
+                symbol_name = ""
+                position_opened_at = ""
+                sig_lower = str(sig0 or "").strip().lower()
+                is_close_sig = sig_lower.startswith("close_") or sig_lower.startswith("reduce_")
+
+                mkt_cat = str(_live_ctx.get("market_category") or "")
+                if mkt_cat:
+                    try:
+                        from app.services.symbol_name import resolve_symbol_name
+                        symbol_name = resolve_symbol_name(mkt_cat, str(sym0)) or ""
+                    except Exception:
+                        pass
+
+                if is_close_sig and strategy_id:
+                    try:
+                        position_opened_at = self._load_position_opened_at(
+                            strategy_id, str(sym0), sig_lower)
+                    except Exception:
+                        pass
+
+                extra_dict: Dict[str, Any] = {
+                    "pending_order_id": int(order_id),
+                    "mode": "live",
+                    "status": str(status or ""),
+                    "error": str(error or ""),
+                    "exchange_id": str(exchange_id or _live_ctx.get("exchange_id") or ""),
+                    "exchange_order_id": str(exchange_order_id or ""),
+                    "market_category": mkt_cat,
+                    "market_type": str(_live_ctx.get("market_type") or ""),
+                    "filled_price": float(filled_price or 0.0),
+                    "filled_amount": float(filled_amount or 0.0),
+                    "symbol_name": symbol_name,
+                }
+                if is_close_sig:
+                    extra_dict["profit"] = profit
+                    extra_dict["entry_price"] = float(entry_price or 0.0)
+                    if position_opened_at:
+                        extra_dict["position_opened_at"] = position_opened_at
+
                 results = self._notifier.notify_signal(
                     strategy_id=int(strategy_id),
                     strategy_name=str(strategy_name or ""),
@@ -764,14 +846,7 @@ class PendingOrderWorker:
                     stake_amount=float(amt or 0.0),
                     direction=("short" if "short" in str(sig0 or "").lower() else "long"),
                     notification_config=notification_config if isinstance(notification_config, dict) else {},
-                    extra={
-                        "pending_order_id": int(order_id),
-                        "mode": "live",
-                        "status": str(status or ""),
-                        "error": str(error or ""),
-                        "exchange_id": str(exchange_id or ""),
-                        "exchange_order_id": str(exchange_order_id or ""),
-                    },
+                    extra=extra_dict,
                 )
                 ok_channels = [c for c, r in (results or {}).items() if (r or {}).get("ok")]
                 fail_channels = [c for c, r in (results or {}).items() if not (r or {}).get("ok")]
@@ -800,6 +875,8 @@ class PendingOrderWorker:
         safe_cfg = safe_exchange_config_for_log(exchange_config)
         exchange_id = str(exchange_config.get("exchange_id") or "").strip().lower()
         market_category = str(cfg.get("market_category") or "Crypto").strip()
+        _live_ctx["market_category"] = market_category
+        _live_ctx["exchange_id"] = exchange_id
 
         # Validate market category and exchange_id combination for live trading
         # AShare and Futures do not support live trading
@@ -828,6 +905,7 @@ class PendingOrderWorker:
         market_type = str(market_type or "swap").strip().lower()
         if market_type in ("futures", "future", "perp", "perpetual"):
             market_type = "swap"
+        _live_ctx["market_type"] = market_type
 
         client = None
         try:
@@ -1799,6 +1877,19 @@ class PendingOrderWorker:
         except Exception as e:
             logger.warning(f"mark_sent failed: pending_id={order_id}, err={e}")
 
+        # Snapshot entry_price before apply_fill (close may delete the position row).
+        _pnl_profit: Optional[float] = None
+        _pnl_entry: float = 0.0
+        try:
+            from app.services.live_trading.records import _fetch_position
+            sig_lower = str(signal_type or "").strip().lower()
+            _side = "long" if "long" in sig_lower else ("short" if "short" in sig_lower else "")
+            if _side:
+                _cur_pos = _fetch_position(strategy_id, str(symbol), _side)
+                _pnl_entry = float(_cur_pos.get("entry_price") or 0.0)
+        except Exception:
+            pass
+
         # Record trade + update local position snapshot (best-effort).
         try:
             if filled > 0 and avg_price > 0:
@@ -1806,39 +1897,39 @@ class PendingOrderWorker:
                     f"live record begin: pending_id={order_id} strategy_id={strategy_id} symbol={symbol} "
                     f"signal={signal_type} filled={filled} avg_price={avg_price} fee={total_fee} fee_ccy={fee_ccy}"
                 )
-                profit, _pos = apply_fill_to_local_position(
+                _pnl_profit, _pos = apply_fill_to_local_position(
                     strategy_id=strategy_id,
                     symbol=str(symbol),
                     signal_type=str(signal_type),
                     filled=filled,
                     avg_price=avg_price,
                 )
-                # Best-effort: subtract commission from profit if fee is in USDT/USDC/USD.
-                if profit is not None and total_fee > 0 and str(fee_ccy or "").upper() in ("USDT", "USDC", "USD"):
-                    profit = float(profit) - float(total_fee)
+                if _pnl_profit is not None and total_fee > 0 and str(fee_ccy or "").upper() in ("USDT", "USDC", "USD"):
+                    _pnl_profit = float(_pnl_profit) - float(total_fee)
                 record_trade(
                     strategy_id=strategy_id,
                     symbol=str(symbol),
                     trade_type=str(signal_type),
                     price=avg_price,
                     amount=filled,
-                    # Always persist fee (even if fee_ccy is not stablecoin), and store fee currency separately.
-                    # Profit adjustment is only applied when fee currency is stable (see above).
                     commission=float(total_fee or 0.0),
                     commission_ccy=str(fee_ccy or "").strip().upper(),
-                    profit=profit,
+                    profit=_pnl_profit,
                 )
                 logger.info(f"live record done: pending_id={order_id} strategy_id={strategy_id} symbol={symbol} signal={signal_type}")
         except Exception as e:
             logger.warning(f"record_trade/update_position failed: pending_id={order_id}, err={e}")
 
-        # Notify live results (best-effort; does not affect execution).
         _notify_live_best_effort(
-            status="sent",
+            status="filled",
             exchange_id=res.exchange_id,
             exchange_order_id=res.exchange_order_id,
             price_hint=avg_price if avg_price > 0 else ref_price,
             amount_hint=filled if filled > 0 else amount,
+            filled_price=avg_price,
+            filled_amount=filled,
+            profit=_pnl_profit,
+            entry_price=_pnl_entry,
         )
 
     def _execute_engine_order(
@@ -1931,13 +2022,25 @@ class PendingOrderWorker:
             )
             console_print(f"[worker] {eid} order sent: strategy_id={strategy_id} pending_id={order_id} order_id={exchange_order_id} filled={filled} avg={avg_price}")
 
+            _eng_profit: Optional[float] = None
+            _eng_entry: float = 0.0
+            try:
+                from app.services.live_trading.records import _fetch_position
+                _eng_sig = str(signal_type or "").strip().lower()
+                _eng_side = "long" if "long" in _eng_sig else ("short" if "short" in _eng_sig else "")
+                if _eng_side:
+                    _eng_pos = _fetch_position(strategy_id, str(symbol), _eng_side)
+                    _eng_entry = float(_eng_pos.get("entry_price") or 0.0)
+            except Exception:
+                pass
+
             try:
                 if filled > 0 and avg_price > 0:
                     logger.info(
                         f"{eid} record begin: pending_id={order_id} strategy_id={strategy_id} symbol={symbol} "
                         f"signal={signal_type} filled={filled} avg_price={avg_price}"
                     )
-                    profit, _pos = apply_fill_to_local_position(
+                    _eng_profit, _pos = apply_fill_to_local_position(
                         strategy_id=strategy_id,
                         symbol=str(symbol),
                         signal_type=str(signal_type),
@@ -1952,18 +2055,22 @@ class PendingOrderWorker:
                         amount=filled,
                         commission=0.0,
                         commission_ccy="USD",
-                        profit=profit,
+                        profit=_eng_profit,
                     )
                     logger.info(f"{eid} record done: pending_id={order_id} strategy_id={strategy_id} symbol={symbol}")
             except Exception as e:
                 logger.warning(f"{eid} record_trade/update_position failed: pending_id={order_id}, err={e}")
 
             _notify_live_best_effort(
-                status="sent",
+                status="filled",
                 exchange_id=eid,
                 exchange_order_id=exchange_order_id,
                 price_hint=avg_price,
                 amount_hint=filled,
+                filled_price=avg_price,
+                filled_amount=filled,
+                profit=_eng_profit,
+                entry_price=_eng_entry,
             )
 
         except Exception as e:

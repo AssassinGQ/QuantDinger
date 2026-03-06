@@ -178,6 +178,7 @@ class PendingOrderEnqueuer:
             extra_payload = {
                 "ref_price": float(ref_price or 0.0),
                 "signal_ts": int(signal_ts or 0),
+                "market_category": str(market_category or "Crypto"),
                 "stop_loss_price": float(stop_loss_price or 0.0)
                 if stop_loss_price is not None
                 else 0.0,
