@@ -5,6 +5,11 @@ Supports:
 - Crypto exchanges: Binance, OKX, Bitget, Bybit, Coinbase, Kraken, KuCoin, Gate, Bitfinex
 - Traditional brokers: Interactive Brokers (IBKR) for US/HK stocks
 - Forex brokers: MetaTrader 5 (MT5)
+
+Crypto clients inherit ``BaseRestClient``; IBKR and MT5 inherit
+``ExchangeEngine``.  The return type of ``create_client`` is a union
+of both so the caller can use ``isinstance(client, ExchangeEngine)``
+to detect engine-adapter clients.
 """
 
 from __future__ import annotations
@@ -26,14 +31,6 @@ from app.services.live_trading.gate import GateSpotClient, GateUsdtFuturesClient
 from app.services.live_trading.bitfinex import BitfinexClient, BitfinexDerivativesClient
 from app.services.live_trading.deepcoin import DeepcoinClient
 
-# Lazy import IBKR to avoid ImportError if ib_insync not installed
-IBKRClient = None
-IBKRConfig = None
-
-# Lazy import MT5 to avoid ImportError if MetaTrader5 not installed
-MT5Client = None
-MT5Config = None
-
 
 def _get(cfg: Dict[str, Any], *keys: str) -> str:
     for k in keys:
@@ -46,7 +43,12 @@ def _get(cfg: Dict[str, Any], *keys: str) -> str:
     return ""
 
 
-def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap") -> BaseRestClient:
+def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap"):
+    """Create an exchange client based on *exchange_config*.
+
+    Returns a ``BaseRestClient`` for crypto exchanges or an
+    ``ExchangeEngine`` subclass for IBKR / MT5.
+    """
     if not isinstance(exchange_config, dict):
         raise LiveTradingError("Invalid exchange_config")
     exchange_id = _get(exchange_config, "exchange_id", "exchangeId").lower()
@@ -62,7 +64,7 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
         # 检查是否启用模拟交易，支持布尔值和字符串
         enable_demo = exchange_config.get("enable_demo_trading") or exchange_config.get("enableDemoTrading")
         is_demo = bool(enable_demo) if isinstance(enable_demo, bool) else str(enable_demo).lower() in ("true", "1", "yes")
-        
+
         if mt == "spot":
             default_url = "https://demo-api.binance.com" if is_demo else "https://api.binance.com"
             base_url = _get(exchange_config, "base_url", "baseUrl") or default_url
@@ -71,9 +73,11 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
         default_url = "https://demo-fapi.binance.com" if is_demo else "https://fapi.binance.com"
         base_url = _get(exchange_config, "base_url", "baseUrl") or default_url
         return BinanceFuturesClient(api_key=api_key, secret_key=secret_key, base_url=base_url, enable_demo_trading=is_demo)
+
     if exchange_id == "okx":
         base_url = _get(exchange_config, "base_url", "baseUrl") or "https://www.okx.com"
         return OkxClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase, base_url=base_url)
+
     if exchange_id == "bitget":
         base_url = _get(exchange_config, "base_url", "baseUrl") or "https://api.bitget.com"
         if mt == "spot":
@@ -133,87 +137,65 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
 
     # Traditional brokers (IBKR for US/HK stocks only)
     if exchange_id == "ibkr":
-        # Note: Market category validation should be done at the caller level
-        # This factory only creates clients based on exchange_id
-        return create_ibkr_client(exchange_config)
+        return _create_ibkr_client(exchange_config)
 
     # Forex brokers (MT5 for Forex only)
     if exchange_id == "mt5":
-        # Note: Market category validation should be done at the caller level
-        # This factory only creates clients based on exchange_id
-        return create_mt5_client(exchange_config)
+        return _create_mt5_client(exchange_config)
 
     raise LiveTradingError(f"Unsupported exchange_id: {exchange_id}")
 
 
-def create_ibkr_client(exchange_config: Dict[str, Any]):
-    """
-    Create or retrieve IBKR client for US/HK stock trading.
+# ── ExchangeEngine factories (lazy imports) ──────────────────────
 
-    If exchange_config contains explicit ibkr_host/ibkr_port, creates a
-    standalone client (backward compatible).  Otherwise uses the global
-    singleton whose connection params come from environment variables
-    (IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, IBKR_ACCOUNT).
-    """
-    global IBKRClient, IBKRConfig
 
-    if IBKRClient is None or IBKRConfig is None:
-        try:
-            from app.services.ibkr_trading import IBKRClient as _IBKRClient, IBKRConfig as _IBKRConfig
-            IBKRClient = _IBKRClient
-            IBKRConfig = _IBKRConfig
-        except ImportError:
-            raise LiveTradingError("IBKR trading requires ib_insync. Run: pip install ib_insync")
+def _create_ibkr_client(exchange_config: Dict[str, Any]):
+    """Create or retrieve IBKR client (ExchangeEngine).
+
+    Uses the global singleton when no strategy-level host/port is specified.
+    """
+    try:
+        from app.services.ibkr_trading.client import IBKRClient, IBKRConfig, get_ibkr_client
+    except ImportError as exc:
+        raise LiveTradingError("IBKR trading requires ib_insync. Run: pip install ib_insync") from exc
 
     has_strategy_level_config = exchange_config.get("ibkr_host") or exchange_config.get("ibkr_port")
     if not has_strategy_level_config:
-        from app.services.ibkr_trading.client import get_ibkr_client
         return get_ibkr_client()
 
-    host = str(exchange_config.get("ibkr_host") or "127.0.0.1").strip()
-    port = int(exchange_config.get("ibkr_port") or 7497)
-    client_id = int(exchange_config.get("ibkr_client_id") or 1)
-    account = str(exchange_config.get("ibkr_account") or "").strip()
-
     config = IBKRConfig(
-        host=host,
-        port=port,
-        client_id=client_id,
-        account=account,
+        host=str(exchange_config.get("ibkr_host") or "127.0.0.1").strip(),
+        port=int(exchange_config.get("ibkr_port") or 7497),
+        client_id=int(exchange_config.get("ibkr_client_id") or 1),
+        account=str(exchange_config.get("ibkr_account") or "").strip(),
         readonly=False,
     )
 
     client = IBKRClient(config)
-
     if not client.connect():
         raise LiveTradingError("Failed to connect to IBKR TWS/Gateway. Please check if it's running.")
-
     return client
 
 
-def create_mt5_client(exchange_config: Dict[str, Any]):
-    """
-    Create MT5 client for forex trading.
+def _create_mt5_client(exchange_config: Dict[str, Any]):
+    """Create or retrieve MT5 client (ExchangeEngine) for forex trading.
 
-    exchange_config should contain:
-    - mt5_login: MT5 account number
-    - mt5_password: MT5 password
-    - mt5_server: Broker server name (e.g., "ICMarkets-Demo")
-    - mt5_terminal_path: Optional path to terminal64.exe
+    Uses the global singleton when no strategy-level credentials are specified.
     """
-    global MT5Client, MT5Config
+    try:
+        from app.services.mt5_trading.client import MT5Client, MT5Config, get_mt5_client
+    except ImportError as exc:
+        raise LiveTradingError(
+            "MT5 trading requires MetaTrader5 library. Run: pip install MetaTrader5\n"
+            "Note: This library only works on Windows."
+        ) from exc
 
-    # Lazy import to avoid ImportError if MetaTrader5 not installed
-    if MT5Client is None or MT5Config is None:
-        try:
-            from app.services.mt5_trading import MT5Client as _MT5Client, MT5Config as _MT5Config
-            MT5Client = _MT5Client
-            MT5Config = _MT5Config
-        except ImportError:
-            raise LiveTradingError(
-                "MT5 trading requires MetaTrader5 library. Run: pip install MetaTrader5\n"
-                "Note: This library only works on Windows."
-            )
+    has_strategy_level_config = (
+        exchange_config.get("mt5_login")
+        or exchange_config.get("mt5_server")
+    )
+    if not has_strategy_level_config:
+        return get_mt5_client()
 
     login = int(exchange_config.get("mt5_login") or 0)
     password = str(exchange_config.get("mt5_password") or "").strip()
@@ -231,8 +213,6 @@ def create_mt5_client(exchange_config: Dict[str, Any]):
     )
 
     client = MT5Client(config)
-
-    # Connect immediately
     if not client.connect():
         raise LiveTradingError(
             "Failed to connect to MT5 terminal. Please check:\n"
@@ -240,7 +220,4 @@ def create_mt5_client(exchange_config: Dict[str, Any]):
             "2. Credentials are correct\n"
             "3. You are on Windows"
         )
-
     return client
-
-

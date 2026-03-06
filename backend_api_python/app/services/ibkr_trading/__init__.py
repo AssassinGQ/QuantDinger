@@ -10,5 +10,6 @@ Port Reference:
 
 from app.services.ibkr_trading.client import IBKRClient, IBKRConfig
 from app.services.ibkr_trading.symbols import normalize_symbol, parse_symbol
+from app.services.exchange_engine import OrderResult
 
-__all__ = ['IBKRClient', 'IBKRConfig', 'normalize_symbol', 'parse_symbol']
+__all__ = ['IBKRClient', 'IBKRConfig', 'OrderResult', 'normalize_symbol', 'parse_symbol']

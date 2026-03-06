@@ -7,21 +7,20 @@ Note: Requires Windows platform and MT5 terminal installed.
 
 import time
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 from app.utils.logger import get_logger
+from app.services.exchange_engine import ExchangeEngine, OrderResult
 from app.services.mt5_trading.symbols import normalize_symbol, parse_symbol
 
 logger = get_logger(__name__)
 
-# Lazy import MetaTrader5 to allow other features to work without it installed
 mt5 = None
 
 
 def _ensure_mt5():
-    """Ensure MetaTrader5 is imported."""
     global mt5
     if mt5 is None:
         try:
@@ -38,53 +37,54 @@ def _ensure_mt5():
 @dataclass
 class MT5Config:
     """MT5 connection configuration."""
-    login: int = 0  # MT5 account number
-    password: str = ""  # MT5 password
-    server: str = ""  # Broker server name (e.g., "ICMarkets-Demo")
-    terminal_path: str = ""  # Optional: path to terminal64.exe
-    timeout: int = 60000  # Connection timeout in milliseconds
-    magic_number: int = 123456  # EA magic number for identifying orders
+    login: int = 0
+    password: str = ""
+    server: str = ""
+    terminal_path: str = ""
+    timeout: int = 60000
+    magic_number: int = 123456
 
 
-@dataclass
-class OrderResult:
-    """Order execution result."""
-    success: bool
-    order_id: int = 0
-    deal_id: int = 0
-    filled: float = 0.0
-    price: float = 0.0
-    status: str = ""
-    message: str = ""
-    raw: Dict[str, Any] = field(default_factory=dict)
-
-
-class MT5Client:
+class MT5Client(ExchangeEngine):
     """
     MetaTrader 5 Trading Client
-    
+
     Usage:
-        config = MT5Config(
-            login=12345678,
-            password="your_password",
-            server="ICMarkets-Demo"
-        )
+        config = MT5Config(login=12345678, password="your_password", server="ICMarkets-Demo")
         client = MT5Client(config)
-        
         if client.connect():
-            # Place order
             result = client.place_market_order("EURUSD", "buy", 0.1)
-            
-            # Get positions
             positions = client.get_positions()
-            
             client.disconnect()
     """
-    
+
+    engine_id = "mt5"
+    supported_market_categories = frozenset({"Forex"})
+
+    _SIGNAL_MAP = {
+        "open_long": "buy",
+        "add_long": "buy",
+        "close_long": "sell",
+        "reduce_long": "sell",
+        "open_short": "sell",
+        "add_short": "sell",
+        "close_short": "buy",
+        "reduce_short": "buy",
+    }
+
     def __init__(self, config: Optional[MT5Config] = None):
         self.config = config or MT5Config()
         self._connected = False
         self._lock = threading.Lock()
+
+    # ── signal mapping (ExchangeEngine) ─────────────────────────────
+
+    def map_signal_to_side(self, signal_type: str) -> str:
+        sig = (signal_type or "").strip().lower()
+        side = self._SIGNAL_MAP.get(sig)
+        if side is None:
+            raise ValueError(f"Unsupported signal_type for MT5: {signal_type}")
+        return side
     
     @property
     def connected(self) -> bool:
@@ -179,67 +179,57 @@ class MT5Client:
         self,
         symbol: str,
         side: str,
-        volume: float,
+        quantity: float = 0.0,
+        market_type: str = "",
+        *,
+        volume: float = 0.0,
         deviation: int = 20,
         comment: str = "QuantDinger",
+        **kwargs,
     ) -> OrderResult:
+        """Place a market order.
+
+        `quantity` is the ExchangeEngine-standard parameter.
+        `volume` is kept for backward compatibility — if `quantity` is 0,
+        `volume` is used instead.
         """
-        Place a market order.
-        
-        Args:
-            symbol: Trading symbol (e.g., "EURUSD")
-            side: Direction ("buy" or "sell")
-            volume: Lot size (e.g., 0.1 = 1 mini lot)
-            deviation: Maximum price deviation in points
-            comment: Order comment
-            
-        Returns:
-            OrderResult
-        """
+        vol = quantity or volume
+        if vol <= 0:
+            return OrderResult(success=False, message="volume must be positive",
+                               exchange_id=self.engine_id)
+
         try:
             self._ensure_connected()
             _ensure_mt5()
-            
-            # Normalize symbol
+
             symbol = normalize_symbol(symbol)
-            
-            # Get symbol info
+
             symbol_info = mt5.symbol_info(symbol)
             if symbol_info is None:
-                return OrderResult(
-                    success=False,
-                    message=f"Symbol not found: {symbol}"
-                )
-            
+                return OrderResult(success=False, exchange_id=self.engine_id,
+                                   message=f"Symbol not found: {symbol}")
+
             if not symbol_info.visible:
-                # Enable symbol in Market Watch
                 if not mt5.symbol_select(symbol, True):
-                    return OrderResult(
-                        success=False,
-                        message=f"Failed to select symbol: {symbol}"
-                    )
-            
-            # Get current price
+                    return OrderResult(success=False, exchange_id=self.engine_id,
+                                       message=f"Failed to select symbol: {symbol}")
+
             tick = mt5.symbol_info_tick(symbol)
             if tick is None:
-                return OrderResult(
-                    success=False,
-                    message=f"Failed to get tick for: {symbol}"
-                )
-            
-            # Determine order type and price
+                return OrderResult(success=False, exchange_id=self.engine_id,
+                                   message=f"Failed to get tick for: {symbol}")
+
             if side.lower() == "buy":
                 order_type = mt5.ORDER_TYPE_BUY
                 price = tick.ask
             else:
                 order_type = mt5.ORDER_TYPE_SELL
                 price = tick.bid
-            
-            # Prepare order request
+
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": symbol,
-                "volume": float(volume),
+                "volume": float(vol),
                 "type": order_type,
                 "price": price,
                 "deviation": deviation,
@@ -248,142 +238,129 @@ class MT5Client:
                 "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": mt5.ORDER_FILLING_IOC,
             }
-            
-            # Send order
+
             result = mt5.order_send(request)
-            
+
             if result is None:
                 error = mt5.last_error()
-                return OrderResult(
-                    success=False,
-                    message=f"Order send failed: {error}"
-                )
-            
+                return OrderResult(success=False, exchange_id=self.engine_id,
+                                   message=f"Order send failed: {error}")
+
             if result.retcode != mt5.TRADE_RETCODE_DONE:
                 return OrderResult(
                     success=False,
                     order_id=result.order if hasattr(result, 'order') else 0,
                     status=str(result.retcode),
                     message=f"Order rejected: {result.comment}",
-                    raw=result._asdict() if hasattr(result, '_asdict') else {}
+                    exchange_id=self.engine_id,
+                    raw=result._asdict() if hasattr(result, '_asdict') else {},
                 )
-            
+
             return OrderResult(
                 success=True,
                 order_id=result.order,
                 deal_id=result.deal,
                 filled=result.volume,
-                price=result.price,
+                avg_price=result.price,
                 status="filled",
                 message="Order executed",
-                raw=result._asdict() if hasattr(result, '_asdict') else {}
+                exchange_id=self.engine_id,
+                raw=result._asdict() if hasattr(result, '_asdict') else {},
             )
-            
+
         except Exception as e:
             logger.error(f"Market order failed: {e}")
-            return OrderResult(
-                success=False,
-                message=str(e)
-            )
+            return OrderResult(success=False, message=str(e),
+                               exchange_id=self.engine_id)
     
     def place_limit_order(
         self,
         symbol: str,
         side: str,
-        volume: float,
-        price: float,
+        quantity: float = 0.0,
+        price: float = 0.0,
+        market_type: str = "",
+        *,
+        volume: float = 0.0,
         comment: str = "QuantDinger",
+        **kwargs,
     ) -> OrderResult:
+        """Place a pending limit order.
+
+        `quantity` is the ExchangeEngine-standard parameter.
+        `volume` is kept for backward compatibility.
         """
-        Place a pending limit order.
-        
-        Args:
-            symbol: Trading symbol
-            side: Direction ("buy" or "sell")
-            volume: Lot size
-            price: Limit price
-            comment: Order comment
-            
-        Returns:
-            OrderResult
-        """
+        vol = quantity or volume
+        if vol <= 0:
+            return OrderResult(success=False, message="volume must be positive",
+                               exchange_id=self.engine_id)
+        if price <= 0:
+            return OrderResult(success=False, message="price must be positive",
+                               exchange_id=self.engine_id)
+
         try:
             self._ensure_connected()
             _ensure_mt5()
-            
+
             symbol = normalize_symbol(symbol)
-            
+
             symbol_info = mt5.symbol_info(symbol)
             if symbol_info is None:
-                return OrderResult(
-                    success=False,
-                    message=f"Symbol not found: {symbol}"
-                )
-            
+                return OrderResult(success=False, exchange_id=self.engine_id,
+                                   message=f"Symbol not found: {symbol}")
+
             if not symbol_info.visible:
                 mt5.symbol_select(symbol, True)
-            
+
             tick = mt5.symbol_info_tick(symbol)
             if tick is None:
-                return OrderResult(
-                    success=False,
-                    message=f"Failed to get tick for: {symbol}"
-                )
-            
-            # Determine order type based on side and price relative to market
+                return OrderResult(success=False, exchange_id=self.engine_id,
+                                   message=f"Failed to get tick for: {symbol}")
+
             if side.lower() == "buy":
-                if price < tick.ask:
-                    order_type = mt5.ORDER_TYPE_BUY_LIMIT
-                else:
-                    order_type = mt5.ORDER_TYPE_BUY_STOP
+                order_type = mt5.ORDER_TYPE_BUY_LIMIT if price < tick.ask else mt5.ORDER_TYPE_BUY_STOP
             else:
-                if price > tick.bid:
-                    order_type = mt5.ORDER_TYPE_SELL_LIMIT
-                else:
-                    order_type = mt5.ORDER_TYPE_SELL_STOP
-            
+                order_type = mt5.ORDER_TYPE_SELL_LIMIT if price > tick.bid else mt5.ORDER_TYPE_SELL_STOP
+
             request = {
                 "action": mt5.TRADE_ACTION_PENDING,
                 "symbol": symbol,
-                "volume": float(volume),
+                "volume": float(vol),
                 "type": order_type,
                 "price": price,
                 "magic": self.config.magic_number,
                 "comment": comment,
                 "type_time": mt5.ORDER_TIME_GTC,
             }
-            
+
             result = mt5.order_send(request)
-            
+
             if result is None:
                 error = mt5.last_error()
-                return OrderResult(
-                    success=False,
-                    message=f"Order send failed: {error}"
-                )
-            
+                return OrderResult(success=False, exchange_id=self.engine_id,
+                                   message=f"Order send failed: {error}")
+
             if result.retcode != mt5.TRADE_RETCODE_DONE:
                 return OrderResult(
-                    success=False,
-                    status=str(result.retcode),
+                    success=False, status=str(result.retcode),
                     message=f"Order rejected: {result.comment}",
+                    exchange_id=self.engine_id,
                 )
-            
+
             return OrderResult(
                 success=True,
                 order_id=result.order,
-                price=price,
+                avg_price=price,
                 status="pending",
                 message="Pending order placed",
-                raw=result._asdict() if hasattr(result, '_asdict') else {}
+                exchange_id=self.engine_id,
+                raw=result._asdict() if hasattr(result, '_asdict') else {},
             )
-            
+
         except Exception as e:
             logger.error(f"Limit order failed: {e}")
-            return OrderResult(
-                success=False,
-                message=str(e)
-            )
+            return OrderResult(success=False, message=str(e),
+                               exchange_id=self.engine_id)
     
     def close_position(
         self,
@@ -464,9 +441,10 @@ class MT5Client:
                 order_id=result.order,
                 deal_id=result.deal,
                 filled=result.volume,
-                price=result.price,
+                avg_price=result.price,
                 status="closed",
                 message="Position closed",
+                exchange_id=self.engine_id,
             )
             
         except Exception as e:
@@ -592,6 +570,25 @@ class MT5Client:
             logger.error(f"Get positions failed: {e}")
             return []
     
+    def get_positions_normalized(self):
+        from app.services.exchange_engine import PositionRecord
+        records = []
+        for p in self.get_positions():
+            if not isinstance(p, dict):
+                continue
+            vol = float(p.get("volume") or 0)
+            if vol <= 0:
+                continue
+            pos_type = str(p.get("type") or "").strip().lower()
+            records.append(PositionRecord(
+                symbol=str(p.get("symbol") or ""),
+                side="long" if pos_type == "buy" else "short",
+                quantity=vol,
+                entry_price=float(p.get("price_open") or 0),
+                raw=p,
+            ))
+        return records
+
     def get_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get pending orders.

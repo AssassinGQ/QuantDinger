@@ -11,23 +11,22 @@ import time
 import threading
 import asyncio
 from concurrent.futures import Future
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Callable, TypeVar
 from queue import Queue
 
 from app.utils.logger import get_logger
+from app.services.exchange_engine import ExchangeEngine, OrderResult
 from app.services.ibkr_trading.symbols import normalize_symbol, format_display_symbol
 
 logger = get_logger(__name__)
 
 T = TypeVar("T")
 
-# Lazy import ib_insync to allow other features to work without it installed
 ib_insync = None
 
 
 def _ensure_ib_insync():
-    """Ensure ib_insync is imported."""
     global ib_insync
     if ib_insync is None:
         try:
@@ -61,28 +60,19 @@ class IBKRConfig:
         )
 
 
-@dataclass
-class OrderResult:
-    """Order execution result."""
-    success: bool
-    order_id: int = 0
-    filled: float = 0.0
-    avg_price: float = 0.0
-    status: str = ""
-    message: str = ""
-    raw: Dict[str, Any] = field(default_factory=dict)
-
-
 _SENTINEL = object()
 
 
-class IBKRClient:
+class IBKRClient(ExchangeEngine):
     """
     Interactive Brokers Trading Client.
 
     All ib_insync interactions run on a single dedicated worker thread,
     making this client safe to call from any number of strategy threads.
     """
+
+    engine_id = "ibkr"
+    supported_market_categories = frozenset({"USStock", "HShare"})
 
     _TERMINAL_STATUSES = frozenset({
         "Filled", "Cancelled", "ApiCancelled", "Inactive",
@@ -92,6 +82,13 @@ class IBKRClient:
         "Cancelled", "ApiCancelled", "Inactive",
         "ApiError", "ValidationError",
     })
+
+    _SIGNAL_MAP = {
+        "open_long": "buy",
+        "add_long": "buy",
+        "close_long": "sell",
+        "reduce_long": "sell",
+    }
 
     def __init__(self, config: Optional[IBKRConfig] = None):
         self.config = config or IBKRConfig()
@@ -103,10 +100,20 @@ class IBKRClient:
         self._started = threading.Event()
         self._start_worker()
 
+    # ── signal mapping (ExchangeEngine) ─────────────────────────────
+
+    def map_signal_to_side(self, signal_type: str) -> str:
+        sig = (signal_type or "").strip().lower()
+        if "short" in sig:
+            raise ValueError("IBKR stock trading does not support short signals")
+        side = self._SIGNAL_MAP.get(sig)
+        if side is None:
+            raise ValueError(f"Unsupported signal_type for IBKR: {signal_type}")
+        return side
+
     # ── worker thread ──────────────────────────────────────────────
 
     def _start_worker(self):
-        """Launch the dedicated ib_insync worker thread."""
         if self._worker_thread is not None and self._worker_thread.is_alive():
             return
         self._started.clear()
@@ -116,7 +123,6 @@ class IBKRClient:
         self._started.wait(timeout=5)
 
     def _worker_loop(self):
-        """Run on the worker thread: create event loop, then process queue items."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._started.set()
@@ -133,14 +139,13 @@ class IBKRClient:
                 future.set_exception(exc)
 
     def _submit(self, fn: Callable[[], T], timeout: float = 60.0) -> T:
-        """Submit *fn* to the worker thread and block until it completes."""
         if not (self._worker_thread and self._worker_thread.is_alive()):
             self._start_worker()
         fut: Future[T] = Future()
         self._queue.put((fn, fut))
         return fut.result(timeout=timeout)
 
-    # ── connection ─────────────────────────────────────────────────
+    # ── connection (ExchangeEngine) ─────────────────────────────────
 
     @property
     def connected(self) -> bool:
@@ -199,7 +204,6 @@ class IBKRClient:
             pass
 
     def _ensure_connected(self, retries: int = 3, delay: float = 2.0):
-        """Called from within the worker thread."""
         if self.connected:
             return
         for attempt in range(1, retries + 1):
@@ -247,6 +251,7 @@ class IBKRClient:
                 success=False,
                 order_id=trade.order.orderId,
                 filled=0, avg_price=0, status=status,
+                exchange_id=self.engine_id,
                 message=f"Order {status}: {'; '.join(error_msgs) or 'rejected by IBKR'}",
                 raw={"orderId": trade.order.orderId, "status": status},
             )
@@ -261,6 +266,7 @@ class IBKRClient:
                     success=False,
                     order_id=trade.order.orderId,
                     filled=0, avg_price=0, status=status,
+                    exchange_id=self.engine_id,
                     message=f"Order timed out in '{status}' with 0 fills after {timeout}s",
                     raw={
                         "orderId": trade.order.orderId,
@@ -274,6 +280,7 @@ class IBKRClient:
             success=True,
             order_id=trade.order.orderId,
             filled=filled, avg_price=avg_price, status=status,
+            exchange_id=self.engine_id,
             message="Order submitted" if status != "Filled" else "Order filled",
             raw={
                 "orderId": trade.order.orderId,
@@ -283,23 +290,24 @@ class IBKRClient:
             },
         )
 
-    # ── public order API ───────────────────────────────────────────
+    # ── order execution (ExchangeEngine) ───────────────────────────
 
     def place_market_order(
         self, symbol: str, side: str, quantity: float,
-        market_type: str = "USStock",
+        market_type: str = "USStock", **kwargs,
     ) -> OrderResult:
         from app.services.ibkr_trading.order_normalizer import get_normalizer
         ok, reason = get_normalizer(market_type).check(quantity, symbol)
         if not ok:
-            return OrderResult(success=False, message=reason)
+            return OrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
         def _do():
             self._ensure_connected()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
             if not self._qualify_contract(contract):
-                return OrderResult(success=False, message=f"Invalid contract: {symbol}")
+                return OrderResult(success=False, message=f"Invalid contract: {symbol}",
+                                   exchange_id=self.engine_id)
             order = ib_insync.MarketOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, account=self._account,
@@ -311,23 +319,24 @@ class IBKRClient:
             return self._submit(_do, timeout=60.0)
         except Exception as e:
             logger.error("Order failed: %s", e)
-            return OrderResult(success=False, message=str(e))
+            return OrderResult(success=False, message=str(e), exchange_id=self.engine_id)
 
     def place_limit_order(
         self, symbol: str, side: str, quantity: float, price: float,
-        market_type: str = "USStock",
+        market_type: str = "USStock", **kwargs,
     ) -> OrderResult:
         from app.services.ibkr_trading.order_normalizer import get_normalizer
         ok, reason = get_normalizer(market_type).check(quantity, symbol)
         if not ok:
-            return OrderResult(success=False, message=reason)
+            return OrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
         def _do():
             self._ensure_connected()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
             if not self._qualify_contract(contract):
-                return OrderResult(success=False, message=f"Invalid contract: {symbol}")
+                return OrderResult(success=False, message=f"Invalid contract: {symbol}",
+                                   exchange_id=self.engine_id)
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, lmtPrice=price, account=self._account,
@@ -339,7 +348,7 @@ class IBKRClient:
             return self._submit(_do, timeout=60.0)
         except Exception as e:
             logger.error("Limit order failed: %s", e)
-            return OrderResult(success=False, message=str(e))
+            return OrderResult(success=False, message=str(e), exchange_id=self.engine_id)
 
     def cancel_order(self, order_id: int) -> bool:
         def _do():
@@ -358,7 +367,7 @@ class IBKRClient:
             logger.error("Cancel order failed: %s", e)
             return False
 
-    # ── public query API ───────────────────────────────────────────
+    # ── query (ExchangeEngine) ─────────────────────────────────────
 
     def get_account_summary(self) -> Dict[str, Any]:
         def _do():
@@ -400,6 +409,22 @@ class IBKRClient:
         except Exception as e:
             logger.error("Get positions failed: %s", e)
             return []
+
+    def get_positions_normalized(self):
+        from app.services.exchange_engine import PositionRecord
+        records = []
+        for p in self.get_positions():
+            qty = float(p.get("quantity") or 0)
+            if abs(qty) <= 0:
+                continue
+            records.append(PositionRecord(
+                symbol=str(p.get("symbol") or ""),
+                side="long" if qty > 0 else "short",
+                quantity=abs(qty),
+                entry_price=float(p.get("avgCost") or 0),
+                raw=p,
+            ))
+        return records
 
     def get_open_orders(self) -> List[Dict[str, Any]]:
         def _do():
@@ -460,6 +485,7 @@ class IBKRClient:
     def get_connection_status(self) -> Dict[str, Any]:
         return {
             "connected": self.connected,
+            "engine_id": self.engine_id,
             "host": self.config.host,
             "port": self.config.port,
             "clientId": self.config.client_id,
@@ -468,7 +494,6 @@ class IBKRClient:
         }
 
     def shutdown(self):
-        """Gracefully stop the worker thread."""
         self._queue.put(_SENTINEL)
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=5)
@@ -481,12 +506,6 @@ _global_lock = threading.Lock()
 
 
 def get_ibkr_client(config: Optional[IBKRConfig] = None) -> IBKRClient:
-    """
-    Get global IBKR client singleton with auto-reconnect.
-
-    All ib_insync operations are serialized onto the client's worker thread,
-    so this is safe to call from any number of strategy threads concurrently.
-    """
     global _global_client
 
     with _global_lock:
@@ -499,7 +518,6 @@ def get_ibkr_client(config: Optional[IBKRConfig] = None) -> IBKRClient:
 
 
 def reset_ibkr_client():
-    """Reset global client (disconnect and clear instance)."""
     global _global_client
 
     with _global_lock:

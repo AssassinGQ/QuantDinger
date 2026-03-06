@@ -274,7 +274,7 @@ def place_order():
                 "order_id": result.order_id,
                 "deal_id": result.deal_id,
                 "filled": result.filled,
-                "price": result.price,
+                "price": result.avg_price,
                 "status": result.status,
                 "message": result.message,
             })
@@ -327,7 +327,7 @@ def close_position():
                 "order_id": result.order_id,
                 "deal_id": result.deal_id,
                 "filled": result.filled,
-                "price": result.price,
+                "price": result.avg_price,
                 "message": result.message,
             })
         else:

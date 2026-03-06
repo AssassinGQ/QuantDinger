@@ -12,9 +12,9 @@ import pytest
 from app.services.ibkr_trading.client import (
     IBKRClient,
     IBKRConfig,
-    OrderResult,
     _SENTINEL,
 )
+from app.services.exchange_engine import ExchangeEngine, OrderResult
 
 
 # ---------------------------------------------------------------------------
