@@ -551,6 +551,32 @@ class PendingOrderWorker:
             payload=payload,
             order_row=order_row,
         )
+
+        pc = runner.pre_check(client=client, order_context=ctx)
+        if not pc.ok:
+            _fail_kw = dict(order_id=order_id, error=pc.reason)
+            if not pc.suppress_dedup_clear:
+                _fail_kw.update(_dedup_kw_live)
+            records.mark_order_failed(**_fail_kw)
+            logger.info(
+                "[RTH] order %d blocked by pre_check: strategy=%s symbol=%s reason=%s suppress_dedup=%s",
+                order_id, strategy_id, symbol, pc.reason, pc.suppress_dedup_clear,
+            )
+            console_print(
+                f"[worker] order blocked (pre_check): strategy_id={strategy_id} "
+                f"pending_id={order_id} reason={pc.reason}"
+            )
+            self._notify_live_best_effort(
+                order_id=order_id,
+                strategy_id=strategy_id,
+                payload=payload,
+                order_row=order_row,
+                live_ctx=live_ctx,
+                status="failed",
+                error=pc.reason,
+            )
+            return
+
         result = runner.execute(client=client, order_context=ctx)
 
         if not result.success:

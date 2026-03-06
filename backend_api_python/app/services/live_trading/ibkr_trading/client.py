@@ -290,20 +290,34 @@ class IBKRClient(BaseStatefulClient):
             },
         )
 
-    # ── order execution ────────────────────────────────────────────
+    # ── RTH check ──────────────────────────────────────────────────
 
-    def _check_rth(self, contract) -> Optional[LiveOrderResult]:
-        """Return an LiveOrderResult with 'market closed' if outside RTH, else None."""
-        from app.services.live_trading.ibkr_trading.trading_hours import is_rth
-        if not is_rth(self._ib, contract):
-            sym = getattr(contract, "symbol", "?")
-            logger.info("Order rejected: %s is outside RTH (market closed)", sym)
-            return LiveOrderResult(
-                success=False,
-                exchange_id=self.engine_id,
-                message=f"Rejected: {sym} is outside RTH (market closed)",
-            )
-        return None
+    def is_market_open(self, symbol: str, market_type: str = "USStock"):
+        """Check RTH for *symbol* via IBKR — runs on the worker thread.
+
+        Returns (True, "") if within RTH, or (False, reason_string) if closed.
+        Uses the fuse cache so repeated calls during market-closed windows
+        do NOT hit the IBKR gateway.
+        """
+        def _do():
+            from app.services.live_trading.ibkr_trading.trading_hours import is_rth
+            self._ensure_connected()
+            _ensure_ib_insync()
+            contract = self._create_contract(symbol, market_type)
+            if not self._qualify_contract(contract):
+                return True, ""
+            if not is_rth(self._ib, contract):
+                sym = getattr(contract, "symbol", "?")
+                return False, f"{sym} is outside RTH (market closed)"
+            return True, ""
+
+        try:
+            return self._submit(_do, timeout=30.0)
+        except Exception as e:
+            logger.warning("is_market_open failed for %s: %s, fail-open", symbol, e)
+            return True, ""
+
+    # ── order execution ────────────────────────────────────────────
 
     def place_market_order(
         self, symbol: str, side: str, quantity: float,
@@ -321,9 +335,6 @@ class IBKRClient(BaseStatefulClient):
             if not self._qualify_contract(contract):
                 return LiveOrderResult(success=False, message=f"Invalid contract: {symbol}",
                                    exchange_id=self.engine_id)
-            rth_reject = self._check_rth(contract)
-            if rth_reject:
-                return rth_reject
             order = ib_insync.MarketOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, account=self._account,
@@ -353,9 +364,6 @@ class IBKRClient(BaseStatefulClient):
             if not self._qualify_contract(contract):
                 return LiveOrderResult(success=False, message=f"Invalid contract: {symbol}",
                                    exchange_id=self.engine_id)
-            rth_reject = self._check_rth(contract)
-            if rth_reject:
-                return rth_reject
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, lmtPrice=price, account=self._account,

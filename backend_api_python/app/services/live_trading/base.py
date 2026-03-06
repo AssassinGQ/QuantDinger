@@ -216,6 +216,14 @@ class BaseStatefulClient(ABC):
     def get_connection_status(self) -> Dict[str, Any]:
         return {"connected": self.connected, "engine_id": self.engine_id}
 
+    def is_market_open(self, symbol: str, market_type: str = "") -> Tuple[bool, str]:
+        """Check whether the market is open for *symbol*.
+
+        Returns (True, "") if open, or (False, reason) if closed.
+        Default implementation: always open (subclass may override).
+        """
+        return True, ""
+
     def shutdown(self) -> None:
         self.disconnect()
 

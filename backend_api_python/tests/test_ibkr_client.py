@@ -18,7 +18,7 @@ from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 
 @pytest.fixture(autouse=True)
 def _always_rth():
-    """Default: assume market is open so RTH gate doesn't block tests."""
+    """Default: assume market is open so is_market_open doesn't block tests."""
     with patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True):
         yield
 
@@ -575,25 +575,27 @@ class TestConnectionRetry:
 # ===========================================================================
 
 class TestRTHGate:
-    """Verify orders are rejected when market is outside RTH."""
+    """Verify is_market_open returns correct result based on RTH status.
+
+    RTH check has been lifted from place_*_order into
+    StatefulClientRunner.pre_check → client.is_market_open.
+    """
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=False)
-    def test_market_order_rejected_outside_rth(self, _mock_rth):
+    def test_is_market_open_returns_false_outside_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
-        result = client.place_market_order("AAPL", "buy", 10, "USStock")
-        assert result.success is False
-        assert "market closed" in result.message.lower()
-        client._ib.placeOrder.assert_not_called()
+        is_open, reason = client.is_market_open("AAPL", "USStock")
+        assert is_open is False
+        assert "market closed" in reason.lower()
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=False)
-    def test_limit_order_rejected_outside_rth(self, _mock_rth):
+    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True)
+    def test_is_market_open_returns_true_during_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
-        result = client.place_limit_order("AAPL", "buy", 10, 150.0, "USStock")
-        assert result.success is False
-        assert "market closed" in result.message.lower()
-        client._ib.placeOrder.assert_not_called()
+        is_open, reason = client.is_market_open("AAPL", "USStock")
+        assert is_open is True
+        assert reason == ""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True)

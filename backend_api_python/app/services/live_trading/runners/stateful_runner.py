@@ -7,13 +7,38 @@ from app.services.live_trading.base import (
     ExecutionResult,
     OrderContext,
 )
-from app.services.live_trading.runners.base import OrderRunner
+from app.services.live_trading.runners.base import OrderRunner, PreCheckResult
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class StatefulClientRunner(OrderRunner):
+    def pre_check(self, *, client: BaseStatefulClient, order_context: OrderContext) -> PreCheckResult:
+        ctx = order_context
+        market_type = str(
+            ctx.market_category or
+            ctx.payload.get("market_type") or
+            ctx.payload.get("market_category") or
+            ctx.exchange_config.get("market_type") or
+            ctx.exchange_config.get("market_category") or
+            ""
+        ).strip()
+        eid = client.engine_id or "engine"
+        is_open, reason = client.is_market_open(ctx.symbol, market_type)
+        if not is_open:
+            logger.info(
+                "[RTH] pre_check blocked: strategy=%s symbol=%s reason=%s "
+                "(order will NOT clear dedup — same signal suppressed until market opens)",
+                ctx.strategy_id, ctx.symbol, reason,
+            )
+            return PreCheckResult(
+                ok=False,
+                reason=f"{eid}_market_closed:{reason}",
+                suppress_dedup_clear=True,
+            )
+        return PreCheckResult(ok=True)
+
     def execute(self, *, client: BaseStatefulClient, order_context: OrderContext) -> ExecutionResult:
         ctx = order_context
         eid = client.engine_id or "engine"
