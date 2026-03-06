@@ -157,87 +157,84 @@
       </div>
     </div>
 
-    <!-- 数据表格区域 -->
-    <div class="table-row">
-      <!-- 当前持仓 -->
-      <div class="table-panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <a-icon type="stock" />
-            <span>{{ $t('broker.currentPositions') }}</span>
-          </div>
-          <div class="panel-badge">{{ positions.length }}</div>
+    <!-- 当前持仓 -->
+    <div class="chart-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <a-icon type="stock" />
+          <span>{{ $t('broker.currentPositions') }}</span>
         </div>
-        <a-table
-          :columns="positionColumns"
-          :data-source="positions"
-          :rowKey="(r, i) => r.symbol + '-' + i"
-          :pagination="false"
-          size="small"
-          :scroll="{ x: 'max-content' }"
-          class="pro-table"
-          :locale="{ emptyText: $t('broker.noPositions') }"
-        >
-          <template slot="symbol" slot-scope="text, record">
-            <div class="symbol-cell">
-              <span class="symbol-name">{{ text }}</span>
-              <span class="symbol-strategy">{{ record.secType }} · {{ record.exchange }}</span>
-            </div>
-          </template>
-          <template slot="quantity" slot-scope="text">
-            <span :class="text > 0 ? 'positive' : text < 0 ? 'negative' : ''">
-              {{ text }}
-            </span>
-          </template>
-          <template slot="avgCost" slot-scope="text">
-            {{ formatNumber(text) }}
-          </template>
-          <template slot="marketValue" slot-scope="text, record">
-            <div>{{ record.currency }} {{ formatNumber(text) }}</div>
-          </template>
-          <template slot="unrealizedPnL" slot-scope="text">
-            <span :class="text >= 0 ? 'positive' : 'negative'">
-              {{ text >= 0 ? '+' : '' }}{{ formatNumber(text) }}
-            </span>
-          </template>
-        </a-table>
+        <div class="panel-badge">{{ positions.length }}</div>
       </div>
+      <a-table
+        :columns="positionColumns"
+        :data-source="positions"
+        :rowKey="(r, i) => r.symbol + '-' + i"
+        :pagination="false"
+        size="small"
+        :scroll="{ x: 'max-content' }"
+        class="pro-table"
+        :locale="{ emptyText: $t('broker.noPositions') }"
+      >
+        <template slot="symbol" slot-scope="text, record">
+          <div class="symbol-cell">
+            <span class="symbol-name">{{ text }}</span>
+            <span class="symbol-strategy">{{ record.secType }} · {{ record.exchange }}</span>
+          </div>
+        </template>
+        <template slot="quantity" slot-scope="text">
+          <span :class="text > 0 ? 'positive' : text < 0 ? 'negative' : ''">
+            {{ text }}
+          </span>
+        </template>
+        <template slot="avgCost" slot-scope="text">
+          {{ formatNumber(text) }}
+        </template>
+        <template slot="marketValue" slot-scope="text, record">
+          <div>{{ record.currency }} {{ formatNumber(text) }}</div>
+        </template>
+        <template slot="unrealizedPnL" slot-scope="text">
+          <span :class="text >= 0 ? 'positive' : 'negative'">
+            {{ text >= 0 ? '+' : '' }}{{ formatNumber(text) }}
+          </span>
+        </template>
+      </a-table>
+    </div>
 
-      <!-- 挂单 -->
-      <div class="table-panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <a-icon type="clock-circle" />
-            <span>{{ $t('broker.openOrders') }}</span>
-          </div>
-          <div class="panel-badge">{{ openOrders.length }}</div>
+    <!-- 挂单 -->
+    <div class="chart-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <a-icon type="clock-circle" />
+          <span>{{ $t('broker.openOrders') }}</span>
         </div>
-        <a-table
-          :columns="orderColumns"
-          :data-source="openOrders"
-          :rowKey="(r, i) => r.orderId + '-' + i"
-          :pagination="false"
-          size="small"
-          :scroll="{ x: 'max-content' }"
-          class="pro-table"
-          :locale="{ emptyText: $t('broker.noOrders') }"
-        >
-          <template slot="action" slot-scope="text">
-            <span class="side-tag" :class="text === 'BUY' ? 'long' : 'short'">
-              {{ text }}
-            </span>
-          </template>
-          <template slot="status" slot-scope="text">
-            <span class="status-tag" :class="text.toLowerCase()">{{ text }}</span>
-          </template>
-          <template slot="progress" slot-scope="text, record">
-            <div>{{ record.filled }} / {{ record.quantity }}</div>
-            <div class="progress-bar-wrap">
-              <div class="progress-bar-fill" :style="{ width: (record.quantity > 0 ? record.filled / record.quantity * 100 : 0) + '%' }"></div>
-            </div>
-          </template>
-        </a-table>
+        <div class="panel-badge">{{ openOrders.length }}</div>
       </div>
+      <a-table
+        :columns="orderColumns"
+        :data-source="openOrders"
+        :rowKey="(r, i) => r.orderId + '-' + i"
+        :pagination="false"
+        size="small"
+        :scroll="{ x: 'max-content' }"
+        class="pro-table"
+        :locale="{ emptyText: $t('broker.noOrders') }"
+      >
+        <template slot="action" slot-scope="text">
+          <span class="side-tag" :class="text === 'BUY' ? 'long' : 'short'">
+            {{ text }}
+          </span>
+        </template>
+        <template slot="status" slot-scope="text">
+          <span class="status-tag" :class="text.toLowerCase()">{{ text }}</span>
+        </template>
+        <template slot="progress" slot-scope="text, record">
+          <div>{{ record.filled }} / {{ record.quantity }}</div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" :style="{ width: (record.quantity > 0 ? record.filled / record.quantity * 100 : 0) + '%' }"></div>
+          </div>
+        </template>
+      </a-table>
     </div>
 
     <!-- 最近交易 -->
@@ -246,6 +243,7 @@
         <div class="panel-title">
           <a-icon type="history" />
           <span>{{ $t('broker.recentTrades') }}</span>
+          <span class="source-tag">QuantDinger</span>
         </div>
       </div>
       <a-table
@@ -281,6 +279,7 @@
         <div class="panel-title">
           <a-icon type="unordered-list" />
           <span>{{ $t('broker.executions') }}</span>
+          <span class="source-tag">QuantDinger</span>
         </div>
         <div class="panel-badge">{{ executions.length }}</div>
       </div>
@@ -290,7 +289,7 @@
         rowKey="id"
         :pagination="{ pageSize: 15, size: 'small', showSizeChanger: true }"
         size="small"
-        :scroll="{ x: 1200 }"
+        :scroll="{ x: 1400 }"
         class="pro-table"
         :locale="{ emptyText: $t('broker.noExecutions') }"
       >
@@ -322,6 +321,17 @@
         <template slot="exec_price" slot-scope="text, record">
           <div v-if="record.filled_price">{{ formatNumber(record.filled_price) }}</div>
           <div v-else class="text-muted">-</div>
+        </template>
+        <template slot="slippage" slot-scope="text, record">
+          <div v-if="text !== null && text !== undefined">
+            <span :class="text > 0 ? 'negative' : text < 0 ? 'positive' : ''">
+              {{ text > 0 ? '+' : '' }}{{ formatNumber(text, 4) }}
+            </span>
+            <div v-if="record.slippage_pct !== null" class="sub-text">
+              {{ record.slippage_pct > 0 ? '+' : '' }}{{ record.slippage_pct }}%
+            </div>
+          </div>
+          <span v-else class="text-muted">--</span>
         </template>
         <template slot="time_info" slot-scope="text, record">
           <div class="time-cell">{{ formatTime(record.created_at) }}</div>
@@ -411,7 +421,9 @@ export default {
         { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', scopedSlots: { customRender: 'symbol' }, width: 110 },
         { title: this.$t('broker.col.signalType'), dataIndex: 'signal_type', scopedSlots: { customRender: 'signal_type' }, width: 100 },
         { title: this.$t('broker.col.amount'), dataIndex: 'amount', scopedSlots: { customRender: 'exec_amount' }, width: 130 },
-        { title: this.$t('broker.col.price'), dataIndex: 'filled_price', scopedSlots: { customRender: 'exec_price' }, width: 100 },
+        { title: this.$t('broker.col.signalPrice'), dataIndex: 'signal_price', customRender: (t) => t ? this.formatNumber(t) : '-', width: 100, align: 'right' },
+        { title: this.$t('broker.col.fillPrice'), dataIndex: 'filled_price', scopedSlots: { customRender: 'exec_price' }, width: 100, align: 'right' },
+        { title: this.$t('broker.col.slippage'), dataIndex: 'slippage', scopedSlots: { customRender: 'slippage' }, width: 120, align: 'right' },
         { title: this.$t('broker.col.status'), dataIndex: 'status', scopedSlots: { customRender: 'exec_status' }, width: 120 },
         { title: this.$t('broker.col.timeInfo'), dataIndex: 'created_at', scopedSlots: { customRender: 'time_info' }, width: 160 }
       ]
@@ -581,7 +593,7 @@ export default {
       .kpi-sub { color: @text-secondary-dark; }
     }
 
-    .chart-panel, .table-panel {
+    .chart-panel {
       background: @bg-card-dark;
       border-color: @border-dark;
       .panel-header {
@@ -796,35 +808,13 @@ export default {
       display: flex; align-items: center; gap: 8px;
       font-size: 14px; font-weight: 600; color: @text-primary-light;
       .anticon { color: @blue; }
-    }
-    .panel-badge {
-      background: @blue; color: #fff;
-      font-size: 11px; font-weight: 600;
-      padding: 2px 8px; border-radius: 10px;
-    }
-  }
-
-  .table-row {
-    display: flex; gap: 16px; margin-bottom: 16px;
-    @media (max-width: 1024px) { flex-direction: column; }
-  }
-
-  .table-panel {
-    flex: 1;
-    background: @bg-card-light;
-    border: 1px solid @border-light;
-    border-radius: 16px;
-    overflow: hidden;
-
-    .panel-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 16px 20px;
-      border-bottom: 1px solid @border-light;
-    }
-    .panel-title {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 14px; font-weight: 600; color: @text-primary-light;
-      .anticon { color: @blue; }
+      .source-tag {
+        font-size: 10px; font-weight: 500;
+        color: @text-secondary-light;
+        background: rgba(59,130,246,0.08);
+        padding: 1px 6px; border-radius: 4px;
+        letter-spacing: 0.3px;
+      }
     }
     .panel-badge {
       background: @blue; color: #fff;

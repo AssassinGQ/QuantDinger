@@ -591,7 +591,24 @@ def ibkr_dashboard():
             row["status"] = status
             row["strategy_name"] = row.get("strategy_name") or ""
             row["filled_amount"] = _safe_float(row.get("filled"))
-            row["filled_price"] = _safe_float(row.get("avg_price")) or _safe_float(row.get("price"))
+            signal_price = _safe_float(row.get("price"))
+            fill_price = _safe_float(row.get("avg_price"))
+            row["filled_price"] = fill_price or signal_price
+            row["signal_price"] = signal_price
+
+            slippage = None
+            slippage_pct = None
+            if fill_price > 0 and signal_price > 0:
+                sig_type = (row.get("signal_type") or "").strip().lower()
+                if sig_type in ("buy", "open_long", "close_short"):
+                    slippage = round(fill_price - signal_price, 6)
+                elif sig_type in ("sell", "close_long", "open_short"):
+                    slippage = round(signal_price - fill_price, 6)
+                if slippage is not None:
+                    slippage_pct = round(slippage / signal_price * 100, 4)
+            row["slippage"] = slippage
+            row["slippage_pct"] = slippage_pct
+
             row["error_message"] = row.get("last_error") or ""
             for key in ("created_at", "updated_at", "executed_at", "processed_at", "sent_at"):
                 row[key] = _format_dt(row.get(key))
