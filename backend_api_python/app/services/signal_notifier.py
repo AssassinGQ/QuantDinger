@@ -580,6 +580,7 @@ class SignalNotifier:
                     user_id = int((row or {}).get('user_id') or 1)
                 except Exception:
                     user_id = 1
+            sid = int(strategy_id) if strategy_id and int(strategy_id) > 0 else None
             with get_db_connection() as db:
                 cur = db.cursor()
                 cur.execute(
@@ -590,7 +591,7 @@ class SignalNotifier:
                     """,
                     (
                         int(user_id),
-                        int(strategy_id),
+                        sid,
                         str(symbol or ""),
                         str(signal_type or ""),
                         ",".join([str(c) for c in (channels or [])]),
