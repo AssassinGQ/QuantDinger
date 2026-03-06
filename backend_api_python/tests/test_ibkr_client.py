@@ -1,6 +1,6 @@
 """
 Tests for IBKR client: quantity guard, order status polling, connection retry,
-and the worker-thread serialization mechanism.
+RTH gate, and the worker-thread serialization mechanism.
 """
 import threading
 import time
@@ -15,6 +15,12 @@ from app.services.ibkr_trading.client import (
     _SENTINEL,
 )
 from app.services.exchange_engine import ExchangeEngine, OrderResult
+
+@pytest.fixture(autouse=True)
+def _always_rth():
+    """Default: assume market is open so RTH gate doesn't block tests."""
+    with patch("app.services.ibkr_trading.trading_hours.is_rth", return_value=True):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -396,24 +402,13 @@ class TestWaitForOrder:
         assert "timed out" in result.message
         assert result.filled == 0
 
-    @patch.dict("os.environ", {"IBKR_ALLOW_PRESUBMIT": ""})
-    def test_presubmitted_auto_cancelled(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="PreSubmitted", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=5.0)
-        assert result.success is False
-        assert "PreSubmitted" in result.message
-        assert "market closed" in result.message.lower()
-        client._ib.cancelOrder.assert_called_once_with(trade.order)
-
-    @patch.dict("os.environ", {"IBKR_ALLOW_PRESUBMIT": "true"})
-    def test_presubmitted_allowed_when_env_set(self):
+    def test_presubmitted_times_out(self):
+        """PreSubmitted is not terminal — order just times out normally."""
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="PreSubmitted", filled=0, avg_price=0)
         result = client._wait_for_order(trade, timeout=0.5)
         assert result.success is False
         assert "timed out" in result.message
-        client._ib.cancelOrder.assert_not_called()
 
     def test_timeout_with_partial_fills_returns_success(self):
         client = _make_client_with_mock_ib()
@@ -573,3 +568,39 @@ class TestConnectionRetry:
         with patch.object(client, "_do_connect") as mock_connect:
             client._ensure_connected()
             mock_connect.assert_not_called()
+
+
+# ===========================================================================
+# RTH gate tests
+# ===========================================================================
+
+class TestRTHGate:
+    """Verify orders are rejected when market is outside RTH."""
+
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.ibkr_trading.trading_hours.is_rth", return_value=False)
+    def test_market_order_rejected_outside_rth(self, _mock_rth):
+        client = _make_client_with_mock_ib()
+        result = client.place_market_order("AAPL", "buy", 10, "USStock")
+        assert result.success is False
+        assert "market closed" in result.message.lower()
+        client._ib.placeOrder.assert_not_called()
+
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.ibkr_trading.trading_hours.is_rth", return_value=False)
+    def test_limit_order_rejected_outside_rth(self, _mock_rth):
+        client = _make_client_with_mock_ib()
+        result = client.place_limit_order("AAPL", "buy", 10, 150.0, "USStock")
+        assert result.success is False
+        assert "market closed" in result.message.lower()
+        client._ib.placeOrder.assert_not_called()
+
+    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.ibkr_trading.trading_hours.is_rth", return_value=True)
+    def test_market_order_allowed_during_rth(self, _mock_rth):
+        client = _make_client_with_mock_ib()
+        trade = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)
+        client._ib.placeOrder.return_value = trade
+        result = client.place_market_order("AAPL", "buy", 10, "USStock")
+        assert result.success is True
+        client._ib.placeOrder.assert_called_once()

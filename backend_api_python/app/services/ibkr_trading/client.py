@@ -32,10 +32,10 @@ def _ensure_ib_insync():
         try:
             import ib_insync as _ib
             ib_insync = _ib
-        except ImportError:
+        except ImportError as exc:
             raise ImportError(
                 "ib_insync is not installed. Run: pip install ib_insync"
-            )
+            ) from exc
     return ib_insync
 
 
@@ -233,21 +233,13 @@ class IBKRClient(ExchangeEngine):
 
     # ── order helpers (run on worker thread) ────────────────────────
 
-    @staticmethod
-    def _allow_presubmit() -> bool:
-        val = os.environ.get("IBKR_ALLOW_PRESUBMIT", "").strip().lower()
-        return val in ("1", "true", "yes")
-
     def _wait_for_order(self, trade, timeout: float = 30.0) -> OrderResult:
-        import time as _time
-        deadline = _time.monotonic() + timeout
-        while _time.monotonic() < deadline:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             self._ib.sleep(0.2)
             status = trade.orderStatus.status
             if status in self._TERMINAL_STATUSES:
                 break
-            if status == "PreSubmitted" and not self._allow_presubmit():
-                return self._cancel_presubmitted(trade)
 
         status = trade.orderStatus.status
         filled = float(trade.orderStatus.filled or 0)
@@ -298,27 +290,20 @@ class IBKRClient(ExchangeEngine):
             },
         )
 
-    def _cancel_presubmitted(self, trade) -> OrderResult:
-        oid = trade.order.orderId
-        logger.info(
-            "Order %s entered PreSubmitted (market closed); "
-            "cancelling to avoid queued presubmit orders", oid,
-        )
-        try:
-            self._ib.cancelOrder(trade.order)
-            self._ib.sleep(1)
-        except Exception as e:
-            logger.warning("Cancel of PreSubmitted order %s failed: %s", oid, e)
-        return OrderResult(
-            success=False,
-            order_id=oid,
-            filled=0, avg_price=0, status="PreSubmitted",
-            exchange_id=self.engine_id,
-            message="Order PreSubmitted (market closed) – cancelled to avoid queue buildup",
-            raw={"orderId": oid, "status": "PreSubmitted", "action": "auto_cancelled"},
-        )
-
     # ── order execution (ExchangeEngine) ───────────────────────────
+
+    def _check_rth(self, contract) -> Optional[OrderResult]:
+        """Return an OrderResult with 'market closed' if outside RTH, else None."""
+        from app.services.ibkr_trading.trading_hours import is_rth
+        if not is_rth(self._ib, contract):
+            sym = getattr(contract, "symbol", "?")
+            logger.info("Order rejected: %s is outside RTH (market closed)", sym)
+            return OrderResult(
+                success=False,
+                exchange_id=self.engine_id,
+                message=f"Rejected: {sym} is outside RTH (market closed)",
+            )
+        return None
 
     def place_market_order(
         self, symbol: str, side: str, quantity: float,
@@ -336,6 +321,9 @@ class IBKRClient(ExchangeEngine):
             if not self._qualify_contract(contract):
                 return OrderResult(success=False, message=f"Invalid contract: {symbol}",
                                    exchange_id=self.engine_id)
+            rth_reject = self._check_rth(contract)
+            if rth_reject:
+                return rth_reject
             order = ib_insync.MarketOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, account=self._account,
@@ -365,6 +353,9 @@ class IBKRClient(ExchangeEngine):
             if not self._qualify_contract(contract):
                 return OrderResult(success=False, message=f"Invalid contract: {symbol}",
                                    exchange_id=self.engine_id)
+            rth_reject = self._check_rth(contract)
+            if rth_reject:
+                return rth_reject
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, lmtPrice=price, account=self._account,

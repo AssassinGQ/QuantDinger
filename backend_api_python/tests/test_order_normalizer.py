@@ -1,16 +1,17 @@
 """Tests for OrderNormalizer hierarchy."""
 
 import pytest
-from app.services.ibkr_trading.order_normalizer import (
-    USStockNormalizer,
-    HShareNormalizer,
-    ForexNormalizer,
+from app.services.exchange_engine.order_normalizer import (
+    CryptoNormalizer,
     get_normalizer,
 )
-from app.services.ibkr_trading.order_normalizer.hk_share import (
+from app.services.exchange_engine.order_normalizer.us_stock import USStockNormalizer
+from app.services.exchange_engine.order_normalizer.hk_share import (
+    HShareNormalizer,
     HK_LOT_SIZES,
     _hk_symbol_key,
 )
+from app.services.exchange_engine.order_normalizer.forex import ForexNormalizer
 
 
 # ── HK symbol key normalization ──────────────────────────────────────
@@ -161,6 +162,21 @@ class TestForexNormalizer:
 
 # ── get_normalizer factory ───────────────────────────────────────────
 
+class TestCryptoNormalizer:
+    norm = CryptoNormalizer()
+
+    def test_passthrough(self):
+        assert self.norm.normalize(0.00123, "BTCUSDT") == 0.00123
+
+    def test_check_valid(self):
+        ok, _ = self.norm.check(0.5, "ETHUSDT")
+        assert ok is True
+
+    def test_check_zero(self):
+        ok, _ = self.norm.check(0, "BTCUSDT")
+        assert ok is False
+
+
 class TestGetNormalizer:
     def test_hshare(self):
         assert isinstance(get_normalizer("HShare"), HShareNormalizer)
@@ -171,8 +187,23 @@ class TestGetNormalizer:
     def test_usstock(self):
         assert isinstance(get_normalizer("USStock"), USStockNormalizer)
 
+    def test_crypto(self):
+        assert isinstance(get_normalizer("Crypto"), CryptoNormalizer)
+
     def test_default(self):
         assert isinstance(get_normalizer(""), USStockNormalizer)
 
     def test_none(self):
         assert isinstance(get_normalizer(None), USStockNormalizer)
+
+
+class TestBackwardCompatImport:
+    """Ensure old import paths still work."""
+
+    def test_old_import_path(self):
+        from app.services.ibkr_trading.order_normalizer import get_normalizer as old_get
+        assert old_get("HShare").normalize(450, "00005") == 400
+
+    def test_old_submodule_import(self):
+        from app.services.ibkr_trading.order_normalizer.hk_share import _hk_symbol_key
+        assert _hk_symbol_key("00005") == "5"
