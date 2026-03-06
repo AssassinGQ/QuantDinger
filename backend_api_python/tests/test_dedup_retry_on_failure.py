@@ -274,17 +274,16 @@ class TestMarkFailedClearsDedupCache:
         assert sd_dedup.should_skip_signal_once_per_candle(
             **kw, timeframe_seconds=86400, now_ts=now + 1)
 
-        from app.services.pending_order_worker import PendingOrderWorker
+        from app.services.live_trading import records
 
-        with patch("app.services.pending_order_worker.get_db_connection") as mock_db:
+        with patch("app.services.live_trading.records.get_db_connection") as mock_db:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
             mock_db.return_value.__enter__ = MagicMock(return_value=mock_conn)
             mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-            worker = PendingOrderWorker.__new__(PendingOrderWorker)
-            worker._mark_failed(
+            records.mark_order_failed(
                 order_id=999,
                 error="ibkr_order_failed:test",
                 strategy_id=10,
@@ -305,33 +304,31 @@ class TestMarkFailedClearsDedupCache:
         sp_dedup.should_skip_signal_once_per_candle(
             **kw, timeframe_seconds=86400, now_ts=now)
 
-        from app.services.pending_order_worker import PendingOrderWorker
+        from app.services.live_trading import records
 
-        with patch("app.services.pending_order_worker.get_db_connection") as mock_db:
+        with patch("app.services.live_trading.records.get_db_connection") as mock_db:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
             mock_db.return_value.__enter__ = MagicMock(return_value=mock_conn)
             mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-            worker = PendingOrderWorker.__new__(PendingOrderWorker)
-            worker._mark_failed(order_id=999, error="some_error")
+            records.mark_order_failed(order_id=999, error="some_error")
 
         assert sp_dedup.should_skip_signal_once_per_candle(
             **kw, timeframe_seconds=86400, now_ts=now + 1)
 
     def test_mark_failed_updates_db_status(self):
-        from app.services.pending_order_worker import PendingOrderWorker
+        from app.services.live_trading import records
 
-        with patch("app.services.pending_order_worker.get_db_connection") as mock_db:
+        with patch("app.services.live_trading.records.get_db_connection") as mock_db:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
             mock_db.return_value.__enter__ = MagicMock(return_value=mock_conn)
             mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-            worker = PendingOrderWorker.__new__(PendingOrderWorker)
-            worker._mark_failed(order_id=42, error="test_error")
+            records.mark_order_failed(order_id=42, error="test_error")
 
             mock_cursor.execute.assert_called_once()
             sql_call = mock_cursor.execute.call_args
@@ -449,17 +446,16 @@ class TestEndToEndIBKRFailRetry:
         )
         assert pid == 500
 
-        # Step 3: worker executes, IBKR rejects → _mark_failed
-        from app.services.pending_order_worker import PendingOrderWorker
-        with patch("app.services.pending_order_worker.get_db_connection") as mock_db:
+        # Step 3: worker executes, IBKR rejects → mark_order_failed
+        from app.services.live_trading import records
+        with patch("app.services.live_trading.records.get_db_connection") as mock_db:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
             mock_db.return_value.__enter__ = MagicMock(return_value=mock_conn)
             mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-            worker = PendingOrderWorker.__new__(PendingOrderWorker)
-            worker._mark_failed(
+            records.mark_order_failed(
                 order_id=500,
                 error="ibkr_order_failed:Order Cancelled: Error 10349",
                 strategy_id=sid, symbol=symbol,

@@ -9,17 +9,17 @@ from concurrent.futures import Future
 
 import pytest
 
-from app.services.ibkr_trading.client import (
+from app.services.live_trading.ibkr_trading.client import (
     IBKRClient,
     IBKRConfig,
     _SENTINEL,
 )
-from app.services.exchange_engine import ExchangeEngine, OrderResult
+from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 
 @pytest.fixture(autouse=True)
 def _always_rth():
     """Default: assume market is open so RTH gate doesn't block tests."""
-    with patch("app.services.ibkr_trading.trading_hours.is_rth", return_value=True):
+    with patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True):
         yield
 
 
@@ -226,7 +226,7 @@ class TestWorkerThread:
 class TestQuantityGuard:
     """Client rejects non-whole-number and non-positive quantities."""
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_accepts_whole_number(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Filled", filled=7, avg_price=150.0)
@@ -237,7 +237,7 @@ class TestQuantityGuard:
         assert placed_order.totalQuantity == 7
         assert result.success is True
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_limit_order_accepts_whole_number(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Filled", filled=3, avg_price=180.0)
@@ -248,7 +248,7 @@ class TestQuantityGuard:
         assert placed_order.totalQuantity == 3
         assert result.success is True
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_accepts_float_whole(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)
@@ -259,7 +259,7 @@ class TestQuantityGuard:
         assert placed_order.totalQuantity == 10.0
         assert result.success is True
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_rejects_fractional(self):
         client = _make_client_with_mock_ib()
         result = client.place_market_order("AAPL", "buy", 7.8, "USStock")
@@ -267,7 +267,7 @@ class TestQuantityGuard:
         assert "whole number" in result.message.lower()
         client._ib.placeOrder.assert_not_called()
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_limit_order_rejects_fractional(self):
         client = _make_client_with_mock_ib()
         result = client.place_limit_order("AAPL", "buy", 3.5, 150.0, "USStock")
@@ -275,21 +275,21 @@ class TestQuantityGuard:
         assert "whole number" in result.message.lower()
         client._ib.placeOrder.assert_not_called()
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_rejects_zero(self):
         client = _make_client_with_mock_ib()
         result = client.place_market_order("AAPL", "buy", 0, "USStock")
         assert result.success is False
         client._ib.placeOrder.assert_not_called()
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_rejects_negative(self):
         client = _make_client_with_mock_ib()
         result = client.place_market_order("AAPL", "buy", -5, "USStock")
         assert result.success is False
         client._ib.placeOrder.assert_not_called()
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_hshare_rejects_non_lot_multiple(self):
         client = _make_client_with_mock_ib()
         result = client.place_market_order("00005", "buy", 3, "HShare")
@@ -297,7 +297,7 @@ class TestQuantityGuard:
         assert "400" in result.message
         client._ib.placeOrder.assert_not_called()
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_hshare_accepts_lot_multiple(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Filled", filled=400, avg_price=130.0)
@@ -306,7 +306,7 @@ class TestQuantityGuard:
         result = client.place_market_order("00005", "buy", 400, "HShare")
         assert result.success is True
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_hshare_unknown_symbol_accepts_any_integer(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Filled", filled=7, avg_price=50.0)
@@ -466,7 +466,7 @@ class TestTerminalStatusSets:
 
 class TestPlaceOrderIntegration:
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_cancelled_by_ibkr(self):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(
@@ -478,7 +478,7 @@ class TestPlaceOrderIntegration:
         assert result.success is False
         assert "Cancelled" in result.status or "Cancelled" in result.message
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_fractional_rejected(self):
         client = _make_client_with_mock_ib()
         result = client.place_market_order("AAPL", "buy", 0.7, "USStock")
@@ -486,7 +486,7 @@ class TestPlaceOrderIntegration:
         assert "whole number" in result.message.lower()
         client._ib.placeOrder.assert_not_called()
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_filled_success(self):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="Filled", filled=400, avg_price=65.5)
@@ -496,7 +496,7 @@ class TestPlaceOrderIntegration:
         assert result.filled == 400
         assert result.avg_price == 65.5
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_limit_order_inactive_rejected(self):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(
@@ -508,7 +508,7 @@ class TestPlaceOrderIntegration:
         assert result.success is False
         assert result.status == "Inactive"
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_invalid_contract_rejected(self):
         client = _make_client_with_mock_ib()
         client._ib.qualifyContracts.return_value = []
@@ -516,7 +516,7 @@ class TestPlaceOrderIntegration:
         assert result.success is False
         assert "Invalid contract" in result.message
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_sell_action_correct(self):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)
@@ -577,8 +577,8 @@ class TestConnectionRetry:
 class TestRTHGate:
     """Verify orders are rejected when market is outside RTH."""
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    @patch("app.services.ibkr_trading.trading_hours.is_rth", return_value=False)
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=False)
     def test_market_order_rejected_outside_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
         result = client.place_market_order("AAPL", "buy", 10, "USStock")
@@ -586,8 +586,8 @@ class TestRTHGate:
         assert "market closed" in result.message.lower()
         client._ib.placeOrder.assert_not_called()
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    @patch("app.services.ibkr_trading.trading_hours.is_rth", return_value=False)
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=False)
     def test_limit_order_rejected_outside_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
         result = client.place_limit_order("AAPL", "buy", 10, 150.0, "USStock")
@@ -595,8 +595,8 @@ class TestRTHGate:
         assert "market closed" in result.message.lower()
         client._ib.placeOrder.assert_not_called()
 
-    @patch("app.services.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    @patch("app.services.ibkr_trading.trading_hours.is_rth", return_value=True)
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True)
     def test_market_order_allowed_during_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)

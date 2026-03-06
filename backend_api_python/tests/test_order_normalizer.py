@@ -1,17 +1,17 @@
 """Tests for OrderNormalizer hierarchy."""
 
 import pytest
-from app.services.exchange_engine.order_normalizer import (
+from app.services.live_trading.order_normalizer import (
     CryptoNormalizer,
     get_normalizer,
 )
-from app.services.exchange_engine.order_normalizer.us_stock import USStockNormalizer
-from app.services.exchange_engine.order_normalizer.hk_share import (
+from app.services.live_trading.order_normalizer.us_stock import USStockNormalizer
+from app.services.live_trading.order_normalizer.hk_share import (
     HShareNormalizer,
     HK_LOT_SIZES,
     _hk_symbol_key,
 )
-from app.services.exchange_engine.order_normalizer.forex import ForexNormalizer
+from app.services.live_trading.order_normalizer.forex import ForexNormalizer
 
 
 # ── HK symbol key normalization ──────────────────────────────────────
@@ -201,9 +201,9 @@ class TestBackwardCompatImport:
     """Ensure old import paths still work."""
 
     def test_old_import_path(self):
-        from app.services.ibkr_trading.order_normalizer import get_normalizer as old_get
+        from app.services.live_trading.ibkr_trading.order_normalizer import get_normalizer as old_get
         assert old_get("HShare").normalize(450, "00005") == 400
 
     def test_old_submodule_import(self):
-        from app.services.ibkr_trading.order_normalizer.hk_share import _hk_symbol_key
+        from app.services.live_trading.ibkr_trading.order_normalizer.hk_share import _hk_symbol_key
         assert _hk_symbol_key("00005") == "5"

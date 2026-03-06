@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytz
 import pytest
 
-from app.services.ibkr_trading.trading_hours import (
+from app.services.live_trading.ibkr_trading.trading_hours import (
     parse_liquid_hours,
     is_rth,
     clear_cache,

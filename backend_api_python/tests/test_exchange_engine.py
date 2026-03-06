@@ -1,15 +1,15 @@
 """Tests for exchange engine abstraction layer."""
 import pytest
 
-from app.services.exchange_engine import ExchangeEngine, OrderResult
-from app.services.ibkr_trading.client import IBKRClient
-from app.services.mt5_trading.client import MT5Client
+from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
+from app.services.live_trading.ibkr_trading.client import IBKRClient
+from app.services.live_trading.mt5_trading.client import MT5Client
 
 
-class TestOrderResult:
+class TestLiveOrderResult:
 
     def test_default_values(self):
-        r = OrderResult(success=True)
+        r = LiveOrderResult(success=True)
         assert r.success is True
         assert r.filled == 0.0
         assert r.avg_price == 0.0
@@ -18,7 +18,7 @@ class TestOrderResult:
         assert r.raw == {}
 
     def test_full_values(self):
-        r = OrderResult(
+        r = LiveOrderResult(
             success=True, order_id=42, deal_id=99, filled=100.0, avg_price=150.5,
             status="Filled", message="done", exchange_id="ibkr",
             raw={"orderId": 42},
@@ -29,13 +29,13 @@ class TestOrderResult:
         assert r.exchange_id == "ibkr"
 
     def test_failed_result(self):
-        r = OrderResult(success=False, message="timed out")
+        r = LiveOrderResult(success=False, message="timed out")
         assert r.success is False
         assert r.filled == 0.0
         assert r.avg_price == 0.0
 
     def test_mt5_style_result(self):
-        r = OrderResult(
+        r = LiveOrderResult(
             success=True, order_id=12345, deal_id=67890,
             filled=0.1, avg_price=1.0850, status="filled",
             exchange_id="mt5",
@@ -45,17 +45,17 @@ class TestOrderResult:
         assert r.exchange_id == "mt5"
 
 
-class TestExchangeEngineABC:
+class TestBaseStatefulClientABC:
 
     def test_cannot_instantiate_directly(self):
         with pytest.raises(TypeError):
-            ExchangeEngine()
+            BaseStatefulClient()
 
     def test_ibkr_is_exchange_engine(self):
-        assert issubclass(IBKRClient, ExchangeEngine)
+        assert issubclass(IBKRClient, BaseStatefulClient)
 
     def test_mt5_is_exchange_engine(self):
-        assert issubclass(MT5Client, ExchangeEngine)
+        assert issubclass(MT5Client, BaseStatefulClient)
 
     def test_ibkr_engine_id(self):
         assert IBKRClient.engine_id == "ibkr"

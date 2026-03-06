@@ -353,7 +353,7 @@ class SignalExecutor:
                 strategy_ctx, signal, sig, current_price, current_positions
             )
 
-            from app.services.exchange_engine.order_normalizer import get_normalizer
+            from app.services.live_trading.order_normalizer import get_normalizer
             normalizer = get_normalizer(market_category)
             raw_amount = amount
             amount = normalizer.normalize(amount, symbol)

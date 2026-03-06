@@ -11,8 +11,8 @@ from flask import Blueprint, request, jsonify, g
 from app.utils.logger import get_logger
 from app.utils.db import get_db_connection
 from app.utils.auth import login_required
-from app.services.ibkr_trading import IBKRClient, IBKRConfig
-from app.services.ibkr_trading.client import get_ibkr_client, reset_ibkr_client
+from app.services.live_trading.ibkr_trading import IBKRClient, IBKRConfig
+from app.services.live_trading.ibkr_trading.client import get_ibkr_client, reset_ibkr_client
 
 logger = get_logger(__name__)
 

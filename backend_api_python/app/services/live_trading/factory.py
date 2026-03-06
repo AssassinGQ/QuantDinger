@@ -1,35 +1,33 @@
 """
-Factory for direct exchange clients.
+Factory for direct exchange clients and runners.
 
 Supports:
 - Crypto exchanges: Binance, OKX, Bitget, Bybit, Coinbase, Kraken, KuCoin, Gate, Bitfinex
 - Traditional brokers: Interactive Brokers (IBKR) for US/HK stocks
 - Forex brokers: MetaTrader 5 (MT5)
 
-Crypto clients inherit ``BaseRestClient``; IBKR and MT5 inherit
-``ExchangeEngine``.  The return type of ``create_client`` is a union
-of both so the caller can use ``isinstance(client, ExchangeEngine)``
-to detect engine-adapter clients.
+Crypto clients inherit ``BaseRestfulClient``; IBKR and MT5 inherit
+``BaseStatefulClient``.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, Union
 
-from app.services.live_trading.base import BaseRestClient, LiveTradingError
-from app.services.live_trading.binance import BinanceFuturesClient
-from app.services.live_trading.binance_spot import BinanceSpotClient
-from app.services.live_trading.okx import OkxClient
-from app.services.live_trading.bitget import BitgetMixClient
-from app.services.live_trading.bitget_spot import BitgetSpotClient
-from app.services.live_trading.bybit import BybitClient
-from app.services.live_trading.coinbase_exchange import CoinbaseExchangeClient
-from app.services.live_trading.kraken import KrakenClient
-from app.services.live_trading.kraken_futures import KrakenFuturesClient
-from app.services.live_trading.kucoin import KucoinSpotClient, KucoinFuturesClient
-from app.services.live_trading.gate import GateSpotClient, GateUsdtFuturesClient
-from app.services.live_trading.bitfinex import BitfinexClient, BitfinexDerivativesClient
-from app.services.live_trading.deepcoin import DeepcoinClient
+from app.services.live_trading.base import BaseRestfulClient, BaseStatefulClient, LiveTradingError
+from app.services.live_trading.crypto_trading.binance import BinanceFuturesClient
+from app.services.live_trading.crypto_trading.binance_spot import BinanceSpotClient
+from app.services.live_trading.crypto_trading.okx import OkxClient
+from app.services.live_trading.crypto_trading.bitget import BitgetMixClient
+from app.services.live_trading.crypto_trading.bitget_spot import BitgetSpotClient
+from app.services.live_trading.crypto_trading.bybit import BybitClient
+from app.services.live_trading.crypto_trading.coinbase_exchange import CoinbaseExchangeClient
+from app.services.live_trading.crypto_trading.kraken import KrakenClient
+from app.services.live_trading.crypto_trading.kraken_futures import KrakenFuturesClient
+from app.services.live_trading.crypto_trading.kucoin import KucoinSpotClient, KucoinFuturesClient
+from app.services.live_trading.crypto_trading.gate import GateSpotClient, GateUsdtFuturesClient
+from app.services.live_trading.crypto_trading.bitfinex import BitfinexClient, BitfinexDerivativesClient
+from app.services.live_trading.crypto_trading.deepcoin import DeepcoinClient
 
 
 def _get(cfg: Dict[str, Any], *keys: str) -> str:
@@ -46,8 +44,8 @@ def _get(cfg: Dict[str, Any], *keys: str) -> str:
 def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap"):
     """Create an exchange client based on *exchange_config*.
 
-    Returns a ``BaseRestClient`` for crypto exchanges or an
-    ``ExchangeEngine`` subclass for IBKR / MT5.
+    Returns a ``BaseRestfulClient`` for crypto exchanges or a
+    ``BaseStatefulClient`` subclass for IBKR / MT5.
     """
     if not isinstance(exchange_config, dict):
         raise LiveTradingError("Invalid exchange_config")
@@ -146,16 +144,31 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
     raise LiveTradingError(f"Unsupported exchange_id: {exchange_id}")
 
 
-# ── ExchangeEngine factories (lazy imports) ──────────────────────
+# ── get_runner ────────────────────────────────────────────────────
+
+
+def get_runner(client):
+    """Return the appropriate OrderRunner for the given client instance."""
+    from app.services.live_trading.runners import (
+        OrderRunner, RestfulClientRunner, StatefulClientRunner,
+    )
+    if isinstance(client, BaseStatefulClient):
+        return StatefulClientRunner()
+    if isinstance(client, BaseRestfulClient):
+        return RestfulClientRunner()
+    raise LiveTradingError(f"No runner for client type: {type(client)}")
+
+
+# ── BaseStatefulClient factories (lazy imports) ──────────────────
 
 
 def _create_ibkr_client(exchange_config: Dict[str, Any]):
-    """Create or retrieve IBKR client (ExchangeEngine).
+    """Create or retrieve IBKR client (BaseStatefulClient).
 
     Uses the global singleton when no strategy-level host/port is specified.
     """
     try:
-        from app.services.ibkr_trading.client import IBKRClient, IBKRConfig, get_ibkr_client
+        from app.services.live_trading.ibkr_trading.client import IBKRClient, IBKRConfig, get_ibkr_client
     except ImportError as exc:
         raise LiveTradingError("IBKR trading requires ib_insync. Run: pip install ib_insync") from exc
 
@@ -178,12 +191,12 @@ def _create_ibkr_client(exchange_config: Dict[str, Any]):
 
 
 def _create_mt5_client(exchange_config: Dict[str, Any]):
-    """Create or retrieve MT5 client (ExchangeEngine) for forex trading.
+    """Create or retrieve MT5 client (BaseStatefulClient) for forex trading.
 
     Uses the global singleton when no strategy-level credentials are specified.
     """
     try:
-        from app.services.mt5_trading.client import MT5Client, MT5Config, get_mt5_client
+        from app.services.live_trading.mt5_trading.client import MT5Client, MT5Config, get_mt5_client
     except ImportError as exc:
         raise LiveTradingError(
             "MT5 trading requires MetaTrader5 library. Run: pip install MetaTrader5\n"
