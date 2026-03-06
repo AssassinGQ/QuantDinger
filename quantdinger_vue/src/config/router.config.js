@@ -16,6 +16,13 @@ export const asyncRouterMap = [
         component: () => import('@/views/dashboard'),
         meta: { title: 'menu.dashboard', keepAlive: true, icon: 'dashboard', permission: ['dashboard'] }
       },
+      // 交易商看盘
+      {
+        path: '/broker-dashboard',
+        name: 'BrokerDashboard',
+        component: () => import('@/views/broker-dashboard'),
+        meta: { title: 'menu.dashboard.brokerDashboard', keepAlive: true, icon: 'bank', permission: ['dashboard'] }
+      },
       // AI 分析
       {
         path: '/ai-analysis/:pageNo([1-9]\\d*)?',

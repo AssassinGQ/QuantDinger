@@ -4,9 +4,13 @@ Interactive Brokers API Routes
 Standalone API endpoints for US and Hong Kong stock trading.
 """
 
-from flask import Blueprint, request, jsonify
+from typing import Any, Dict, List
+
+from flask import Blueprint, request, jsonify, g
 
 from app.utils.logger import get_logger
+from app.utils.db import get_db_connection
+from app.utils.auth import login_required
 from app.services.ibkr_trading import IBKRClient, IBKRConfig
 from app.services.ibkr_trading.client import get_ibkr_client, reset_ibkr_client
 
@@ -383,3 +387,207 @@ def get_quote():
             "success": False,
             "error": str(e)
         }), 500
+
+
+# ==================== Dashboard ====================
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _safe_int(v: Any, default: int = 0) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
+def _format_dt(dt: Any) -> Any:
+    if dt is None:
+        return None
+    if hasattr(dt, 'isoformat'):
+        return dt.isoformat()
+    return dt
+
+
+def _compute_ibkr_trade_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total = len(trades)
+    if total == 0:
+        return {
+            "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+            "win_rate": 0.0, "profit_factor": 0.0,
+            "total_profit": 0.0, "total_loss": 0.0,
+            "avg_win": 0.0, "avg_loss": 0.0,
+        }
+
+    profits = [_safe_float(t.get("profit"), 0.0) for t in trades]
+    wins = [p for p in profits if p > 0]
+    losses = [p for p in profits if p < 0]
+
+    winning = len(wins)
+    losing = len(losses)
+    win_rate = (winning / total * 100) if total > 0 else 0.0
+    total_profit = sum(wins)
+    total_loss = abs(sum(losses))
+    profit_factor = (total_profit / total_loss) if total_loss > 0 else (total_profit if total_profit > 0 else 0.0)
+    avg_win = (total_profit / winning) if winning > 0 else 0.0
+    avg_loss = (total_loss / losing) if losing > 0 else 0.0
+
+    return {
+        "total_trades": total,
+        "winning_trades": winning,
+        "losing_trades": losing,
+        "win_rate": round(win_rate, 2),
+        "profit_factor": round(profit_factor, 2),
+        "total_profit": round(total_profit, 2),
+        "total_loss": round(total_loss, 2),
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss, 2),
+    }
+
+
+@ibkr_bp.route('/dashboard', methods=['GET'])
+@login_required
+def ibkr_dashboard():
+    """
+    IBKR broker dashboard: account summary, positions, open orders,
+    recent trades and execution records.
+
+    GET /api/ibkr/dashboard
+    """
+    data: Dict[str, Any] = {
+        "connected": False,
+        "connection": {},
+        "account": {},
+        "positions": [],
+        "open_orders": [],
+        "performance": {},
+        "recent_trades": [],
+        "executions": [],
+    }
+
+    # 1. Connection & live data from IBKR gateway
+    try:
+        client = _get_client()
+        is_connected = client.connected
+        data["connected"] = is_connected
+        data["connection"] = client.get_connection_status()
+
+        if is_connected:
+            # Account summary
+            acct = client.get_account_summary()
+            if acct.get("success"):
+                summary = acct.get("summary", {})
+                key_tags = [
+                    "NetLiquidation", "TotalCashValue", "StockMarketValue",
+                    "AvailableFunds", "BuyingPower", "UnrealizedPnL",
+                    "RealizedPnL", "GrossPositionValue", "InitMarginReq",
+                    "MaintMarginReq", "AccruedCash",
+                ]
+                parsed = {}
+                for tag in key_tags:
+                    if tag in summary:
+                        parsed[tag] = {
+                            "value": _safe_float(summary[tag].get("value")),
+                            "currency": summary[tag].get("currency", ""),
+                        }
+                data["account"] = {
+                    "account_id": acct.get("account", ""),
+                    "items": parsed,
+                    "net_liquidation": _safe_float(
+                        (parsed.get("NetLiquidation") or {}).get("value")
+                    ),
+                    "currency": (parsed.get("NetLiquidation") or {}).get("currency", "USD"),
+                }
+
+            # Positions
+            data["positions"] = client.get_positions()
+
+            # Open orders
+            data["open_orders"] = client.get_open_orders()
+    except Exception as e:
+        logger.warning("IBKR live data unavailable: %s", e)
+
+    # 2. DB-sourced trade history (IBKR execution records)
+    user_id = g.user_id
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            # Recent trades for IBKR strategies
+            cur.execute(
+                """
+                SELECT t.*, s.strategy_name
+                FROM qd_strategy_trades t
+                LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
+                WHERE t.user_id = ?
+                  AND s.id IN (
+                    SELECT id FROM qd_strategies_trading
+                    WHERE user_id = ?
+                      AND market_category IN ('USStock', 'HShare')
+                  )
+                ORDER BY t.created_at DESC
+                LIMIT 200
+                """,
+                (user_id, user_id),
+            )
+            trades_raw = cur.fetchall() or []
+            cur.close()
+
+        trades = []
+        for t in trades_raw:
+            trade = dict(t)
+            if trade.get("created_at") and hasattr(trade["created_at"], "timestamp"):
+                trade["created_at"] = int(trade["created_at"].timestamp())
+            trades.append(trade)
+
+        data["performance"] = _compute_ibkr_trade_stats(trades)
+        data["recent_trades"] = trades[:50]
+
+        # Execution records from pending_orders for IBKR
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """
+                SELECT o.*, s.strategy_name
+                FROM pending_orders o
+                LEFT JOIN qd_strategies_trading s ON s.id = o.strategy_id
+                WHERE o.user_id = ?
+                  AND s.id IN (
+                    SELECT id FROM qd_strategies_trading
+                    WHERE user_id = ?
+                      AND market_category IN ('USStock', 'HShare')
+                  )
+                ORDER BY o.id DESC
+                LIMIT 100
+                """,
+                (user_id, user_id),
+            )
+            exec_rows = cur.fetchall() or []
+            cur.close()
+
+        executions = []
+        for r in exec_rows:
+            row = dict(r)
+            status = (row.get("status") or "").strip().lower()
+            if status == "sent":
+                status = "completed"
+            if status == "deferred":
+                status = "pending"
+            row["status"] = status
+            row["strategy_name"] = row.get("strategy_name") or ""
+            row["filled_amount"] = _safe_float(row.get("filled"))
+            row["filled_price"] = _safe_float(row.get("avg_price")) or _safe_float(row.get("price"))
+            row["error_message"] = row.get("last_error") or ""
+            for key in ("created_at", "updated_at", "executed_at", "processed_at", "sent_at"):
+                row[key] = _format_dt(row.get(key))
+            executions.append(row)
+
+        data["executions"] = executions
+
+    except Exception as e:
+        logger.error("IBKR dashboard DB query failed: %s", e, exc_info=True)
+
+    return jsonify({"code": 1, "msg": "success", "data": data})
