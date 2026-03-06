@@ -2886,7 +2886,7 @@ const locale = {
   'broker.unit.trades': '笔',
   'broker.col.symbol': '品种',
   'broker.col.quantity': '数量',
-  'broker.col.avgCost': '均价',
+  'broker.col.avgCost': '均价(含佣)',
   'broker.col.marketValue': '市值',
   'broker.col.action': '方向',
   'broker.col.type': '类型',

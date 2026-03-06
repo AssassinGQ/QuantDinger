@@ -3078,7 +3078,7 @@ const locale = {
   'broker.unit.trades': 'trades',
   'broker.col.symbol': 'Symbol',
   'broker.col.quantity': 'Qty',
-  'broker.col.avgCost': 'Avg Cost',
+  'broker.col.avgCost': 'Avg Cost (incl. comm.)',
   'broker.col.marketValue': 'Mkt Value',
   'broker.col.action': 'Action',
   'broker.col.type': 'Type',
