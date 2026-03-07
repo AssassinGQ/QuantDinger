@@ -195,9 +195,15 @@
         <template slot="marketValue" slot-scope="text, record">
           <div>{{ record.currency }} {{ formatNumber(text) }}</div>
         </template>
-        <template slot="unrealizedPnL" slot-scope="text">
-          <span :class="text >= 0 ? 'positive' : 'negative'">
-            {{ text >= 0 ? '+' : '' }}{{ formatNumber(text) }}
+        <template slot="commission" slot-scope="text, record">
+          <span v-if="text" class="negative">
+            -{{ formatNumber(text) }}
+          </span>
+          <span v-else class="text-muted">-</span>
+        </template>
+        <template slot="unrealizedPnL" slot-scope="text, record">
+          <span :class="(text - (record.commission || 0)) >= 0 ? 'positive' : 'negative'">
+            {{ (text - (record.commission || 0)) >= 0 ? '+' : '' }}{{ formatNumber(text - (record.commission || 0)) }}
           </span>
         </template>
       </a-table>
@@ -309,10 +315,16 @@
             {{ getSignalTypeText(text) }}
           </span>
         </template>
-        <template slot="exec_status" slot-scope="text">
+        <template slot="exec_status" slot-scope="text, record">
           <span class="status-tag" :class="text">
             {{ getStatusText(text) }}
           </span>
+          <div v-if="text === 'failed' && record.error_message" class="error-hint">
+            <a-tooltip :title="record.error_message">
+              <a-icon type="exclamation-circle" />
+              <span>{{ $t('broker.viewError') }}</span>
+            </a-tooltip>
+          </div>
         </template>
         <template slot="exec_amount" slot-scope="text, record">
           <div>{{ formatNumber(text, 4) }}</div>
@@ -340,10 +352,6 @@
           <div v-if="record.executed_at" class="sub-text">
             {{ formatTime(record.executed_at) }}
           </div>
-        </template>
-        <template slot="error_message" slot-scope="text">
-          <span v-if="text" class="error-cell" :title="text">{{ text }}</span>
-          <span v-else class="text-muted">-</span>
         </template>
       </a-table>
     </div>
@@ -397,6 +405,7 @@ export default {
         { title: this.$t('broker.col.quantity'), dataIndex: 'quantity', scopedSlots: { customRender: 'quantity' }, width: 100, align: 'right' },
         { title: this.$t('broker.col.avgCost'), dataIndex: 'avgCost', scopedSlots: { customRender: 'avgCost' }, width: 100, align: 'right' },
         { title: this.$t('broker.col.marketValue'), dataIndex: 'marketValue', scopedSlots: { customRender: 'marketValue' }, width: 140, align: 'right' },
+        { title: '佣金', dataIndex: 'commission', scopedSlots: { customRender: 'commission' }, width: 100, align: 'right' },
         { title: this.$t('broker.unrealizedPnl'), dataIndex: 'unrealizedPnL', scopedSlots: { customRender: 'unrealizedPnL' }, width: 120, align: 'right' }
       ]
     },
@@ -432,7 +441,6 @@ export default {
         { title: this.$t('broker.col.fillPrice'), dataIndex: 'filled_price', scopedSlots: { customRender: 'exec_price' }, width: 100, align: 'right' },
         { title: this.$t('broker.col.slippage'), dataIndex: 'slippage', scopedSlots: { customRender: 'slippage' }, width: 100, align: 'right' },
         { title: this.$t('broker.col.status'), dataIndex: 'status', scopedSlots: { customRender: 'exec_status' }, width: 100, align: 'left' },
-        { title: this.$t('broker.col.errorReason'), dataIndex: 'error_message', scopedSlots: { customRender: 'error_message' }, width: 180, align: 'left' },
         { title: this.$t('broker.col.timeInfo'), dataIndex: 'created_at', scopedSlots: { customRender: 'time_info' }, width: 150, align: 'left' }
       ]
     }
@@ -886,6 +894,13 @@ export default {
     &.completed, &.filled { background: rgba(16,185,129,0.1); color: @green; }
     &.failed, &.inactive, &.cancelled, &.apicancelled { background: rgba(239,68,68,0.1); color: @red; }
   }
+  .error-hint {
+    font-size: 11px;
+    color: @red;
+    margin-top: 4px;
+    cursor: pointer;
+    .anticon { margin-right: 4px; }
+  }
   .progress-bar-wrap {
     height: 4px; background: rgba(0,0,0,0.06); border-radius: 2px; margin-top: 4px;
     .progress-bar-fill {
@@ -897,15 +912,6 @@ export default {
   .time-cell { font-size: 12px; color: @text-secondary-light; }
   .sub-text { font-size: 11px; color: @text-secondary-light; }
   .text-muted { color: @text-secondary-light; }
-  .error-cell {
-    color: @red;
-    font-size: 12px;
-    max-width: 180px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    display: inline-block;
-  }
   .positive { color: @green; }
   .negative { color: @red; }
 
