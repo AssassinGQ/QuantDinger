@@ -3095,6 +3095,7 @@ const locale = {
   'broker.col.profit': 'P&L',
   'broker.col.amount': 'Amount',
   'broker.col.timeInfo': 'Time',
+  'broker.col.errorReason': 'Error Reason',
   'broker.signal.openLong': 'Open Long',
   'broker.signal.openShort': 'Open Short',
   'broker.signal.closeLong': 'Close Long',

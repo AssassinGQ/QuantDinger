@@ -2903,6 +2903,7 @@ const locale = {
   'broker.col.profit': '盈亏',
   'broker.col.amount': '数量',
   'broker.col.timeInfo': '时间',
+  'broker.col.errorReason': '失败原因',
   'broker.signal.openLong': '开多',
   'broker.signal.openShort': '开空',
   'broker.signal.closeLong': '平多',

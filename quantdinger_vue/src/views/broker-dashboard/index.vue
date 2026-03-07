@@ -341,6 +341,10 @@
             {{ formatTime(record.executed_at) }}
           </div>
         </template>
+        <template slot="error_message" slot-scope="text">
+          <span v-if="text" class="error-cell" :title="text">{{ text }}</span>
+          <span v-else class="text-muted">-</span>
+        </template>
       </a-table>
     </div>
   </div>
@@ -428,6 +432,7 @@ export default {
         { title: this.$t('broker.col.fillPrice'), dataIndex: 'filled_price', scopedSlots: { customRender: 'exec_price' }, width: 100, align: 'right' },
         { title: this.$t('broker.col.slippage'), dataIndex: 'slippage', scopedSlots: { customRender: 'slippage' }, width: 100, align: 'right' },
         { title: this.$t('broker.col.status'), dataIndex: 'status', scopedSlots: { customRender: 'exec_status' }, width: 100, align: 'left' },
+        { title: this.$t('broker.col.errorReason'), dataIndex: 'error_message', scopedSlots: { customRender: 'error_message' }, width: 180, align: 'left' },
         { title: this.$t('broker.col.timeInfo'), dataIndex: 'created_at', scopedSlots: { customRender: 'time_info' }, width: 150, align: 'left' }
       ]
     }
@@ -892,6 +897,15 @@ export default {
   .time-cell { font-size: 12px; color: @text-secondary-light; }
   .sub-text { font-size: 11px; color: @text-secondary-light; }
   .text-muted { color: @text-secondary-light; }
+  .error-cell { 
+    color: @red; 
+    font-size: 12px;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+  }
   .positive { color: @green; }
   .negative { color: @red; }
 
