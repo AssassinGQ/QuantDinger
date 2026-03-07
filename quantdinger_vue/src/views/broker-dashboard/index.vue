@@ -897,8 +897,8 @@ export default {
   .time-cell { font-size: 12px; color: @text-secondary-light; }
   .sub-text { font-size: 11px; color: @text-secondary-light; }
   .text-muted { color: @text-secondary-light; }
-  .error-cell { 
-    color: @red; 
+  .error-cell {
+    color: @red;
     font-size: 12px;
     max-width: 180px;
     overflow: hidden;
