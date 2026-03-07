@@ -336,6 +336,38 @@ class DataHandler:
         """获取策略的所有持仓"""
         return self._get_all_positions(strategy_id)
 
+    def get_position_used_capital(self, strategy_id: int) -> float:
+        """获取持仓占用资金（仅查表）"""
+        try:
+            with get_db_connection() as db:
+                cursor = db.cursor()
+                cursor.execute("""
+                    SELECT SUM(size * entry_price) as used
+                    FROM qd_strategy_positions
+                    WHERE strategy_id = %s AND size > 0
+                """, (strategy_id,))
+                row = cursor.fetchone()
+                return float(row.get('used') or 0) if row else 0
+        except Exception as e:
+            logger.warning(f"查询持仓占用资金失败: {e}")
+            return 0.0
+
+    def get_pending_order_amount(self, strategy_id: int) -> float:
+        """获取待执行订单金额（仅查表）"""
+        try:
+            with get_db_connection() as db:
+                cursor = db.cursor()
+                cursor.execute("""
+                    SELECT SUM(amount * price) as pending
+                    FROM pending_orders
+                    WHERE strategy_id = %s AND status IN ('pending', 'processing')
+                """, (strategy_id,))
+                row = cursor.fetchone()
+                return float(row.get('pending') or 0) if row else 0
+        except Exception as e:
+            logger.warning(f"查询待执行订单金额失败: {e}")
+            return 0.0
+
     def persist_notification(
         self,
         strategy_id: int,

@@ -602,3 +602,61 @@ class TestDataHandlerUpdateDataframeWithCurrentPrice:
         df = df.set_index("time")
         result = dh._update_dataframe_with_current_price(df.copy(), 102.0, "UNKNOWN")
         assert len(result) >= 1
+
+
+class TestDataHandlerGetPositionUsedCapital:
+    """get_position_used_capital 直接覆盖"""
+
+    @patch("app.services.data_handler.get_db_connection")
+    def test_returns_used_capital(self, mock_db_conn):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = {"used": 5000.0}
+        mock_db_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+        dh = DataHandler()
+        result = dh.get_position_used_capital(1)
+        assert result == 5000.0
+
+    @patch("app.services.data_handler.get_db_connection")
+    def test_returns_zero_when_no_positions(self, mock_db_conn):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+        dh = DataHandler()
+        result = dh.get_position_used_capital(1)
+        assert result == 0.0
+
+    @patch("app.services.data_handler.get_db_connection")
+    def test_returns_zero_on_exception(self, mock_db_conn):
+        mock_db_conn.side_effect = Exception("DB Error")
+        dh = DataHandler()
+        result = dh.get_position_used_capital(1)
+        assert result == 0.0
+
+
+class TestDataHandlerGetPendingOrderAmount:
+    """get_pending_order_amount 直接覆盖"""
+
+    @patch("app.services.data_handler.get_db_connection")
+    def test_returns_pending_amount(self, mock_db_conn):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = {"pending": 2000.0}
+        mock_db_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+        dh = DataHandler()
+        result = dh.get_pending_order_amount(1)
+        assert result == 2000.0
+
+    @patch("app.services.data_handler.get_db_connection")
+    def test_returns_zero_when_no_pending_orders(self, mock_db_conn):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+        dh = DataHandler()
+        result = dh.get_pending_order_amount(1)
+        assert result == 0.0
+
+    @patch("app.services.data_handler.get_db_connection")
+    def test_returns_zero_on_exception(self, mock_db_conn):
+        mock_db_conn.side_effect = Exception("DB Error")
+        dh = DataHandler()
+        result = dh.get_pending_order_amount(1)
+        assert result == 0.0

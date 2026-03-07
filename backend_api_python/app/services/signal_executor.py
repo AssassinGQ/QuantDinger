@@ -18,8 +18,16 @@ logger = get_logger(__name__)
 
 
 def _get_available_capital(strategy_id: int, initial_capital: float) -> float:
-    """返回策略可用资金。"""
-    return initial_capital
+    """获取策略可用资金（自闭环）"""
+    try:
+        data_handler = DataHandler()
+        used_by_positions = data_handler.get_position_used_capital(strategy_id)
+        pending_amount = data_handler.get_pending_order_amount(strategy_id)
+        available = initial_capital - used_by_positions - pending_amount
+        return max(available, 0)
+    except Exception as e:
+        logger.warning(f"获取可用资金失败: {e}")
+        return initial_capital
 
 
 class SignalExecutor:

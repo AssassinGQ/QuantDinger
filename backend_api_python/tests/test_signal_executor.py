@@ -545,3 +545,56 @@ class TestSignalExecutorExecute:
         assert result is False
         signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
 
+
+class TestGetAvailableCapital:
+    """_get_available_capital 函数测试"""
+
+    @patch("app.services.signal_executor.DataHandler")
+    def test_returns_available_capital_with_no_positions(self, mock_data_handler_class):
+        from app.services.signal_executor import _get_available_capital
+
+        mock_dh = MagicMock()
+        mock_dh.get_position_used_capital.return_value = 0.0
+        mock_dh.get_pending_order_amount.return_value = 0.0
+        mock_data_handler_class.return_value = mock_dh
+
+        result = _get_available_capital(1, 10000.0)
+        assert result == 10000.0
+        mock_dh.get_position_used_capital.assert_called_once_with(1)
+        mock_dh.get_pending_order_amount.assert_called_once_with(1)
+
+    @patch("app.services.signal_executor.DataHandler")
+    def test_returns_available_capital_with_positions(self, mock_data_handler_class):
+        from app.services.signal_executor import _get_available_capital
+
+        mock_dh = MagicMock()
+        mock_dh.get_position_used_capital.return_value = 3000.0
+        mock_dh.get_pending_order_amount.return_value = 1000.0
+        mock_data_handler_class.return_value = mock_dh
+
+        result = _get_available_capital(1, 10000.0)
+        assert result == 6000.0
+
+    @patch("app.services.signal_executor.DataHandler")
+    def test_returns_zero_when_capital_exhausted(self, mock_data_handler_class):
+        from app.services.signal_executor import _get_available_capital
+
+        mock_dh = MagicMock()
+        mock_dh.get_position_used_capital.return_value = 8000.0
+        mock_dh.get_pending_order_amount.return_value = 3000.0
+        mock_data_handler_class.return_value = mock_dh
+
+        result = _get_available_capital(1, 10000.0)
+        assert result == 0.0
+
+    @patch("app.services.signal_executor.DataHandler")
+    def test_returns_initial_capital_on_exception(self, mock_data_handler_class):
+        from app.services.signal_executor import _get_available_capital
+
+        mock_dh = MagicMock()
+        mock_dh.get_position_used_capital.side_effect = Exception("DB Error")
+        mock_data_handler_class.return_value = mock_dh
+
+        result = _get_available_capital(1, 10000.0)
+        assert result == 10000.0
+
