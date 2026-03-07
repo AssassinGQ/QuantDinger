@@ -195,7 +195,8 @@
         <template slot="marketValue" slot-scope="text, record">
           <div>{{ record.currency }} {{ formatNumber(text) }}</div>
         </template>
-        <template slot="commission" slot-scope="text, record">
+        <template slot="commission" slot-scope="text">
+          <!-- eslint-disable-next-line vue/no-unused-vars -->
           <span v-if="text" class="negative">
             -{{ formatNumber(text) }}
           </span>
