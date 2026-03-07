@@ -518,6 +518,28 @@ def ibkr_dashboard():
             # Positions
             data["positions"] = client.get_positions()
 
+            # Add commission info to positions from trade history
+            if data["positions"]:
+                symbol_commission_map = {}
+                with get_db_connection() as db:
+                    cur = db.cursor()
+                    cur.execute(
+                        """
+                        SELECT symbol, SUM(commission) as total_commission
+                        FROM qd_strategy_trades
+                        WHERE user_id = ? AND commission > 0
+                        GROUP BY symbol
+                        """,
+                        (user_id,),
+                    )
+                    for row in cur.fetchall():
+                        symbol_commission_map[row[0]] = float(row[1] or 0)
+                    cur.close()
+
+                for pos in data["positions"]:
+                    ib_symbol = pos.get("ib_symbol") or pos.get("symbol", "")
+                    pos["commission"] = symbol_commission_map.get(ib_symbol, 0.0)
+
             # Open orders
             data["open_orders"] = client.get_open_orders()
     except Exception as e:
