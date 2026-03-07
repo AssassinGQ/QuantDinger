@@ -256,31 +256,53 @@ def fetch_local_positions(target_strategy_id: Optional[int] = None) -> List[Dict
 
 
 def fetch_strategy_traded_symbols(strategy_id: int) -> set:
-    """Return the set of symbols that a strategy has actually traded (pending_orders + local positions)."""
+    """Return the set of symbols that a strategy has actually filled orders for.
+
+    Only considers pending_orders with status='sent' and filled > 0 to avoid
+    including failed orders or creating a self-referencing loop with
+    qd_strategy_positions.
+
+    Returns both the raw symbol (e.g. '00005') and the IBKR display format
+    (e.g. '0005.HK') to handle format mismatches.
+    """
     symbols: set = set()
     try:
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
-                "SELECT DISTINCT symbol FROM pending_orders WHERE strategy_id = %s AND symbol IS NOT NULL",
+                "SELECT DISTINCT symbol FROM pending_orders WHERE strategy_id = %s AND status = 'sent' AND filled > 0 AND symbol IS NOT NULL",
                 (strategy_id,)
             )
             for row in (cur.fetchall() or []):
                 s = str(row.get("symbol") or "").strip()
                 if s:
                     symbols.add(s)
-            cur.execute(
-                "SELECT DISTINCT symbol FROM qd_strategy_positions WHERE strategy_id = %s AND symbol IS NOT NULL",
-                (strategy_id,)
-            )
-            for row in (cur.fetchall() or []):
-                s = str(row.get("symbol") or "").strip()
-                if s:
-                    symbols.add(s)
+                    symbols.update(_symbol_aliases(s))
             cur.close()
     except Exception as e:
         logger.error("fetch_strategy_traded_symbols failed for strategy %s: %s", strategy_id, e)
     return symbols
+
+
+def _symbol_aliases(symbol: str) -> set:
+    """Generate alternative symbol formats for cross-format matching.
+
+    Handles the mismatch between pending_orders format (e.g. '00005')
+    and IBKR display format (e.g. '0005.HK').
+    """
+    aliases: set = set()
+    s = symbol.strip().upper()
+    if s.endswith(".HK"):
+        raw = s[:-3].lstrip("0") or "0"
+        for width in (4, 5):
+            aliases.add(raw.zfill(width))
+        aliases.add(f"{raw.zfill(4)}.HK")
+    elif s.isdigit():
+        raw = s.lstrip("0") or "0"
+        aliases.add(f"{raw.zfill(4)}.HK")
+        for width in (4, 5):
+            aliases.add(raw.zfill(width))
+    return aliases
 
 
 def fetch_active_live_strategy_ids() -> List[int]:

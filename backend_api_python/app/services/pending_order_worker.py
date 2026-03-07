@@ -182,6 +182,15 @@ class PendingOrderWorker:
                 else:
                     logger.info(f"[PositionSync] Strategy {sid} ({safe_cfg.get('exchange_id', 'unknown')}) has NO positions on exchange.")
 
+                # For stateful clients (IBKR), only sync positions for symbols
+                # this strategy has actually filled, to prevent ghost positions
+                # when multiple strategies share one broker account.
+                is_stateful = isinstance(client, BaseStatefulClient)
+                traded_symbols: Optional[set] = None
+                if is_stateful:
+                    traded_symbols = records.fetch_strategy_traded_symbols(sid)
+                    logger.debug(f"[PositionSync] Strategy {sid} traded_symbols={traded_symbols}")
+
                 to_delete_ids: List[int] = []
                 to_update: List[Dict[str, Any]] = []
                 eps = 1e-12
@@ -192,6 +201,12 @@ class PendingOrderWorker:
                     side = str(r.get("side") or "").strip().lower()
                     if not rid or not sym or side not in ("long", "short"):
                         continue
+
+                    if traded_symbols is not None and sym not in traded_symbols:
+                        logger.info(f"[PositionSync] -> DELETE ghost position ID={rid} {sym} {side}: not in traded_symbols for strategy {sid}")
+                        to_delete_ids.append(rid)
+                        continue
+
                     try:
                         local_size = float(r.get("size") or 0.0)
                     except Exception:
@@ -222,15 +237,6 @@ class PendingOrderWorker:
 
                 to_insert: List[Dict[str, Any]] = []
                 local_symbols_sides = {(str(r.get("symbol") or "").strip(), str(r.get("side") or "").strip().lower()) for r in plist}
-
-                # For stateful clients (IBKR), only insert positions for symbols
-                # this strategy has actually traded, to prevent ghost positions
-                # when multiple strategies share one broker account.
-                is_stateful = isinstance(client, BaseStatefulClient)
-                traded_symbols: Optional[set] = None
-                if is_stateful:
-                    traded_symbols = records.fetch_strategy_traded_symbols(sid)
-                    logger.debug(f"[PositionSync] Strategy {sid} traded_symbols={traded_symbols}")
 
                 for _sym, _sides_map in exch_size.items():
                     for _side, _qty in _sides_map.items():
