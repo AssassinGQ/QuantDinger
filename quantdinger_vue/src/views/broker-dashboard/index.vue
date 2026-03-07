@@ -48,6 +48,7 @@
             <span class="amount">{{ formatNumber(netLiquidation) }}</span>
           </div>
           <div class="kpi-sub">
+            <span class="currency">{{ accountCurrency }} </span>
             <span :class="unrealizedPnl >= 0 ? 'positive' : 'negative'">
               {{ unrealizedPnl >= 0 ? '+' : '' }}{{ formatNumber(unrealizedPnl) }}
             </span>
@@ -145,6 +146,7 @@
             <span class="kpi-label">{{ $t('broker.realizedPnl') }}</span>
           </div>
           <div class="kpi-value">
+            <span class="currency">{{ accountCurrency }} </span>
             <span class="amount" :class="realizedPnl >= 0 ? 'positive' : 'negative'">
               {{ realizedPnl >= 0 ? '+' : '' }}{{ formatNumber(realizedPnl) }}
             </span>
@@ -386,46 +388,47 @@ export default {
     },
     positionColumns () {
       return [
-        { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', scopedSlots: { customRender: 'symbol' }, width: 160 },
+        { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', scopedSlots: { customRender: 'symbol' }, width: 120 },
+        { title: '币种', dataIndex: 'currency', width: 80 },
         { title: this.$t('broker.col.quantity'), dataIndex: 'quantity', scopedSlots: { customRender: 'quantity' }, width: 100, align: 'right' },
-        { title: this.$t('broker.col.avgCost'), dataIndex: 'avgCost', scopedSlots: { customRender: 'avgCost' }, width: 120, align: 'right' },
-        { title: this.$t('broker.col.marketValue'), dataIndex: 'marketValue', scopedSlots: { customRender: 'marketValue' }, width: 150, align: 'right' },
-        { title: this.$t('broker.unrealizedPnl'), dataIndex: 'unrealizedPnL', scopedSlots: { customRender: 'unrealizedPnL' }, width: 150, align: 'right' }
+        { title: this.$t('broker.col.avgCost'), dataIndex: 'avgCost', scopedSlots: { customRender: 'avgCost' }, width: 100, align: 'right' },
+        { title: this.$t('broker.col.marketValue'), dataIndex: 'marketValue', scopedSlots: { customRender: 'marketValue' }, width: 140, align: 'right' },
+        { title: this.$t('broker.unrealizedPnl'), dataIndex: 'unrealizedPnL', scopedSlots: { customRender: 'unrealizedPnL' }, width: 120, align: 'right' }
       ]
     },
     orderColumns () {
       return [
-        { title: 'ID', dataIndex: 'orderId', width: 80 },
-        { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', width: 100 },
-        { title: this.$t('broker.col.action'), dataIndex: 'action', scopedSlots: { customRender: 'action' }, width: 80 },
-        { title: this.$t('broker.col.type'), dataIndex: 'orderType', width: 80 },
+        { title: 'ID', dataIndex: 'orderId', width: 80, align: 'left' },
+        { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', width: 100, align: 'left' },
+        { title: this.$t('broker.col.action'), dataIndex: 'action', scopedSlots: { customRender: 'action' }, width: 80, align: 'left' },
+        { title: this.$t('broker.col.type'), dataIndex: 'orderType', width: 80, align: 'left' },
         { title: this.$t('broker.col.quantity'), dataIndex: 'quantity', width: 80, align: 'right' },
         { title: this.$t('broker.col.limitPrice'), dataIndex: 'limitPrice', customRender: (t) => t ? this.formatNumber(t) : '-', width: 100, align: 'right' },
-        { title: this.$t('broker.col.status'), dataIndex: 'status', scopedSlots: { customRender: 'status' }, width: 100 },
-        { title: this.$t('broker.col.progress'), dataIndex: 'filled', scopedSlots: { customRender: 'progress' }, width: 120 }
+        { title: this.$t('broker.col.status'), dataIndex: 'status', scopedSlots: { customRender: 'status' }, width: 100, align: 'left' },
+        { title: this.$t('broker.col.progress'), dataIndex: 'filled', scopedSlots: { customRender: 'progress' }, width: 120, align: 'right' }
       ]
     },
     tradeColumns () {
       return [
-        { title: this.$t('broker.col.time'), dataIndex: 'created_at', scopedSlots: { customRender: 'time' }, width: 160 },
-        { title: this.$t('broker.col.strategy'), dataIndex: 'strategy_name', width: 140 },
-        { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', width: 100 },
-        { title: this.$t('broker.col.signalType'), dataIndex: 'type', scopedSlots: { customRender: 'type' }, width: 100 },
-        { title: this.$t('broker.col.price'), dataIndex: 'price', customRender: (t) => this.formatNumber(t), width: 110, align: 'right' },
+        { title: this.$t('broker.col.time'), dataIndex: 'created_at', scopedSlots: { customRender: 'time' }, width: 160, align: 'left' },
+        { title: this.$t('broker.col.strategy'), dataIndex: 'strategy_name', width: 120, align: 'left' },
+        { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', width: 90, align: 'left' },
+        { title: this.$t('broker.col.signalType'), dataIndex: 'type', scopedSlots: { customRender: 'type' }, width: 100, align: 'left' },
+        { title: this.$t('broker.col.price'), dataIndex: 'price', customRender: (t) => this.formatNumber(t), width: 100, align: 'right' },
         { title: this.$t('broker.col.profit'), dataIndex: 'profit', scopedSlots: { customRender: 'profit' }, width: 110, align: 'right' }
       ]
     },
     executionColumns () {
       return [
-        { title: this.$t('broker.col.strategy'), dataIndex: 'strategy_name', scopedSlots: { customRender: 'strategy_name' }, width: 150 },
-        { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', scopedSlots: { customRender: 'symbol' }, width: 110 },
-        { title: this.$t('broker.col.signalType'), dataIndex: 'signal_type', scopedSlots: { customRender: 'signal_type' }, width: 100 },
-        { title: this.$t('broker.col.amount'), dataIndex: 'amount', scopedSlots: { customRender: 'exec_amount' }, width: 130 },
+        { title: this.$t('broker.col.strategy'), dataIndex: 'strategy_name', scopedSlots: { customRender: 'strategy_name' }, width: 130, align: 'left' },
+        { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', scopedSlots: { customRender: 'symbol' }, width: 90, align: 'left' },
+        { title: this.$t('broker.col.signalType'), dataIndex: 'signal_type', scopedSlots: { customRender: 'signal_type' }, width: 90, align: 'left' },
+        { title: this.$t('broker.col.amount'), dataIndex: 'amount', scopedSlots: { customRender: 'exec_amount' }, width: 120, align: 'right' },
         { title: this.$t('broker.col.signalPrice'), dataIndex: 'signal_price', customRender: (t) => t ? this.formatNumber(t) : '-', width: 100, align: 'right' },
         { title: this.$t('broker.col.fillPrice'), dataIndex: 'filled_price', scopedSlots: { customRender: 'exec_price' }, width: 100, align: 'right' },
-        { title: this.$t('broker.col.slippage'), dataIndex: 'slippage', scopedSlots: { customRender: 'slippage' }, width: 120, align: 'right' },
-        { title: this.$t('broker.col.status'), dataIndex: 'status', scopedSlots: { customRender: 'exec_status' }, width: 120 },
-        { title: this.$t('broker.col.timeInfo'), dataIndex: 'created_at', scopedSlots: { customRender: 'time_info' }, width: 160 }
+        { title: this.$t('broker.col.slippage'), dataIndex: 'slippage', scopedSlots: { customRender: 'slippage' }, width: 100, align: 'right' },
+        { title: this.$t('broker.col.status'), dataIndex: 'status', scopedSlots: { customRender: 'exec_status' }, width: 100, align: 'left' },
+        { title: this.$t('broker.col.timeInfo'), dataIndex: 'created_at', scopedSlots: { customRender: 'time_info' }, width: 150, align: 'left' }
       ]
     }
   },

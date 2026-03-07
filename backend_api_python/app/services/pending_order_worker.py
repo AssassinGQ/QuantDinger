@@ -223,9 +223,21 @@ class PendingOrderWorker:
                 to_insert: List[Dict[str, Any]] = []
                 local_symbols_sides = {(str(r.get("symbol") or "").strip(), str(r.get("side") or "").strip().lower()) for r in plist}
 
+                # For stateful clients (IBKR), only insert positions for symbols
+                # this strategy has actually traded, to prevent ghost positions
+                # when multiple strategies share one broker account.
+                is_stateful = isinstance(client, BaseStatefulClient)
+                traded_symbols: Optional[set] = None
+                if is_stateful:
+                    traded_symbols = records.fetch_strategy_traded_symbols(sid)
+                    logger.debug(f"[PositionSync] Strategy {sid} traded_symbols={traded_symbols}")
+
                 for _sym, _sides_map in exch_size.items():
                     for _side, _qty in _sides_map.items():
                         if _qty > 1e-12 and (_sym, _side) not in local_symbols_sides:
+                            if traded_symbols is not None and _sym not in traded_symbols:
+                                logger.debug(f"[PositionSync] -> Skipping INSERT {_sym} {_side}: not in traded_symbols for strategy {sid}")
+                                continue
                             _ep = exch_entry_price.get(_sym, {}).get(_side, 0.0)
                             to_insert.append({
                                 "strategy_id": sid,

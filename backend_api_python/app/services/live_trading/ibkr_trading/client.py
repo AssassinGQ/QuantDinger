@@ -4,6 +4,9 @@ Interactive Brokers Trading Client
 Uses ib_insync library to connect to TWS or IB Gateway for trading.
 All ib_insync calls are serialized onto a dedicated worker thread to
 avoid event-loop conflicts when multiple strategy threads share one client.
+
+Events: all 25 IB events are subscribed. Business-critical ones drive order
+flow; the rest log for observability.
 """
 
 import os
@@ -98,6 +101,13 @@ class IBKRClient(BaseStatefulClient):
         self._queue: Queue = Queue()
         self._worker_thread: Optional[threading.Thread] = None
         self._started = threading.Event()
+
+        # Event-driven order tracking
+        self._order_events: Dict[int, threading.Event] = {}
+        self._order_results: Dict[int, LiveOrderResult] = {}
+        self._commission_cache: Dict[int, Dict[str, Any]] = {}
+        self._events_registered = False
+
         self._start_worker()
 
     # ── signal mapping ──────────────────────────────────────────────
@@ -161,6 +171,7 @@ class IBKRClient(BaseStatefulClient):
 
     def _do_connect(self) -> bool:
         if self.connected:
+            self._register_events()
             return True
         try:
             _ensure_ib_insync()
@@ -184,6 +195,7 @@ class IBKRClient(BaseStatefulClient):
                 logger.info("IBKR connected, account: %s", self._account)
             else:
                 logger.warning("IBKR connected but no account info retrieved")
+            self._register_events()
             return True
         except Exception as e:
             logger.error("IBKR connection failed: %s", e)
@@ -217,6 +229,257 @@ class IBKRClient(BaseStatefulClient):
                 time.sleep(delay)
         raise ConnectionError(f"Cannot connect to IBKR after {retries} attempts")
 
+    # ── event registration (all 25 IB events) ─────────────────────
+
+    def _register_events(self):
+        if self._events_registered or self._ib is None:
+            return
+        ib = self._ib
+
+        # Business logic (6)
+        ib.orderStatusEvent      += self._on_order_status
+        ib.execDetailsEvent      += self._on_exec_details
+        ib.commissionReportEvent += self._on_commission_report
+        ib.errorEvent            += self._on_error
+        ib.connectedEvent        += self._on_connected
+        ib.disconnectedEvent     += self._on_disconnected
+
+        # Order observation (4)
+        ib.newOrderEvent         += self._on_new_order
+        ib.orderModifyEvent      += self._on_order_modify
+        ib.cancelOrderEvent      += self._on_cancel_order
+        ib.openOrderEvent        += self._on_open_order
+
+        # Position / portfolio (2)
+        ib.updatePortfolioEvent  += self._on_update_portfolio
+        ib.positionEvent         += self._on_position
+
+        # News / WSH (4)
+        ib.tickNewsEvent         += self._on_tick_news
+        ib.newsBulletinEvent     += self._on_news_bulletin
+        ib.wshMetaEvent          += self._on_wsh_meta
+        ib.wshEvent              += self._on_wsh
+
+        # Timeout (1)
+        ib.timeoutEvent          += self._on_timeout
+
+        # High-frequency DEBUG (6)
+        ib.pnlEvent              += self._on_pnl
+        ib.pnlSingleEvent        += self._on_pnl_single
+        ib.accountValueEvent     += self._on_account_value
+        ib.accountSummaryEvent   += self._on_account_summary
+        ib.pendingTickersEvent   += self._on_pending_tickers
+        ib.barUpdateEvent        += self._on_bar_update
+
+        # Scanner (1)
+        ib.scannerDataEvent      += self._on_scanner_data
+
+        # Ultra-high-frequency (1)
+        ib.updateEvent           += self._on_update
+
+        self._events_registered = True
+        logger.info("[IBKR-Event] All 25 IB events registered")
+
+    # ── event callbacks: business logic ───────────────────────────
+
+    def _on_order_status(self, trade):
+        order_id = trade.order.orderId
+        status = trade.orderStatus.status
+        filled = float(trade.orderStatus.filled or 0)
+        avg_price = float(trade.orderStatus.avgFillPrice or 0)
+        logger.info(
+            "[IBKR-Event] orderStatus: orderId=%s status=%s filled=%s avgPrice=%s",
+            order_id, status, filled, avg_price,
+        )
+        if order_id not in self._order_events:
+            return
+        if status in self._TERMINAL_STATUSES:
+            if status in self._REJECTED_STATUSES and filled <= 0:
+                error_msgs = [e.message for e in (trade.log or []) if e.message]
+                self._order_results[order_id] = LiveOrderResult(
+                    success=False, order_id=order_id,
+                    filled=0, avg_price=0, status=status,
+                    exchange_id=self.engine_id,
+                    message=f"Order {status}: {'; '.join(error_msgs) or 'rejected by IBKR'}",
+                    raw={"orderId": order_id, "status": status},
+                )
+            else:
+                remaining = float(trade.orderStatus.remaining or 0)
+                self._order_results[order_id] = LiveOrderResult(
+                    success=filled > 0,
+                    order_id=order_id,
+                    filled=filled, avg_price=avg_price, status=status,
+                    exchange_id=self.engine_id,
+                    message="Order filled" if status == "Filled" else f"Order {status} (filled={filled})",
+                    raw={"orderId": order_id, "status": status, "filled": filled, "remaining": remaining},
+                )
+            self._order_events[order_id].set()
+
+    def _on_exec_details(self, trade, fill):
+        order_id = trade.order.orderId
+        exec_id = fill.execution.execId
+        filled = float(trade.orderStatus.filled or 0)
+        avg_price = float(trade.orderStatus.avgFillPrice or 0)
+        logger.info(
+            "[IBKR-Event] execDetails: orderId=%s execId=%s side=%s shares=%s price=%s cumFilled=%s avgPrice=%s",
+            order_id, exec_id, fill.execution.side, fill.execution.shares,
+            fill.execution.price, filled, avg_price,
+        )
+        if order_id in self._order_events and filled > 0:
+            # Update result but do NOT set() event here.
+            # Let _on_order_status with terminal status drive the completion.
+            # This result is used as fallback if we reach timeout with fills > 0.
+            self._order_results[order_id] = LiveOrderResult(
+                success=True, order_id=order_id,
+                filled=filled, avg_price=avg_price,
+                status=trade.orderStatus.status,
+                exchange_id=self.engine_id,
+                message="Order filled (via execDetails)",
+                raw={"orderId": order_id, "execId": exec_id,
+                     "status": trade.orderStatus.status, "filled": filled},
+            )
+
+    def _on_commission_report(self, trade, fill, report):
+        order_id = trade.order.orderId
+        logger.info(
+            "[IBKR-Event] commissionReport: orderId=%s execId=%s commission=%.4f currency=%s realizedPNL=%.2f",
+            order_id, fill.execution.execId,
+            float(report.commission or 0), report.currency or "",
+            float(report.realizedPNL or 0),
+        )
+        existing = self._commission_cache.get(order_id, {"commission": 0.0, "currency": ""})
+        existing["commission"] = existing.get("commission", 0.0) + float(report.commission or 0)
+        existing["currency"] = report.currency or existing.get("currency", "")
+        self._commission_cache[order_id] = existing
+
+    def _on_error(self, reqId, errorCode, errorString, contract):
+        sym = getattr(contract, "symbol", "") if contract else ""
+        logger.warning(
+            "[IBKR-Event] error: reqId=%s code=%s msg=%s contract=%s",
+            reqId, errorCode, errorString, sym,
+        )
+
+    # ── event callbacks: connection lifecycle ─────────────────────
+
+    def _on_connected(self):
+        logger.info("[IBKR-Event] connectedEvent — connection established")
+
+    def _on_disconnected(self):
+        logger.warning("[IBKR-Event] disconnectedEvent — connection lost")
+        self._events_registered = False
+
+    # ── event callbacks: observation (INFO) ───────────────────────
+
+    def _on_new_order(self, trade):
+        logger.info(
+            "[IBKR-Event] newOrder: orderId=%s symbol=%s action=%s qty=%s type=%s tif=%s",
+            trade.order.orderId, trade.contract.symbol,
+            trade.order.action, trade.order.totalQuantity,
+            trade.order.orderType, getattr(trade.order, "tif", ""),
+        )
+
+    def _on_order_modify(self, trade):
+        logger.info(
+            "[IBKR-Event] orderModify: orderId=%s symbol=%s status=%s",
+            trade.order.orderId, trade.contract.symbol, trade.orderStatus.status,
+        )
+
+    def _on_cancel_order(self, trade):
+        logger.info(
+            "[IBKR-Event] cancelOrder: orderId=%s symbol=%s status=%s filled=%s",
+            trade.order.orderId, trade.contract.symbol,
+            trade.orderStatus.status, trade.orderStatus.filled,
+        )
+
+    def _on_open_order(self, trade):
+        logger.info(
+            "[IBKR-Event] openOrder: orderId=%s symbol=%s action=%s status=%s",
+            trade.order.orderId, trade.contract.symbol,
+            trade.order.action, trade.orderStatus.status,
+        )
+
+    def _on_update_portfolio(self, item):
+        logger.info(
+            "[IBKR-Event] updatePortfolio: symbol=%s pos=%s mktPrice=%.2f mktValue=%.2f unrealPNL=%.2f realPNL=%.2f",
+            item.contract.symbol, item.position,
+            float(item.marketPrice or 0), float(item.marketValue or 0),
+            float(item.unrealizedPNL or 0), float(item.realizedPNL or 0),
+        )
+
+    def _on_position(self, position):
+        logger.info(
+            "[IBKR-Event] position: account=%s symbol=%s pos=%s avgCost=%.4f",
+            position.account, position.contract.symbol,
+            position.position, float(position.avgCost or 0),
+        )
+
+    def _on_tick_news(self, news):
+        logger.info(
+            "[IBKR-Event] tickNews: time=%s providerCode=%s articleId=%s headline=%s",
+            news.timeStamp, news.providerCode, news.articleId,
+            (news.headline or "")[:120],
+        )
+
+    def _on_news_bulletin(self, bulletin):
+        logger.info(
+            "[IBKR-Event] newsBulletin: msgId=%s msgType=%s message=%s",
+            bulletin.msgId, bulletin.msgType, (bulletin.message or "")[:200],
+        )
+
+    def _on_wsh_meta(self, dataJson):
+        logger.info("[IBKR-Event] wshMeta: %s", (dataJson or "")[:200])
+
+    def _on_wsh(self, dataJson):
+        logger.info("[IBKR-Event] wsh: %s", (dataJson or "")[:200])
+
+    def _on_timeout(self, idlePeriod):
+        logger.info("[IBKR-Event] timeout: no data for %.1f seconds", idlePeriod)
+
+    # ── event callbacks: observation (DEBUG, high-frequency) ──────
+
+    def _on_pnl(self, entry):
+        logger.debug(
+            "[IBKR-Event] pnl: dailyPnL=%.2f unrealizedPnL=%.2f realizedPnL=%.2f",
+            float(entry.dailyPnL or 0), float(entry.unrealizedPnL or 0),
+            float(entry.realizedPnL or 0),
+        )
+
+    def _on_pnl_single(self, entry):
+        logger.debug(
+            "[IBKR-Event] pnlSingle: conId=%s dailyPnL=%.2f unrealizedPnL=%.2f realizedPnL=%.2f pos=%s value=%.2f",
+            entry.conId, float(entry.dailyPnL or 0),
+            float(entry.unrealizedPnL or 0), float(entry.realizedPnL or 0),
+            entry.position, float(entry.value or 0),
+        )
+
+    def _on_account_value(self, value):
+        logger.debug(
+            "[IBKR-Event] accountValue: tag=%s value=%s currency=%s account=%s",
+            value.tag, value.value, value.currency, value.account,
+        )
+
+    def _on_account_summary(self, value):
+        logger.debug(
+            "[IBKR-Event] accountSummary: tag=%s value=%s currency=%s account=%s",
+            value.tag, value.value, value.currency, value.account,
+        )
+
+    def _on_pending_tickers(self, tickers):
+        logger.debug("[IBKR-Event] pendingTickers: %d tickers updated", len(tickers))
+
+    def _on_bar_update(self, bars, hasNewBar):
+        logger.debug(
+            "[IBKR-Event] barUpdate: symbol=%s bars=%d hasNewBar=%s",
+            getattr(bars.contract, "symbol", "?") if hasattr(bars, "contract") else "?",
+            len(bars), hasNewBar,
+        )
+
+    def _on_scanner_data(self, data):
+        logger.debug("[IBKR-Event] scannerData: %d items", len(data))
+
+    def _on_update(self):
+        pass
+
     # ── contract helpers ───────────────────────────────────────────
 
     def _create_contract(self, symbol: str, market_type: str):
@@ -231,74 +494,92 @@ class IBKRClient(BaseStatefulClient):
             logger.warning("Contract qualification failed: %s", e)
             return False
 
-    # ── order helpers (run on worker thread) ────────────────────────
+    # ── order waiting (event-driven with timeout fallback) ────────
 
     def _wait_for_order(self, trade, timeout: float = 30.0) -> LiveOrderResult:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            self._ib.sleep(0.2)
+        order_id = trade.order.orderId
+        event = threading.Event()
+        self._order_events[order_id] = event
+        self._order_results.pop(order_id, None)
+
+        try:
+            # If already terminal when placeOrder returns synchronously
             status = trade.orderStatus.status
             if status in self._TERMINAL_STATUSES:
-                break
+                self._on_order_status(trade)
 
-        status = trade.orderStatus.status
-        filled = float(trade.orderStatus.filled or 0)
-        avg_price = float(trade.orderStatus.avgFillPrice or 0)
+            # Pump ib_insync event loop in short intervals so callbacks fire,
+            # while checking our threading.Event between pumps.
+            deadline = time.monotonic() + timeout
+            while not event.is_set() and time.monotonic() < deadline:
+                remaining = min(0.5, deadline - time.monotonic())
+                if remaining <= 0:
+                    break
+                self._ib.sleep(remaining)
 
-        if status in self._REJECTED_STATUSES:
-            error_msgs = [e.message for e in (trade.log or []) if e.message]
+            if event.is_set():
+                result = self._order_results.get(order_id)
+                if result is not None:
+                    # Drain: pump once more to collect trailing commission reports
+                    try:
+                        self._ib.sleep(0.2)
+                    except Exception:
+                        pass
+                    comm = self._commission_cache.pop(order_id, None)
+                    if comm:
+                        result.fee = comm.get("commission", 0.0)
+                        result.fee_ccy = comm.get("currency", "")
+                    return result
+
+            # Timeout: use execDetails fallback or check trade state
+            exec_result = self._order_results.get(order_id)
+            filled = float(trade.orderStatus.filled or 0)
+            avg_price = float(trade.orderStatus.avgFillPrice or 0)
+            status = trade.orderStatus.status
+
+            logger.warning(
+                "Order %s timed out in status '%s' after %ss (filled=%s, has_exec_result=%s)",
+                order_id, status, timeout, filled, exec_result is not None,
+            )
+
+            if exec_result is not None and exec_result.filled > 0:
+                comm = self._commission_cache.pop(order_id, None)
+                if comm:
+                    exec_result.fee = comm.get("commission", 0.0)
+                    exec_result.fee_ccy = comm.get("currency", "")
+                return exec_result
+
+            if filled > 0:
+                result = LiveOrderResult(
+                    success=True, order_id=order_id,
+                    filled=filled, avg_price=avg_price, status=status,
+                    exchange_id=self.engine_id,
+                    message=f"Order partial fill (timeout, filled={filled})",
+                    raw={"orderId": order_id, "status": status, "filled": filled,
+                         "remaining": float(trade.orderStatus.remaining or 0)},
+                )
+                comm = self._commission_cache.pop(order_id, None)
+                if comm:
+                    result.fee = comm.get("commission", 0.0)
+                    result.fee_ccy = comm.get("currency", "")
+                return result
+
             return LiveOrderResult(
-                success=False,
-                order_id=trade.order.orderId,
+                success=False, order_id=order_id,
                 filled=0, avg_price=0, status=status,
                 exchange_id=self.engine_id,
-                message=f"Order {status}: {'; '.join(error_msgs) or 'rejected by IBKR'}",
-                raw={"orderId": trade.order.orderId, "status": status},
+                message=f"Order timed out in '{status}' with 0 fills after {timeout}s",
+                raw={"orderId": order_id, "status": status, "filled": 0,
+                     "remaining": float(trade.orderStatus.remaining or 0)},
             )
-
-        if status not in self._TERMINAL_STATUSES:
-            logger.warning(
-                "Order %s timed out in status '%s' after %ss (filled=%s)",
-                trade.order.orderId, status, timeout, filled,
-            )
-            if filled <= 0:
-                return LiveOrderResult(
-                    success=False,
-                    order_id=trade.order.orderId,
-                    filled=0, avg_price=0, status=status,
-                    exchange_id=self.engine_id,
-                    message=f"Order timed out in '{status}' with 0 fills after {timeout}s",
-                    raw={
-                        "orderId": trade.order.orderId,
-                        "status": status,
-                        "filled": 0,
-                        "remaining": float(trade.orderStatus.remaining or 0),
-                    },
-                )
-
-        return LiveOrderResult(
-            success=True,
-            order_id=trade.order.orderId,
-            filled=filled, avg_price=avg_price, status=status,
-            exchange_id=self.engine_id,
-            message="Order submitted" if status != "Filled" else "Order filled",
-            raw={
-                "orderId": trade.order.orderId,
-                "status": status,
-                "filled": filled,
-                "remaining": float(trade.orderStatus.remaining or 0),
-            },
-        )
+        finally:
+            self._order_events.pop(order_id, None)
+            self._order_results.pop(order_id, None)
+            self._commission_cache.pop(order_id, None)
 
     # ── RTH check ──────────────────────────────────────────────────
 
     def is_market_open(self, symbol: str, market_type: str = "USStock"):
-        """Check RTH for *symbol* via IBKR — runs on the worker thread.
-
-        Returns (True, "") if within RTH, or (False, reason_string) if closed.
-        Uses the fuse cache so repeated calls during market-closed windows
-        do NOT hit the IBKR gateway.
-        """
         def _do():
             from app.services.live_trading.ibkr_trading.trading_hours import is_rth
             self._ensure_connected()
@@ -338,6 +619,7 @@ class IBKRClient(BaseStatefulClient):
             order = ib_insync.MarketOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, account=self._account,
+                tif="DAY",
             )
             trade = self._ib.placeOrder(contract, order)
             return self._wait_for_order(trade, timeout=30.0)
@@ -367,6 +649,7 @@ class IBKRClient(BaseStatefulClient):
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, lmtPrice=price, account=self._account,
+                tif="DAY",
             )
             trade = self._ib.placeOrder(contract, order)
             return self._wait_for_order(trade, timeout=30.0)

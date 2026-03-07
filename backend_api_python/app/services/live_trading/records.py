@@ -255,6 +255,34 @@ def fetch_local_positions(target_strategy_id: Optional[int] = None) -> List[Dict
     return rows
 
 
+def fetch_strategy_traded_symbols(strategy_id: int) -> set:
+    """Return the set of symbols that a strategy has actually traded (pending_orders + local positions)."""
+    symbols: set = set()
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT DISTINCT symbol FROM qd_pending_orders WHERE strategy_id = %s AND symbol IS NOT NULL",
+                (strategy_id,)
+            )
+            for row in (cur.fetchall() or []):
+                s = str(row.get("symbol") or "").strip()
+                if s:
+                    symbols.add(s)
+            cur.execute(
+                "SELECT DISTINCT symbol FROM qd_strategy_positions WHERE strategy_id = %s AND symbol IS NOT NULL",
+                (strategy_id,)
+            )
+            for row in (cur.fetchall() or []):
+                s = str(row.get("symbol") or "").strip()
+                if s:
+                    symbols.add(s)
+            cur.close()
+    except Exception as e:
+        logger.error("fetch_strategy_traded_symbols failed for strategy %s: %s", strategy_id, e)
+    return symbols
+
+
 def fetch_active_live_strategy_ids() -> List[int]:
     try:
         with get_db_connection() as db:
