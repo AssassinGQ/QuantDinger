@@ -5,6 +5,7 @@ from app.utils.logger import get_logger
 from app.services.live_trading.usmart_trading.config import USmartConfig
 from app.services.live_trading.usmart_trading.auth import USmartAuth
 from app.services.live_trading.usmart_trading.fsm import OrderStateMachine, OrderState, OrderEvent
+from app.services.live_trading.usmart_trading.market_hours import MarketHours
 
 logger = get_logger(__name__)
 
@@ -244,3 +245,24 @@ class USmartClient(BaseRestfulClient):
         if status == 200 and resp.get("code") == 0:
             return resp.get("data", {})
         return {}
+
+    def is_market_open(self, symbol: str = "", market_type: str = "") -> tuple:
+        if not market_type:
+            market_type = self._infer_market_type(symbol)
+        return MarketHours.is_trading_time(market_type)
+
+    def _infer_market_type(self, symbol: str) -> str:
+        if not symbol:
+            return "HKStock"
+        symbol = symbol.upper()
+        if symbol.isdigit():
+            if len(symbol) == 5 and symbol.startswith("0"):
+                return "HKStock"
+            if len(symbol) == 6:
+                if symbol.startswith("6"):
+                    return "AShare"
+                if symbol.startswith("0") or symbol.startswith("3"):
+                    return "AShare"
+        if symbol.startswith(("HK", "0", "3", "6")):
+            return "HKStock"
+        return "USStock"
