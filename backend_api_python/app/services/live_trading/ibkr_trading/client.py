@@ -21,6 +21,7 @@ from queue import Queue
 from app.utils.logger import get_logger
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, format_display_symbol
+from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker
 
 logger = get_logger(__name__)
 
@@ -102,10 +103,8 @@ class IBKRClient(BaseStatefulClient):
         self._worker_thread: Optional[threading.Thread] = None
         self._started = threading.Event()
 
-        # Event-driven order tracking
-        self._order_events: Dict[int, threading.Event] = {}
-        self._order_results: Dict[int, LiveOrderResult] = {}
-        self._commission_cache: Dict[int, Dict[str, Any]] = {}
+        # FSM-based order tracking
+        self._trackers: Dict[int, OrderTracker] = {}
         self._events_registered = False
 
         self._start_worker()
@@ -291,29 +290,16 @@ class IBKRClient(BaseStatefulClient):
             "[IBKR-Event] orderStatus: orderId=%s status=%s filled=%s avgPrice=%s",
             order_id, status, filled, avg_price,
         )
-        if order_id not in self._order_events:
+        tracker = self._trackers.get(order_id)
+        if tracker is None:
             return
-        if status in self._TERMINAL_STATUSES:
-            if status in self._REJECTED_STATUSES and filled <= 0:
-                error_msgs = [e.message for e in (trade.log or []) if e.message]
-                self._order_results[order_id] = LiveOrderResult(
-                    success=False, order_id=order_id,
-                    filled=0, avg_price=0, status=status,
-                    exchange_id=self.engine_id,
-                    message=f"Order {status}: {'; '.join(error_msgs) or 'rejected by IBKR'}",
-                    raw={"orderId": order_id, "status": status},
-                )
-            else:
-                remaining = float(trade.orderStatus.remaining or 0)
-                self._order_results[order_id] = LiveOrderResult(
-                    success=filled > 0,
-                    order_id=order_id,
-                    filled=filled, avg_price=avg_price, status=status,
-                    exchange_id=self.engine_id,
-                    message="Order filled" if status == "Filled" else f"Order {status} (filled={filled})",
-                    raw={"orderId": order_id, "status": status, "filled": filled, "remaining": remaining},
-                )
-            self._order_events[order_id].set()
+        tracker.on_status(
+            status=status,
+            filled=filled,
+            avg_price=avg_price,
+            remaining=float(trade.orderStatus.remaining or 0),
+            error_msgs=[e.message for e in (trade.log or []) if e.message],
+        )
 
     def _on_exec_details(self, trade, fill):
         order_id = trade.order.orderId
@@ -325,19 +311,9 @@ class IBKRClient(BaseStatefulClient):
             order_id, exec_id, fill.execution.side, fill.execution.shares,
             fill.execution.price, filled, avg_price,
         )
-        if order_id in self._order_events and filled > 0:
-            # Update result but do NOT set() event here.
-            # Let _on_order_status with terminal status drive the completion.
-            # This result is used as fallback if we reach timeout with fills > 0.
-            self._order_results[order_id] = LiveOrderResult(
-                success=True, order_id=order_id,
-                filled=filled, avg_price=avg_price,
-                status=trade.orderStatus.status,
-                exchange_id=self.engine_id,
-                message="Order filled (via execDetails)",
-                raw={"orderId": order_id, "execId": exec_id,
-                     "status": trade.orderStatus.status, "filled": filled},
-            )
+        tracker = self._trackers.get(order_id)
+        if tracker is not None and filled > 0:
+            tracker.on_exec_details(filled=filled, avg_price=avg_price, exec_id=exec_id)
 
     def _on_commission_report(self, trade, fill, report):
         order_id = trade.order.orderId
@@ -347,10 +323,12 @@ class IBKRClient(BaseStatefulClient):
             float(report.commission or 0), report.currency or "",
             float(report.realizedPNL or 0),
         )
-        existing = self._commission_cache.get(order_id, {"commission": 0.0, "currency": ""})
-        existing["commission"] = existing.get("commission", 0.0) + float(report.commission or 0)
-        existing["currency"] = report.currency or existing.get("currency", "")
-        self._commission_cache[order_id] = existing
+        tracker = self._trackers.get(order_id)
+        if tracker is not None:
+            tracker.add_commission(
+                commission=float(report.commission or 0),
+                currency=report.currency or "",
+            )
 
     def _on_error(self, reqId, errorCode, errorString, contract):
         sym = getattr(contract, "symbol", "") if contract else ""
@@ -496,86 +474,51 @@ class IBKRClient(BaseStatefulClient):
 
     # ── order waiting (event-driven with timeout fallback) ────────
 
-    def _wait_for_order(self, trade, timeout: float = 30.0) -> LiveOrderResult:
+    _default_grace_sec: float = 3.0
+
+    def _wait_for_order(self, trade, timeout: float = 30.0, grace_sec: float = None) -> LiveOrderResult:
+        if grace_sec is None:
+            grace_sec = self._default_grace_sec
         order_id = trade.order.orderId
-        event = threading.Event()
-        self._order_events[order_id] = event
-        self._order_results.pop(order_id, None)
+        tracker = OrderTracker(order_id=order_id, engine_id=self.engine_id)
+        self._trackers[order_id] = tracker
 
         try:
-            # If already terminal when placeOrder returns synchronously
+            # If already non-initial when placeOrder returns synchronously
             status = trade.orderStatus.status
-            if status in self._TERMINAL_STATUSES:
-                self._on_order_status(trade)
+            if status != "PendingSubmit":
+                tracker.on_status(
+                    status=status,
+                    filled=float(trade.orderStatus.filled or 0),
+                    avg_price=float(trade.orderStatus.avgFillPrice or 0),
+                    remaining=float(trade.orderStatus.remaining or 0),
+                    error_msgs=[e.message for e in (trade.log or []) if e.message],
+                )
 
-            # Pump ib_insync event loop in short intervals so callbacks fire,
-            # while checking our threading.Event between pumps.
             deadline = time.monotonic() + timeout
-            while not event.is_set() and time.monotonic() < deadline:
+            while time.monotonic() < deadline:
+                if tracker.is_done(grace_sec=grace_sec):
+                    break
                 remaining = min(0.5, deadline - time.monotonic())
                 if remaining <= 0:
                     break
                 self._ib.sleep(remaining)
 
-            if event.is_set():
-                result = self._order_results.get(order_id)
-                if result is not None:
-                    # Drain: pump once more to collect trailing commission reports
-                    try:
-                        self._ib.sleep(0.2)
-                    except Exception:
-                        pass
-                    comm = self._commission_cache.pop(order_id, None)
-                    if comm:
-                        result.fee = comm.get("commission", 0.0)
-                        result.fee_ccy = comm.get("currency", "")
-                    return result
-
-            # Timeout: use execDetails fallback or check trade state
-            exec_result = self._order_results.get(order_id)
-            filled = float(trade.orderStatus.filled or 0)
-            avg_price = float(trade.orderStatus.avgFillPrice or 0)
-            status = trade.orderStatus.status
-
-            logger.warning(
-                "Order %s timed out in status '%s' after %ss (filled=%s, has_exec_result=%s)",
-                order_id, status, timeout, filled, exec_result is not None,
-            )
-
-            if exec_result is not None and exec_result.filled > 0:
-                comm = self._commission_cache.pop(order_id, None)
-                if comm:
-                    exec_result.fee = comm.get("commission", 0.0)
-                    exec_result.fee_ccy = comm.get("currency", "")
-                return exec_result
-
-            if filled > 0:
-                result = LiveOrderResult(
-                    success=True, order_id=order_id,
-                    filled=filled, avg_price=avg_price, status=status,
-                    exchange_id=self.engine_id,
-                    message=f"Order partial fill (timeout, filled={filled})",
-                    raw={"orderId": order_id, "status": status, "filled": filled,
-                         "remaining": float(trade.orderStatus.remaining or 0)},
+            # Drain: pump once more to collect trailing commission reports
+            if tracker.is_done(grace_sec=grace_sec):
+                try:
+                    self._ib.sleep(0.2)
+                except Exception:
+                    pass
+            else:
+                logger.warning(
+                    "Order %s timed out in status '%s' after %ss (filled=%s)",
+                    order_id, tracker.current_status, timeout, tracker.filled,
                 )
-                comm = self._commission_cache.pop(order_id, None)
-                if comm:
-                    result.fee = comm.get("commission", 0.0)
-                    result.fee_ccy = comm.get("currency", "")
-                return result
 
-            return LiveOrderResult(
-                success=False, order_id=order_id,
-                filled=0, avg_price=0, status=status,
-                exchange_id=self.engine_id,
-                message=f"Order timed out in '{status}' with 0 fills after {timeout}s",
-                raw={"orderId": order_id, "status": status, "filled": 0,
-                     "remaining": float(trade.orderStatus.remaining or 0)},
-            )
+            return tracker.to_result()
         finally:
-            self._order_events.pop(order_id, None)
-            self._order_results.pop(order_id, None)
-            self._commission_cache.pop(order_id, None)
+            self._trackers.pop(order_id, None)
 
     # ── RTH check ──────────────────────────────────────────────────
 
