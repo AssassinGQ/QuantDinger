@@ -100,7 +100,6 @@ def _make_client_with_mock_ib():
     # FSM-based order tracking state
     client._trackers = {}
     client._events_registered = False
-    client._default_grace_sec = 0
 
     original_submit = IBKRClient._submit
 
@@ -341,13 +340,13 @@ class TestWaitForOrder:
         assert result.status == "Filled"
 
     def test_cancelled_returns_failure(self):
-        """Cancelled with 0 fills → failure (after grace period)."""
+        """Cancelled with 0 fills → waits for timeout → failure."""
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(
             status="Cancelled", filled=0, avg_price=0,
             log_messages=["Error 10349: Order TIF was set to DAY"]
         )
-        result = client._wait_for_order(trade, timeout=5.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=0.5)
         assert result.success is False
         assert result.status == "Cancelled"
         assert "10349" in result.message
@@ -370,7 +369,7 @@ class TestWaitForOrder:
             status="Inactive", filled=0, avg_price=0,
             log_messages=["Order rejected"]
         )
-        result = client._wait_for_order(trade, timeout=5.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=5.0)
         assert result.success is False
         assert result.status == "Inactive"
 
@@ -380,21 +379,21 @@ class TestWaitForOrder:
             status="ApiError", filled=0, avg_price=0,
             log_messages=["Error 10243: Fractional-sized order cannot be placed"]
         )
-        result = client._wait_for_order(trade, timeout=5.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=5.0)
         assert result.success is False
         assert "10243" in result.message
 
     def test_validation_error_returns_failure(self):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="ValidationError", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=5.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=5.0)
         assert result.success is False
         assert result.status == "ValidationError"
 
     def test_api_cancelled_returns_failure(self):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="ApiCancelled", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=5.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=5.0)
         assert result.success is False
         assert result.status == "ApiCancelled"
 
@@ -459,7 +458,7 @@ class TestWaitForOrder:
     def test_empty_log_on_rejection(self):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=5.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=0.5)
         assert result.success is False
         assert "rejected by IBKR" in result.message
 
@@ -660,8 +659,8 @@ class TestEventCallbacks:
         assert tracker.current_status == "Filled"
         assert tracker.filled == 10.0
 
-    def test_on_order_status_cancelled_enters_grace(self):
-        """Cancelled with 0 fills enters grace period, not immediate done."""
+    def test_on_order_status_cancelled_not_done(self):
+        """Cancelled with 0 fills is NOT done — can still recover."""
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0,
                                   log_messages=["Error 10349: TIF set to DAY"])
@@ -673,7 +672,6 @@ class TestEventCallbacks:
         client._on_order_status(trade)
 
         assert not tracker.done_event.is_set()
-        assert tracker._cancelled_at is not None
         assert tracker.current_status == "Cancelled"
 
     def test_on_order_status_cancelled_with_fill_is_success(self):
@@ -974,7 +972,7 @@ class TestMockIBGatewayScenarios:
         ]
         client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
 
-        result = client._wait_for_order(trade, timeout=10.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=10.0)
         assert result.success is False
         assert result.status == "Inactive"
         assert "rejected" in result.message.lower()
@@ -991,7 +989,7 @@ class TestMockIBGatewayScenarios:
         ]
         client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
 
-        result = client._wait_for_order(trade, timeout=10.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=0.5)
         assert result.success is False
         assert result.status == "Cancelled"
         assert "10349" in result.message
@@ -1017,7 +1015,7 @@ class TestMockIBGatewayScenarios:
         ]
         client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
 
-        result = client._wait_for_order(trade, timeout=10.0, grace_sec=10.0)
+        result = client._wait_for_order(trade, timeout=10.0)
         assert result.success is True
         assert result.filled == 1.0
         assert result.avg_price == 300.6
@@ -1057,7 +1055,7 @@ class TestMockIBGatewayScenarios:
         ]
         client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
 
-        result = client._wait_for_order(trade, timeout=10.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=10.0)
         assert result.success is False
         assert "10243" in result.message
 
@@ -1162,7 +1160,7 @@ class TestMockIBGatewayScenarios:
         ]
         client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
 
-        result = client._wait_for_order(trade, timeout=10.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=10.0)
         assert result.success is False
         assert result.status == "ValidationError"
 
@@ -1182,13 +1180,13 @@ class TestMockIBGatewayScenarios:
         ]
         client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
 
-        result = client._wait_for_order(trade, timeout=1.5, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=1.5)
         assert result.success is True
         assert result.filled == 10.0
         assert "timeout" in result.message.lower()
 
-    def test_scenario_cancelled_grace_expired(self):
-        """Cancelled(filled=0) with no recovery → grace expires → failure."""
+    def test_scenario_cancelled_no_recovery_timeout(self):
+        """Cancelled(filled=0) with no recovery → timeout → failure."""
         client = _make_client_with_mock_ib()
         trade = _make_stateful_trade(order_id=214)
 
@@ -1199,12 +1197,12 @@ class TestMockIBGatewayScenarios:
         ]
         client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
 
-        result = client._wait_for_order(trade, timeout=5.0, grace_sec=0)
+        result = client._wait_for_order(trade, timeout=0.5)
         assert result.success is False
         assert result.status == "Cancelled"
 
-    def test_scenario_cancelled_grace_then_recovery(self):
-        """Cancelled → [within grace] → PreSubmitted → Filled → success."""
+    def test_scenario_cancelled_then_recovery(self):
+        """Cancelled → PreSubmitted → Filled → success (no grace needed)."""
         client = _make_client_with_mock_ib()
         trade = _make_stateful_trade(order_id=215)
 
@@ -1217,7 +1215,7 @@ class TestMockIBGatewayScenarios:
         ]
         client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
 
-        result = client._wait_for_order(trade, timeout=10.0, grace_sec=10.0)
+        result = client._wait_for_order(trade, timeout=10.0)
         assert result.success is True
         assert result.filled == 10.0
         assert result.status == "Filled"

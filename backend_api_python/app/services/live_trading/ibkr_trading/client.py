@@ -474,11 +474,7 @@ class IBKRClient(BaseStatefulClient):
 
     # ── order waiting (event-driven with timeout fallback) ────────
 
-    _default_grace_sec: float = 3.0
-
-    def _wait_for_order(self, trade, timeout: float = 30.0, grace_sec: float = None) -> LiveOrderResult:
-        if grace_sec is None:
-            grace_sec = self._default_grace_sec
+    def _wait_for_order(self, trade, timeout: float = 30.0) -> LiveOrderResult:
         order_id = trade.order.orderId
         tracker = OrderTracker(order_id=order_id, engine_id=self.engine_id)
         self._trackers[order_id] = tracker
@@ -497,7 +493,7 @@ class IBKRClient(BaseStatefulClient):
 
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
-                if tracker.is_done(grace_sec=grace_sec):
+                if tracker.is_done():
                     break
                 remaining = min(0.5, deadline - time.monotonic())
                 if remaining <= 0:
@@ -505,7 +501,7 @@ class IBKRClient(BaseStatefulClient):
                 self._ib.sleep(remaining)
 
             # Drain: pump once more to collect trailing commission reports
-            if tracker.is_done(grace_sec=grace_sec):
+            if tracker.is_done():
                 try:
                     self._ib.sleep(0.2)
                 except Exception:

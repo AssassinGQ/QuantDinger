@@ -4,14 +4,12 @@ Pure unit tests for OrderTracker FSM logic.
 No mock IB or threading involved — just state transitions and result generation.
 """
 import time
-from unittest.mock import patch
 
 import pytest
 
 from app.services.live_trading.ibkr_trading.order_tracker import (
     OrderTracker,
     HARD_TERMINAL,
-    SOFT_TERMINAL,
     ACTIVE,
 )
 
@@ -20,16 +18,14 @@ class TestStatusSets:
     def test_hard_terminal(self):
         assert HARD_TERMINAL == {"Filled", "Inactive", "ApiError", "ApiCancelled", "ValidationError"}
 
-    def test_soft_terminal(self):
-        assert SOFT_TERMINAL == {"Cancelled"}
+    def test_cancelled_is_active(self):
+        assert "Cancelled" in ACTIVE
 
-    def test_active(self):
-        assert ACTIVE == {"PendingSubmit", "PreSubmitted", "Submitted", "PendingCancel"}
+    def test_active_includes_all_non_terminal(self):
+        assert ACTIVE == {"PendingSubmit", "PreSubmitted", "Submitted", "PendingCancel", "Cancelled"}
 
     def test_no_overlap(self):
-        assert not (HARD_TERMINAL & SOFT_TERMINAL)
         assert not (HARD_TERMINAL & ACTIVE)
-        assert not (SOFT_TERMINAL & ACTIVE)
 
 
 class TestNormalFlows:
@@ -106,28 +102,16 @@ class TestRejections:
         assert r.status == "ValidationError"
 
 
-class TestCancelledGracePeriod:
-    def test_cancelled_zero_fill_not_immediate_done(self):
-        """Cancelled with filled=0 should NOT be immediately done (grace period)."""
+class TestCancelledIsNotTerminal:
+    def test_cancelled_zero_fill_is_not_done(self):
+        """Cancelled with filled=0 is NOT done — it can still recover."""
         t = OrderTracker(order_id=20)
         t.on_status("Submitted", 0, 0, 10)
         t.on_status("Cancelled", 0, 0, 10, error_msgs=["Error 10349"])
-        assert not t.is_done(grace_sec=3.0)
-        assert t._cancelled_at is not None
+        assert not t.is_done()
 
-    def test_cancelled_zero_fill_done_after_grace(self):
-        """After grace period expires, Cancelled is confirmed as failure."""
-        t = OrderTracker(order_id=21)
-        t.on_status("Cancelled", 0, 0, 10, error_msgs=["Error 10349"])
-        t._cancelled_at = time.monotonic() - 5.0
-        assert t.is_done(grace_sec=3.0)
-        r = t.to_result()
-        assert r.success is False
-        assert r.status == "Cancelled"
-        assert "10349" in r.message
-
-    def test_cancelled_with_fill_immediate_done(self):
-        """Cancelled but filled > 0 should be immediately done (success)."""
+    def test_cancelled_with_fill_is_done(self):
+        """Cancelled but filled > 0 is done (partial fill then cancel)."""
         t = OrderTracker(order_id=22)
         t.on_status("Submitted", 0, 0, 10)
         t.on_status("Cancelled", 3.0, 175.0, 7)
@@ -136,17 +120,24 @@ class TestCancelledGracePeriod:
         assert r.success is True
         assert r.filled == 3.0
 
+    def test_cancelled_zero_fill_result_is_failure(self):
+        """When timeout expires while in Cancelled(filled=0), result is failure."""
+        t = OrderTracker(order_id=23)
+        t.on_status("Cancelled", 0, 0, 10, error_msgs=["Error 10349: TIF set to DAY"])
+        r = t.to_result()
+        assert r.success is False
+        assert r.status == "Cancelled"
+        assert "10349" in r.message
+
 
 class TestCancelledRecovery:
     def test_cancelled_then_presubmitted_then_filled(self):
         """The GOOGL incident: Cancelled → PreSubmitted → Filled should succeed."""
         t = OrderTracker(order_id=30)
         t.on_status("Cancelled", 0, 0, 10, error_msgs=["Error 10349"])
-        assert not t.is_done(grace_sec=3.0)
-        assert t._cancelled_at is not None
+        assert not t.is_done()
 
         t.on_status("PreSubmitted", 0, 0, 10)
-        assert t._cancelled_at is None
         assert not t.is_done()
 
         t.on_status("Submitted", 0, 0, 10)
@@ -163,10 +154,9 @@ class TestCancelledRecovery:
         """Cancelled → Submitted (skip PreSubmitted) → Filled."""
         t = OrderTracker(order_id=31)
         t.on_status("Cancelled", 0, 0, 10)
-        assert t._cancelled_at is not None
+        assert not t.is_done()
 
         t.on_status("Submitted", 0, 0, 10)
-        assert t._cancelled_at is None
         assert not t.is_done()
 
         t.on_status("Filled", 10, 180.0, 0)
@@ -178,7 +168,7 @@ class TestCancelledRecovery:
         """Cancelled → Filled (rare but possible)."""
         t = OrderTracker(order_id=32)
         t.on_status("Cancelled", 0, 0, 10)
-        assert not t.is_done(grace_sec=3.0)
+        assert not t.is_done()
 
         t.on_status("Filled", 10, 185.0, 0)
         assert t.is_done()
@@ -310,8 +300,6 @@ class TestToResult:
     def test_cancelled_no_fill_error_message(self):
         t = OrderTracker(order_id=84)
         t.on_status("Cancelled", 0, 0, 10, error_msgs=["Error 10349: TIF set to DAY"])
-        t._cancelled_at = time.monotonic() - 10
-        t.is_done(grace_sec=3.0)
         r = t.to_result()
         assert r.success is False
         assert "10349" in r.message
@@ -319,8 +307,6 @@ class TestToResult:
     def test_cancelled_no_fill_no_error(self):
         t = OrderTracker(order_id=85)
         t.on_status("Cancelled", 0, 0, 10)
-        t._cancelled_at = time.monotonic() - 10
-        t.is_done(grace_sec=3.0)
         r = t.to_result()
         assert r.success is False
         assert "rejected by IBKR" in r.message

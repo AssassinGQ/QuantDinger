@@ -4,6 +4,10 @@ OrderTracker: explicit FSM for IBKR order lifecycle.
 Handles the non-obvious Cancelled → PreSubmitted → Filled recovery path
 that can occur in IB Gateway (especially Paper Trading and around market
 open/close boundaries).
+
+Cancelled is NOT a terminal state — IBKR can recover from it.
+Only HARD_TERMINAL states are truly irreversible.
+The overall timeout in _wait_for_order is what ultimately ends tracking.
 """
 
 import time
@@ -20,10 +24,9 @@ HARD_TERMINAL = frozenset({
     "Filled", "Inactive", "ApiError", "ApiCancelled", "ValidationError",
 })
 
-SOFT_TERMINAL = frozenset({"Cancelled"})
-
 ACTIVE = frozenset({
     "PendingSubmit", "PreSubmitted", "Submitted", "PendingCancel",
+    "Cancelled",
 })
 
 
@@ -49,9 +52,6 @@ class OrderTracker:
 
     # Completion signal
     done_event: threading.Event = field(default_factory=threading.Event)
-
-    # Grace period tracking for Cancelled recovery
-    _cancelled_at: Optional[float] = field(default=None, repr=False)
 
     def on_status(
         self,
@@ -85,24 +85,18 @@ class OrderTracker:
         )
 
         if status in HARD_TERMINAL:
-            self._cancelled_at = None
             self.done_event.set()
             return
 
-        if status == "Cancelled":
-            if filled > 0:
-                self.done_event.set()
-            else:
-                self._cancelled_at = time.monotonic()
+        if status == "Cancelled" and filled > 0:
+            self.done_event.set()
             return
 
-        # Recovery from Cancelled (PreSubmitted / Submitted / etc.)
         if prev == "Cancelled" and status in ACTIVE:
             logger.info(
                 "[OrderTracker] order=%s RECOVERED from Cancelled → %s",
                 self.order_id, status,
             )
-            self._cancelled_at = None
 
     def on_exec_details(self, filled: float, avg_price: float, exec_id: str = "") -> None:
         """Update fill data from execDetailsEvent. Does NOT drive state transitions."""
@@ -121,14 +115,8 @@ class OrderTracker:
         if currency:
             self.commission_ccy = currency
 
-    def is_done(self, grace_sec: float = 3.0) -> bool:
-        if self.done_event.is_set():
-            return True
-        if self._cancelled_at is not None:
-            if time.monotonic() - self._cancelled_at >= grace_sec:
-                self.done_event.set()
-                return True
-        return False
+    def is_done(self) -> bool:
+        return self.done_event.is_set()
 
     def to_result(self) -> LiveOrderResult:
         """Convert current tracker state to a LiveOrderResult."""
@@ -141,7 +129,7 @@ class OrderTracker:
             message = "Order filled"
         elif status in HARD_TERMINAL:
             success = False
-            error_str = "; ".join(self.error_messages) if self.error_messages else f"rejected by IBKR"
+            error_str = "; ".join(self.error_messages) if self.error_messages else "rejected by IBKR"
             message = f"Order {status}: {error_str}"
         elif status == "Cancelled":
             if filled > 0:
@@ -158,7 +146,7 @@ class OrderTracker:
             success = False
             message = f"Order timed out in '{status}' with 0 fills"
 
-        result = LiveOrderResult(
+        return LiveOrderResult(
             success=success,
             order_id=self.order_id,
             filled=filled,
@@ -175,4 +163,3 @@ class OrderTracker:
             fee=self.commission,
             fee_ccy=self.commission_ccy,
         )
-        return result
