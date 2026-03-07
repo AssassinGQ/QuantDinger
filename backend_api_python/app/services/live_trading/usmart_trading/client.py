@@ -1,9 +1,10 @@
-from typing import Optional
+from typing import Dict, Optional
 
-from app.services.live_trading.base import BaseRestfulClient
+from app.services.live_trading.base import BaseRestfulClient, LiveOrderResult
 from app.utils.logger import get_logger
 from app.services.live_trading.usmart_trading.config import USmartConfig
 from app.services.live_trading.usmart_trading.auth import USmartAuth
+from app.services.live_trading.usmart_trading.fsm import OrderStateMachine, OrderState, OrderEvent
 
 logger = get_logger(__name__)
 
@@ -22,6 +23,7 @@ class USmartClient(BaseRestfulClient):
             channel_id=config.channel_id,
             lang=config.lang
         )
+        self._order_fsm: Dict[str, OrderStateMachine] = {}
         super().__init__(base_url=config.base_url, timeout_sec=config.timeout)
 
     def connect(self) -> bool:
@@ -42,6 +44,7 @@ class USmartClient(BaseRestfulClient):
     def disconnect(self) -> None:
         self._token = None
         self._account_info = None
+        self._order_fsm.clear()
         logger.info("USmart disconnected")
 
     @property
@@ -83,3 +86,115 @@ class USmartClient(BaseRestfulClient):
         if self._token:
             headers["X-Token"] = self._token
         return headers
+
+    def map_signal_to_side(self, signal_type: str) -> str:
+        signal = signal_type.lower()
+        if signal in ("open_long", "add_long"):
+            return "buy"
+        if signal in ("close_long", "reduce_long"):
+            return "sale"
+        if signal == "open_short":
+            raise ValueError("uSMART 不支持做空")
+        if signal == "close_short":
+            raise ValueError("uSMART 不支持做空")
+        raise ValueError(f"Unsupported signal: {signal_type}")
+
+    def place_market_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        market_type: str = "",
+        **kwargs
+    ) -> LiveOrderResult:
+        del side, kwargs
+        return self.place_limit_order(
+            symbol=symbol,
+            side="buy",
+            quantity=quantity,
+            price=0,
+            market_type=market_type,
+            entrust_prop="e"
+        )
+
+    def place_limit_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        market_type: str = "",
+        entrust_prop: str = "e"
+    ) -> LiveOrderResult:
+        exchange_type = self._get_exchange_type(market_type)
+
+        payload = {
+            "exchangeType": exchange_type,
+            "stockCode": symbol,
+            "entrustAmount": int(quantity),
+            "entrustPrice": price,
+            "entrustProp": entrust_prop,
+            "entrustDirection": side,
+        }
+
+        headers = self._build_auth_headers("/stock-order-server/open-api/trade", payload)
+        status, resp, _ = self._request(
+            "POST",
+            "/stock-order-server/open-api/trade",
+            json_body=payload,
+            headers=headers
+        )
+
+        if status == 200 and resp.get("code") == 0:
+            data = resp.get("data", {})
+            exchange_order_id = data.get("entrustId", "")
+
+            fsm = OrderStateMachine(exchange_order_id)
+            fsm.transition(OrderEvent.SUBMIT)
+            self._order_fsm[exchange_order_id] = fsm
+
+            return LiveOrderResult(
+                success=True,
+                exchange_id=self.engine_id,
+                exchange_order_id=exchange_order_id,
+                filled=0,
+                avg_price=price,
+                status="submitted",
+                message="订单已提交"
+            )
+
+        return LiveOrderResult(
+            success=False,
+            exchange_id=self.engine_id,
+            message=resp.get("msg", "下单失败")
+        )
+
+    def cancel_order(self, order_id: int) -> bool:
+        payload = {
+            "entrustId": str(order_id),
+        }
+
+        headers = self._build_auth_headers("/stock-order-server/open-api/cancel-entrust", payload)
+        status, resp, _ = self._request(
+            "POST",
+            "/stock-order-server/open-api/cancel-entrust",
+            json_body=payload,
+            headers=headers
+        )
+
+        if status == 200 and resp.get("code") == 0:
+            fsm = self._order_fsm.get(str(order_id))
+            if fsm:
+                fsm.transition(OrderEvent.CANCEL)
+            return True
+        return False
+
+    def get_order_state(self, order_id: str) -> Optional[OrderState]:
+        fsm = self._order_fsm.get(order_id)
+        return fsm.state if fsm else None
+
+    def update_order_state(self, order_id: str, event: OrderEvent) -> bool:
+        fsm = self._order_fsm.get(order_id)
+        if fsm:
+            return fsm.transition(event)
+        return False
