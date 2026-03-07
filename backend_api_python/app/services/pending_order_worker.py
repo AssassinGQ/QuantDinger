@@ -19,7 +19,7 @@ from app.services.exchange_execution import load_strategy_configs, resolve_excha
 from app.services.live_trading import records
 from app.services.live_trading.factory import create_client, get_runner
 from app.services.live_trading.base import (
-    BaseStatefulClient, LiveTradingError, OrderContext, ExecutionResult,
+    BaseStatefulClient, OrderContext, ExecutionResult,
 )
 from app.services.live_trading.runners import SignalRunner
 from app.utils.console import console_print
@@ -43,11 +43,7 @@ class PendingOrderWorker:
         except Exception:
             self._stale_processing_sec = 90
 
-        # Position sync self-check (best-effort): keep local positions aligned with exchange.
-        self._position_sync_enabled = os.getenv("POSITION_SYNC_ENABLED", "true").lower() == "true"
-        self._position_sync_interval_sec = float(os.getenv("POSITION_SYNC_INTERVAL_SEC", "10"))
-        self._last_position_sync_ts = 0.0
-        logger.info(f"PendingOrderWorker: sync_enabled={self._position_sync_enabled}, interval={self._position_sync_interval_sec}s")
+        logger.info("PendingOrderWorker initialized")
 
     def start(self) -> bool:
         with self._lock:
@@ -81,7 +77,6 @@ class PendingOrderWorker:
             stale_processing_sec=self._stale_processing_sec,
         )
         if not orders:
-            self._maybe_sync_positions()
             return
 
         for o in orders:
@@ -96,181 +91,6 @@ class PendingOrderWorker:
                 self._dispatch_one(o)
             except Exception as e:
                 records.mark_order_failed(order_id=int(oid), error=str(e))
-
-        self._maybe_sync_positions()
-
-    def _maybe_sync_positions(self) -> None:
-        if not self._position_sync_enabled:
-            return
-        now = time.time()
-        if self._position_sync_interval_sec <= 0:
-            return
-        if now - float(self._last_position_sync_ts or 0.0) < float(self._position_sync_interval_sec):
-            return
-        logger.debug(f"[PendingOrderWorker] Triggering sync... (now={now}, last={self._last_position_sync_ts})")
-        self._last_position_sync_ts = now
-        try:
-            self._sync_positions_best_effort()
-        except Exception as e:
-            logger.debug(f"position sync skipped/failed: {e}")
-
-    def _sync_positions_best_effort(self, target_strategy_id: Optional[int] = None) -> None:
-        """
-        Best-effort reconciliation:
-        - If exchange position is flat, delete local row from qd_strategy_positions.
-        - If exchange position size differs, update local size (optional best-effort).
-
-        This prevents "ghost positions" when positions are closed externally on the exchange.
-        """
-        logger.debug(f"[PositionSync] Entering _sync_positions_best_effort for target={target_strategy_id}")
-        rows = records.fetch_local_positions(target_strategy_id)
-
-        sid_to_rows: Dict[int, List[Dict[str, Any]]] = {}
-        for r in rows:
-            sid = int(r.get("strategy_id") or 0)
-            if sid <= 0:
-                continue
-            sid_to_rows.setdefault(sid, []).append(r)
-
-        if target_strategy_id and target_strategy_id not in sid_to_rows:
-            sid_to_rows[target_strategy_id] = []
-
-        active_ids = records.fetch_active_live_strategy_ids()
-        logger.debug(f"[PositionSync] Found {len(active_ids)} active live strategies in DB.")
-        for _sid in active_ids:
-            if _sid > 0 and _sid not in sid_to_rows:
-                if target_strategy_id and target_strategy_id != _sid:
-                    continue
-                sid_to_rows[_sid] = []
-
-        for sid, plist in sid_to_rows.items():
-            if target_strategy_id and sid != target_strategy_id:
-                continue
-            try:
-                sc = load_strategy_configs(int(sid))
-                exec_mode = (sc.get("execution_mode") or "").strip().lower()
-                if exec_mode != "live":
-                    logger.debug(f"[PositionSync] Strategy {sid} skipped: execution_mode='{exec_mode}' (needs 'live')")
-                    continue
-                exchange_config = resolve_exchange_config(sc.get("exchange_config") or {})
-                safe_cfg = safe_exchange_config_for_log(exchange_config)
-                market_type = (sc.get("market_type") or exchange_config.get("market_type") or "swap")
-                market_type = str(market_type or "swap").strip().lower()
-                if market_type in ("futures", "future", "perp", "perpetual"):
-                    market_type = "swap"
-
-                client = create_client(exchange_config, market_type=market_type)
-
-                try:
-                    runner = get_runner(client)
-                except LiveTradingError:
-                    logger.debug(f"position sync: skip unsupported client: sid={sid}, client={type(client)}")
-                    continue
-                exch_size, exch_entry_price = runner.sync_positions(
-                    client=client, exchange_config=exchange_config, market_type=market_type,
-                )
-
-                pos_summary_parts = []
-                for _sym, _sides in exch_size.items():
-                    for _side_key, _qty in _sides.items():
-                        if _qty > 0:
-                            _ep = exch_entry_price.get(_sym, {}).get(_side_key, 0.0)
-                            pos_summary_parts.append(f"{_sym} {_side_key} size={_qty} entry={_ep}")
-
-                if pos_summary_parts:
-                    logger.info(f"[PositionSync] Strategy {sid} ({safe_cfg.get('exchange_id', 'unknown')}) positions: {'; '.join(pos_summary_parts)}")
-                else:
-                    logger.info(f"[PositionSync] Strategy {sid} ({safe_cfg.get('exchange_id', 'unknown')}) has NO positions on exchange.")
-
-                # For stateful clients (IBKR), only sync positions for symbols
-                # this strategy has actually filled, to prevent ghost positions
-                # when multiple strategies share one broker account.
-                is_stateful = isinstance(client, BaseStatefulClient)
-                traded_symbols: Optional[set] = None
-                if is_stateful:
-                    traded_symbols = records.fetch_strategy_traded_symbols(sid)
-                    logger.debug(f"[PositionSync] Strategy {sid} traded_symbols={traded_symbols}")
-
-                to_delete_ids: List[int] = []
-                to_update: List[Dict[str, Any]] = []
-                eps = 1e-12
-
-                for r in plist:
-                    rid = int(r.get("id") or 0)
-                    sym = str(r.get("symbol") or "").strip()
-                    side = str(r.get("side") or "").strip().lower()
-                    if not rid or not sym or side not in ("long", "short"):
-                        continue
-
-                    if traded_symbols is not None and sym not in traded_symbols:
-                        logger.info(f"[PositionSync] -> DELETE ghost position ID={rid} {sym} {side}: not in traded_symbols for strategy {sid}")
-                        to_delete_ids.append(rid)
-                        continue
-
-                    try:
-                        local_size = float(r.get("size") or 0.0)
-                    except Exception:
-                        local_size = 0.0
-
-                    exch = exch_size.get(sym) or {}
-                    exch_qty = float(exch.get(side) or 0.0)
-                    exch_ep_map = exch_entry_price.get(sym) or {}
-                    exch_price = float(exch_ep_map.get(side) or 0.0)
-                    try:
-                        local_price = float(r.get("entry_price") or 0.0)
-                    except Exception:
-                        local_price = 0.0
-                    logger.debug(f"[PositionSync] Check ID={rid} {sym} {side}: local_sz={local_size} px={local_price}, exch_sz={exch_qty} px={exch_price}")
-
-                    if exch_qty <= eps:
-                        to_delete_ids.append(rid)
-                    else:
-                        price_diff_ratio = 0.0
-                        if local_price > 0:
-                            price_diff_ratio = abs(exch_price - local_price) / local_price
-                        else:
-                            price_diff_ratio = 1.0 if exch_price > 0 else 0.0
-
-                        if (local_size <= 0 or abs(exch_qty - local_size) / max(1.0, local_size) > 0.01) or (price_diff_ratio > 0.005):
-                            logger.info(f"[PositionSync] -> Flagged for UPDATE: {sym} (local_sz={local_size}->{exch_qty}, px={local_price}->{exch_price})")
-                            to_update.append({"id": rid, "size": exch_qty, "entry_price": exch_price})
-
-                to_insert: List[Dict[str, Any]] = []
-                local_symbols_sides = {(str(r.get("symbol") or "").strip(), str(r.get("side") or "").strip().lower()) for r in plist}
-
-                for _sym, _sides_map in exch_size.items():
-                    for _side, _qty in _sides_map.items():
-                        if _qty > 1e-12 and (_sym, _side) not in local_symbols_sides:
-                            if traded_symbols is not None and _sym not in traded_symbols:
-                                logger.debug(f"[PositionSync] -> Skipping INSERT {_sym} {_side}: not in traded_symbols for strategy {sid}")
-                                continue
-                            _ep = exch_entry_price.get(_sym, {}).get(_side, 0.0)
-                            to_insert.append({
-                                "strategy_id": sid,
-                                "symbol": _sym,
-                                "side": _side,
-                                "size": _qty,
-                                "entry_price": _ep
-                            })
-                            logger.info(f"[PositionSync] -> Flagged for INSERT: {_sym} {_side} size={_qty} entry={_ep}")
-
-                if not to_delete_ids and not to_update and not to_insert:
-                    continue
-
-                records.reconcile_positions(
-                    to_delete_ids=to_delete_ids,
-                    to_update=to_update,
-                    to_insert=to_insert,
-                )
-
-                if to_delete_ids:
-                    logger.debug(f"position sync: removed {len(to_delete_ids)} ghost positions for strategy_id={sid}")
-                if to_update:
-                    logger.debug(f"position sync: updated {len(to_update)} positions for strategy_id={sid}")
-                if to_insert:
-                    logger.debug(f"position sync: inserted {len(to_insert)} new positions for strategy_id={sid}")
-            except Exception as e:
-                logger.error(f"position sync: strategy_id={sid} failed: {e}", exc_info=True)
 
     def _dispatch_one(self, order_row: Dict[str, Any]) -> None:
         order_id = int(order_row["id"])
@@ -549,12 +369,6 @@ class PendingOrderWorker:
                     error=cat_err,
                 )
                 return
-
-        try:
-            logger.info(f"[Sync] Triggering pre-execution sync for strategy {strategy_id} before order {order_id}")
-            self._sync_positions_best_effort(target_strategy_id=strategy_id)
-        except Exception as e:
-            logger.warning(f"Pre-execution sync failed: {e}")
 
         runner = get_runner(client)
         ctx = OrderContext(
