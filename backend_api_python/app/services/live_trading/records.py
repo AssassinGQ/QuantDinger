@@ -262,7 +262,7 @@ def fetch_strategy_traded_symbols(strategy_id: int) -> set:
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
-                "SELECT DISTINCT symbol FROM qd_pending_orders WHERE strategy_id = %s AND symbol IS NOT NULL",
+                "SELECT DISTINCT symbol FROM pending_orders WHERE strategy_id = %s AND symbol IS NOT NULL",
                 (strategy_id,)
             )
             for row in (cur.fetchall() or []):
