@@ -198,3 +198,49 @@ class USmartClient(BaseRestfulClient):
         if fsm:
             return fsm.transition(event)
         return False
+
+    def get_positions(self) -> list:
+        headers = self._build_auth_headers("/stock-order-server/open-api/stock-holding", {})
+        status, resp, _ = self._request(
+            "POST",
+            "/stock-order-server/open-api/stock-holding",
+            headers=headers
+        )
+        if status == 200 and resp.get("code") == 0:
+            return resp.get("data", {}).get("list", [])
+        return []
+
+    def get_positions_normalized(self) -> list:
+        positions = self.get_positions()
+        records = []
+        for pos in positions:
+            records.append({
+                "symbol": pos.get("stockCode", ""),
+                "side": "long",
+                "quantity": float(pos.get("holdAmount", 0)),
+                "entry_price": float(pos.get("costPrice", 0)),
+                "raw": pos
+            })
+        return records
+
+    def get_open_orders(self) -> list:
+        headers = self._build_auth_headers("/stock-order-server/open-api/entrust-list", {})
+        status, resp, _ = self._request(
+            "POST",
+            "/stock-order-server/open-api/entrust-list",
+            headers=headers
+        )
+        if status == 200 and resp.get("code") == 0:
+            return resp.get("data", {}).get("list", [])
+        return []
+
+    def get_account_summary(self) -> dict:
+        headers = self._build_auth_headers("/stock-order-server/open-api/stock-asset", {})
+        status, resp, _ = self._request(
+            "POST",
+            "/stock-order-server/open-api/stock-asset",
+            headers=headers
+        )
+        if status == 200 and resp.get("code") == 0:
+            return resp.get("data", {})
+        return {}
