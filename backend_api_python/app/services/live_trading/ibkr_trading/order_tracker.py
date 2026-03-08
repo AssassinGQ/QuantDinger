@@ -53,6 +53,15 @@ class OrderTracker:
     # Completion signal
     done_event: threading.Event = field(default_factory=threading.Event)
 
+    def add_error_message(self, error_msg: str) -> None:
+        """Add an error message from IBKR error event."""
+        if error_msg and error_msg not in self.error_messages:
+            self.error_messages.append(error_msg)
+            logger.info(
+                "[OrderTracker] order=%s added error: %s",
+                self.order_id, error_msg,
+            )
+
     def on_status(
         self,
         status: str,

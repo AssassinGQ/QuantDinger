@@ -21,7 +21,7 @@ from queue import Queue
 from app.utils.logger import get_logger
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, format_display_symbol
-from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker
+from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker, HARD_TERMINAL
 
 logger = get_logger(__name__)
 
@@ -369,6 +369,10 @@ class IBKRClient(BaseStatefulClient):
             "[IBKR-Event] error: reqId=%s code=%s msg=%s contract=%s",
             reqId, errorCode, errorString, sym,
         )
+        error_msg = f"[{errorCode}] {errorString}" if errorCode else errorString
+        for tracker in self._trackers.values():
+            if tracker.current_status not in HARD_TERMINAL:
+                tracker.add_error_message(error_msg)
 
     # ── event callbacks: connection lifecycle ─────────────────────
 
