@@ -391,3 +391,45 @@ class TestEFClient:
             })
             summary = client.get_account_summary()
             assert summary["total_assets"] == 100000.0
+
+    def test_is_market_open_not_connected(self):
+        """Test is_market_open when not connected."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        is_open, msg = client.is_market_open()
+        assert is_open is False
+
+    def test_get_quote_not_connected(self):
+        """Test get_quote when not connected."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        quote = client.get_quote("600519")
+        assert quote["success"] is False
+        assert "Not connected" in quote["error"]
+
+    def test_get_quote_success(self):
+        """Test successful get_quote."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        client._ticket = "test_ticket"
+        client._base_url = "http://test.com"
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {
+                "code": 0,
+                "data": {
+                    "price": 1800.0,
+                    "open": 1785.0,
+                    "high": 1810.0,
+                    "low": 1770.0,
+                    "volume": 1000000,
+                    "amount": 1800000000
+                }
+            })
+            quote = client.get_quote("600519", "AShare")
+            assert quote["success"] is True
+            assert quote["price"] == 1800.0
+            assert quote["open"] == 1785.0
+            assert quote["high"] == 1810.0
+            assert quote["low"] == 1770.0
+            assert quote["volume"] == 1000000

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 
-class OrderState(Enum):
+class OrderState(Enum):  # pylint: disable=too-few-public-methods
     """Order states."""
     PENDING = "pending"
     SUBMITTED = "submitted"
@@ -18,7 +18,7 @@ class OrderState(Enum):
     EXPIRED = "expired"
 
 
-class OrderEvent(Enum):
+class OrderEvent(Enum):  # pylint: disable=too-few-public-methods
     """Order events."""
     SUBMIT = "submit"
     ACCEPT = "accept"
@@ -89,6 +89,11 @@ class OrderStateMachine:
     def state(self) -> OrderState:
         """Get current state."""
         return self._state
+
+    @property
+    def history(self) -> List[dict]:
+        """Get state transition history."""
+        return self._history
 
     @property
     def is_terminal(self) -> bool:
