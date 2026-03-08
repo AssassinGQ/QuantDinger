@@ -141,6 +141,14 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
     if exchange_id == "mt5":
         return _create_mt5_client(exchange_config)
 
+    # Hong Kong / US / A-share broker (uSMART)
+    if exchange_id == "usmart":
+        return _create_usmart_client(exchange_config)
+
+    # EastMoney (东方财富) broker
+    if exchange_id == "eastmoney":
+        return _create_ef_client(exchange_config)
+
     raise LiveTradingError(f"Unsupported exchange_id: {exchange_id}")
 
 
@@ -233,4 +241,47 @@ def _create_mt5_client(exchange_config: Dict[str, Any]):
             "2. Credentials are correct\n"
             "3. You are on Windows"
         )
+    return client
+
+
+def _create_usmart_client(exchange_config: Dict[str, Any]):
+    """Create uSMART client (BaseStatefulClient) for HK/US/A-share trading."""
+    try:
+        from app.services.live_trading.usmart_trading.config import USmartConfig
+        from app.services.live_trading.usmart_trading.client import USmartClient
+    except ImportError as exc:
+        raise LiveTradingError("uSMART trading requires rsa library. Run: pip install rsa") from exc
+
+    config = USmartConfig(
+        channel_id=_get(exchange_config, "channel_id", "channelId"),
+        private_key=_get(exchange_config, "private_key", "privateKey"),
+        public_key=_get(exchange_config, "public_key", "publicKey"),
+        phone_number=_get(exchange_config, "phone_number", "phoneNumber"),
+        password=_get(exchange_config, "password"),
+        area_code=_get(exchange_config, "area_code", "areaCode") or "86",
+        base_url=_get(exchange_config, "base_url", "baseUrl") or "https://open-jy.yxzq.com",
+    )
+
+    client = USmartClient(config)
+    if not client.connect():
+        raise LiveTradingError("Failed to connect to uSMART. Please check credentials.")
+    return client
+
+
+def _create_ef_client(exchange_config: Dict[str, Any]):
+    """Create EastMoney (东方财富) client for A-share/HK-stock/bond/ETF trading."""
+    from app.services.live_trading.ef_trading.config import EFConfig
+    from app.services.live_trading.ef_trading.client import EFClient
+
+    config = EFConfig(
+        account_id=_get(exchange_config, "account_id", "accountId"),
+        password=_get(exchange_config, "password"),
+        market=_get(exchange_config, "market") or "ab",
+        token=_get(exchange_config, "token", ""),
+        base_url=_get(exchange_config, "base_url", "baseUrl") or "",
+    )
+
+    client = EFClient(config)
+    if not client.connect():
+        raise LiveTradingError("Failed to connect to EastMoney. Please check credentials.")
     return client
