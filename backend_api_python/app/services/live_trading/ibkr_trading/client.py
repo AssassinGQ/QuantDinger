@@ -203,6 +203,7 @@ class IBKRClient(BaseStatefulClient):
             _ensure_ib_insync()
             if self._ib is None:
                 self._ib = ib_insync.IB()
+                self._ib.RequestTimeout = 10
 
             logger.info(
                 "Connecting to IBKR: %s:%s (clientId=%s)",
