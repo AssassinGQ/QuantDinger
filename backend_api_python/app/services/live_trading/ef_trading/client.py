@@ -159,6 +159,7 @@ class EFClient(BaseStatefulClient):
 
         return symbol
 
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     def place_market_order(
         self,
         symbol: str,
@@ -208,6 +209,7 @@ class EFClient(BaseStatefulClient):
             "entrust_prop": entrust_prop,
         }
 
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     def place_limit_order(
         self,
         symbol: str,
