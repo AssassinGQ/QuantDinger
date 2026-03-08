@@ -101,6 +101,10 @@ def _make_client_with_mock_ib():
     client._trackers = {}
     client._events_registered = False
 
+    # Reconnection thread state
+    client._reconnect_thread = None
+    client._reconnect_stop = threading.Event()
+
     original_submit = IBKRClient._submit
 
     def _sync_submit(self_inner, fn, timeout=60.0):
