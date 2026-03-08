@@ -473,6 +473,7 @@ def ibkr_dashboard():
     }
 
     # 1. Connection & live data from IBKR gateway
+    user_id = g.user_id
     try:
         client = _get_client()
         is_connected = client.connected
@@ -546,7 +547,6 @@ def ibkr_dashboard():
         logger.warning("IBKR live data unavailable: %s", e)
 
     # 2. DB-sourced trade history (IBKR execution records)
-    user_id = g.user_id
     try:
         with get_db_connection() as db:
             cur = db.cursor()
