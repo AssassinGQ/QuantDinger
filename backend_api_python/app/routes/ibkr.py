@@ -5,6 +5,7 @@ Standalone API endpoints for US and Hong Kong stock trading.
 """
 
 from typing import Any, Dict, List
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from flask import Blueprint, request, jsonify, g
 
@@ -484,10 +485,19 @@ def ibkr_dashboard():
     except Exception as e:
         logger.warning("IBKR connection check failed: %s", e)
 
-    # 2. Account summary (requires connection)
+    # 2-4. Account, positions, orders — fetch with per-item timeout guards
+    # Each IB API call goes through the single worker thread and can hang
+    # (especially on weekends or when IB Gateway is unresponsive). Using a
+    # thread pool with tight timeouts prevents one slow call from blocking
+    # the entire dashboard response.
+    IBKR_QUERY_TIMEOUT = 8  # seconds per query
+
     if is_connected and client:
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ibkr-dash")
+
+        # Account summary + PnL
         try:
-            acct = client.get_account_summary()
+            acct = pool.submit(client.get_account_summary).result(timeout=IBKR_QUERY_TIMEOUT)
             if acct.get("success"):
                 summary = acct.get("summary", {})
                 key_tags = [
@@ -506,7 +516,11 @@ def ibkr_dashboard():
 
                 currency = (parsed.get("NetLiquidation") or {}).get("currency", "USD")
 
-                pnl = client.get_pnl()
+                try:
+                    pnl = pool.submit(client.get_pnl).result(timeout=IBKR_QUERY_TIMEOUT)
+                except (FuturesTimeoutError, Exception) as pnl_err:
+                    logger.warning("IBKR PnL query timed out: %s", pnl_err)
+                    pnl = {}
                 parsed["UnrealizedPnL"] = {"value": pnl.get("unrealizedPnL", 0.0), "currency": currency}
                 parsed["RealizedPnL"] = {"value": pnl.get("realizedPnL", 0.0), "currency": currency}
                 parsed["DailyPnL"] = {"value": pnl.get("dailyPnL", 0.0), "currency": currency}
@@ -519,13 +533,12 @@ def ibkr_dashboard():
                     ),
                     "currency": currency,
                 }
-        except Exception as e:
-            logger.warning("IBKR account summary unavailable: %s", e)
+        except (FuturesTimeoutError, Exception) as e:
+            logger.warning("IBKR account summary timed out or failed: %s", e)
 
-    # 3. Positions (requires connection)
-    if is_connected and client:
+        # Positions
         try:
-            data["positions"] = client.get_positions()
+            data["positions"] = pool.submit(client.get_positions).result(timeout=IBKR_QUERY_TIMEOUT)
 
             if data["positions"]:
                 symbol_commission_map = {}
@@ -547,15 +560,16 @@ def ibkr_dashboard():
                 for pos in data["positions"]:
                     ib_symbol = pos.get("ib_symbol") or pos.get("symbol", "")
                     pos["commission"] = symbol_commission_map.get(ib_symbol, 0.0)
-        except Exception as e:
-            logger.warning("IBKR positions unavailable: %s", e)
+        except (FuturesTimeoutError, Exception) as e:
+            logger.warning("IBKR positions timed out or failed: %s", e)
 
-    # 4. Open orders (requires connection)
-    if is_connected and client:
+        # Open orders
         try:
-            data["open_orders"] = client.get_open_orders()
-        except Exception as e:
-            logger.warning("IBKR open orders unavailable: %s", e)
+            data["open_orders"] = pool.submit(client.get_open_orders).result(timeout=IBKR_QUERY_TIMEOUT)
+        except (FuturesTimeoutError, Exception) as e:
+            logger.warning("IBKR open orders timed out or failed: %s", e)
+
+        pool.shutdown(wait=False)
 
     # 5. DB-sourced trade history (IBKR execution records)
     try:

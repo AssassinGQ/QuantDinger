@@ -142,7 +142,20 @@ class IBKRClient(BaseStatefulClient):
         self._started.set()
 
         while True:
-            item = self._queue.get()
+            # Pump ib_insync event loop between tasks so IB Gateway
+            # messages keep flowing. Without this, accountSummary /
+            # positions / orders can hang because the asyncio loop
+            # never gets a chance to process incoming data.
+            if self._ib is not None and self._ib.isConnected():
+                try:
+                    self._ib.sleep(0)
+                except Exception:
+                    pass
+
+            try:
+                item = self._queue.get(timeout=0.1)
+            except Exception:
+                continue
             if item is _SENTINEL:
                 break
             fn, future = item
@@ -157,7 +170,12 @@ class IBKRClient(BaseStatefulClient):
             self._start_worker()
         fut: Future[T] = Future()
         self._queue.put((fn, fut))
-        return fut.result(timeout=timeout)
+        try:
+            return fut.result(timeout=timeout)
+        except Exception:
+            if not fut.done():
+                fut.cancel()
+            raise
 
     # ── connection ──────────────────────────────────────────────────
 
