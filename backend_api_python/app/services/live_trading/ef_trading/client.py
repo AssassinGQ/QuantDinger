@@ -7,7 +7,6 @@ for A-share, HK-stock, bond, and ETF trading.
 
 from typing import Any, Dict, List, Optional, Tuple
 import json
-
 import requests
 
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
@@ -48,9 +47,70 @@ class EFClient(BaseStatefulClient):
             parsed = {"raw_text": resp.text[:2000] if resp.text else ""}
         return resp.status_code, parsed
 
+    def _get_server_address(self) -> str:
+        """Get EastMoney API server address.
+
+        Returns:
+            Server URL in format "http://host:port"
+        """
+        url = "http://jvQuant.com/query/server"
+        params = {
+            "market": self.config.market,
+            "type": "trade",
+        }
+        if self.config.token:
+            params["token"] = self.config.token
+
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            data = resp.json()
+            if data.get("code") == 0:
+                host = data.get("host", "")
+                port = data.get("port", "")
+                return f"http://{host}:{port}"
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            logger.warning("Failed to get server address: %s", e)
+
+        return "http://47.106.76.80:9000"
+
+    def _login(self) -> bool:
+        """Login to EastMoney API.
+
+        Returns:
+            True if login successful, False otherwise
+        """
+        self._base_url = self._get_server_address()
+
+        params = {
+            "token": self.config.token,
+            "acc": self.config.account_id,
+            "pass": self.config.password,
+        }
+
+        try:
+            status, resp = self._request("GET", "/login", params=params)
+            if status == 200 and resp.get("code") == 0:
+                self._ticket = resp.get("ticket", "")
+                self._account_info = resp.get("account_info", {})
+                ticket_preview = self._ticket[:10] if self._ticket else "None"
+                logger.info("EastMoney login success, ticket: %s...", ticket_preview)
+                return True
+            logger.error("EastMoney login failed: %s", resp)
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            logger.error("EastMoney login exception: %s", e)
+
+        return False
+
     def connect(self) -> bool:
-        """Establish connection to EastMoney API."""
-        raise NotImplementedError
+        """Establish connection to EastMoney API.
+
+        Returns:
+            True if connection successful, False otherwise
+        """
+        if self._login():
+            return True
+        self._base_url = ""
+        return False
 
     def disconnect(self) -> None:
         """Disconnect from EastMoney API."""

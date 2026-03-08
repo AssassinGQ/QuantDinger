@@ -3,7 +3,8 @@ Tests for EFClient.
 """
 
 import pytest
-from unittest.mock import Mock, patch
+import requests
+from unittest.mock import Mock, patch, MagicMock
 
 from app.services.live_trading.ef_trading.client import EFClient
 from app.services.live_trading.ef_trading.config import EFConfig
@@ -118,3 +119,78 @@ class TestEFClient:
         valid, msg = client.validate_market_category("InvalidMarket")
         assert valid is False
         assert "eastmoney only supports" in msg
+
+    def test_get_server_address_success(self):
+        """Test getting server address from API."""
+        config = EFConfig(account_id="123", password="456", market="ab")
+        client = EFClient(config)
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.json.return_value = {
+                "code": 0,
+                "host": "192.168.1.1",
+                "port": "9000"
+            }
+            address = client._get_server_address()
+            assert address == "http://192.168.1.1:9000"
+
+    def test_get_server_address_fallback(self):
+        """Test fallback server address on failure."""
+        config = EFConfig(account_id="123", password="456", market="ab")
+        client = EFClient(config)
+
+        with patch("requests.get") as mock_get:
+            mock_get.side_effect = requests.RequestException("Network error")
+            address = client._get_server_address()
+            assert address == "http://47.106.76.80:9000"
+
+    def test_login_success(self):
+        """Test successful login."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {
+                "code": 0,
+                "ticket": "abc123ticket",
+                "account_info": {"name": "test"}
+            })
+            result = client._login()
+            assert result is True
+            assert client._ticket == "abc123ticket"
+            assert client._account_info == {"name": "test"}
+
+    def test_login_failure(self):
+        """Test failed login."""
+        config = EFConfig(account_id="123456789", password="wrong_pass")
+        client = EFClient(config)
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {
+                "code": 1,
+                "msg": "Invalid credentials"
+            })
+            result = client._login()
+            assert result is False
+            assert client._ticket is None
+
+    def test_connect_success(self):
+        """Test successful connect."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+
+        with patch.object(client, "_login") as mock_login:
+            mock_login.return_value = True
+            result = client.connect()
+            assert result is True
+
+    def test_connect_failure(self):
+        """Test failed connect."""
+        config = EFConfig(account_id="123456789", password="wrong_pass")
+        client = EFClient(config)
+
+        with patch.object(client, "_login") as mock_login:
+            mock_login.return_value = False
+            result = client.connect()
+            assert result is False
+            assert client._base_url == ""
