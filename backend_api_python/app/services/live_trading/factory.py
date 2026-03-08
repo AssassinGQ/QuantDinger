@@ -277,7 +277,7 @@ def _create_ef_client(exchange_config: Dict[str, Any]):
         account_id=_get(exchange_config, "account_id", "accountId"),
         password=_get(exchange_config, "password"),
         market=_get(exchange_config, "market") or "ab",
-        token=_get(exchange_config, "token", ""),
+        token=_get(exchange_config, "token") or "",
         base_url=_get(exchange_config, "base_url", "baseUrl") or "",
     )
 

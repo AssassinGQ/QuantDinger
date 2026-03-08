@@ -12,9 +12,12 @@ import requests
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult, PositionRecord
 from app.utils.logger import get_logger
 from app.services.live_trading.ef_trading.config import EFConfig
+from app.services.live_trading.ef_trading.fsm import OrderStateMachine, OrderState, OrderEvent, TERMINAL_STATES
 from app.services.live_trading.ef_trading.market_hours import MarketHours
 
 logger = get_logger(__name__)
+
+_MAX_FSM_ENTRIES = 500
 
 
 class EFClient(BaseStatefulClient):
@@ -22,12 +25,15 @@ class EFClient(BaseStatefulClient):
 
     engine_id = "eastmoney"
     supported_market_categories = frozenset({"AShare", "HKStock", "Bond", "ETF"})
+    _DEFAULT_SERVER_URL = "http://47.106.76.80:9000"
+    _SERVER_DISCOVERY_URL = "http://jvQuant.com/query/server"
 
     def __init__(self, config: EFConfig):
         self.config = config
         self._base_url: str = ""
         self._ticket: Optional[str] = None
         self._account_info: Optional[dict] = None
+        self._order_fsm: Dict[str, OrderStateMachine] = {}
 
     def _request(
         self,
@@ -54,7 +60,7 @@ class EFClient(BaseStatefulClient):
         Returns:
             Server URL in format "http://host:port"
         """
-        url = "http://jvQuant.com/query/server"
+        url = self._SERVER_DISCOVERY_URL
         params = {
             "market": self.config.market,
             "type": "trade",
@@ -72,7 +78,7 @@ class EFClient(BaseStatefulClient):
         except (requests.RequestException, json.JSONDecodeError) as e:
             logger.warning("Failed to get server address: %s", e)
 
-        return "http://47.106.76.80:9000"
+        return self._DEFAULT_SERVER_URL
 
     def _login(self) -> bool:
         """Login to EastMoney API.
@@ -117,6 +123,7 @@ class EFClient(BaseStatefulClient):
         """Disconnect from EastMoney API."""
         self._ticket = None
         self._account_info = None
+        self._order_fsm.clear()
         logger.info("EastMoney disconnected")
 
     @property
@@ -218,7 +225,7 @@ class EFClient(BaseStatefulClient):
         quantity: float,
         price: float,
         market_type: str = "",
-        entrust_prop: str = "e",
+        entrust_prop: str = "f",
         **kwargs,
     ) -> LiveOrderResult:
         """Place a limit order.
@@ -229,7 +236,7 @@ class EFClient(BaseStatefulClient):
             quantity: Order quantity
             price: Limit price (0 for market order)
             market_type: Market type
-            entrust_prop: Entrust property (e=market, f=limit)
+            entrust_prop: Entrust property (f=limit, e=market)
 
         Returns:
             LiveOrderResult with order execution details
@@ -256,10 +263,18 @@ class EFClient(BaseStatefulClient):
 
             if status == 200 and resp.get("code") == 0:
                 data = resp.get("data", {})
+                exchange_order_id = str(data.get("order_id", ""))
+
+                if exchange_order_id:
+                    fsm = OrderStateMachine(exchange_order_id)
+                    fsm.transition(OrderEvent.SUBMIT)
+                    self._order_fsm[exchange_order_id] = fsm
+                    self._gc_terminal_fsm()
+
                 return LiveOrderResult(
                     success=True,
                     exchange_id=self.engine_id,
-                    exchange_order_id=str(data.get("order_id", "")),
+                    exchange_order_id=exchange_order_id,
                     filled=float(data.get("deal_amount", 0)),
                     avg_price=float(data.get("deal_price", 0)),
                     status=data.get("status", "submitted"),
@@ -298,9 +313,39 @@ class EFClient(BaseStatefulClient):
 
         try:
             status, resp = self._request("GET", "/cancel", params=params)
-            return status == 200 and resp.get("code") == 0
+            if status == 200 and resp.get("code") == 0:
+                fsm = self._order_fsm.get(str(order_id))
+                if fsm:
+                    fsm.transition(OrderEvent.CANCEL)
+                return True
+            return False
         except (requests.RequestException, json.JSONDecodeError):
             return False
+
+    # ── FSM helpers ───────────────────────────────────────────────
+
+    def get_order_state(self, order_id: str) -> Optional[OrderState]:
+        """Get current state of an order."""
+        fsm = self._order_fsm.get(order_id)
+        return fsm.state if fsm else None
+
+    def update_order_state(self, order_id: str, event: OrderEvent) -> bool:
+        """Update order state with an event."""
+        fsm = self._order_fsm.get(order_id)
+        if fsm:
+            return fsm.transition(event)
+        return False
+
+    def _gc_terminal_fsm(self) -> None:
+        """Garbage collect FSM entries in terminal states."""
+        if len(self._order_fsm) <= _MAX_FSM_ENTRIES:
+            return
+        terminal_ids = [
+            oid for oid, fsm in self._order_fsm.items()
+            if fsm.state in TERMINAL_STATES
+        ]
+        for oid in terminal_ids:
+            del self._order_fsm[oid]
 
     def map_signal_to_side(self, signal_type: str) -> str:
         """Convert strategy signal to buy/sell."""

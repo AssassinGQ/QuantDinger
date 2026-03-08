@@ -1,5 +1,5 @@
 """
-Integration tests for EFClient with SignalExecutor.
+Interface contract and lifecycle tests for EFClient.
 """
 
 from app.services.live_trading.ef_trading.client import EFClient
@@ -7,8 +7,8 @@ from app.services.live_trading.ef_trading.config import EFConfig
 from app.services.live_trading.ef_trading.fsm import OrderEvent, OrderStateMachine
 
 
-class TestEFClientSignalExecutorIntegration:
-    """Test EFClient integration with SignalExecutor."""
+class TestEFClientInterfaceContract:
+    """Verify EFClient implements the required BaseStatefulClient contract."""
 
     def test_ef_client_has_required_interface(self):
         """Test EFClient implements all required BaseStatefulClient methods."""

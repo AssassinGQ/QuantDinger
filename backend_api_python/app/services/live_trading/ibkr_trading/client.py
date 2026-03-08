@@ -171,6 +171,7 @@ class IBKRClient(BaseStatefulClient):
             return False
 
     def connect(self) -> bool:
+        self._reconnect_stop.clear()
         return self._submit(self._do_connect)
 
     def _do_connect(self) -> bool:
@@ -575,14 +576,34 @@ class IBKRClient(BaseStatefulClient):
 
     # ── RTH check ──────────────────────────────────────────────────
 
+    _RTH_QUALIFY_RETRIES = 2
+
     def is_market_open(self, symbol: str, market_type: str = "USStock"):
         def _do():
             from app.services.live_trading.ibkr_trading.trading_hours import is_rth
             self._ensure_connected()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
-            if not self._qualify_contract(contract):
-                return True, ""
+
+            qualified = False
+            for attempt in range(1, self._RTH_QUALIFY_RETRIES + 1):
+                if self._qualify_contract(contract):
+                    qualified = True
+                    break
+                if attempt < self._RTH_QUALIFY_RETRIES:
+                    logger.info(
+                        "[RTH] contract qualify attempt %d/%d failed for %s, retrying",
+                        attempt, self._RTH_QUALIFY_RETRIES, symbol,
+                    )
+                    time.sleep(1)
+
+            if not qualified:
+                logger.warning(
+                    "[RTH] contract qualification failed for %s (%s) after %d attempts, "
+                    "blocking order as safety measure",
+                    symbol, market_type, self._RTH_QUALIFY_RETRIES,
+                )
+                return False, f"{symbol} contract not found"
             if not is_rth(self._ib, contract):
                 sym = getattr(contract, "symbol", "?")
                 return False, f"{sym} is outside RTH (market closed)"
@@ -591,8 +612,12 @@ class IBKRClient(BaseStatefulClient):
         try:
             return self._submit(_do, timeout=30.0)
         except Exception as e:
-            logger.warning("is_market_open failed for %s: %s, fail-open", symbol, e)
-            return True, ""
+            logger.error(
+                "[RTH] is_market_open failed for %s (%s): %s, "
+                "blocking order as safety measure (fail-closed)",
+                symbol, market_type, e,
+            )
+            return False, f"RTH check failed: {e}"
 
     # ── order execution ────────────────────────────────────────────
 

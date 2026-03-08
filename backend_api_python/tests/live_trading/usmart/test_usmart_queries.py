@@ -75,11 +75,11 @@ class TestGetPositionsNormalized:
         result = client.get_positions_normalized()
 
         assert len(result) == 1
-        assert result[0]["symbol"] == "00700"
-        assert result[0]["side"] == "long"
-        assert result[0]["quantity"] == 1000.0
-        assert result[0]["entry_price"] == 350.0
-        assert "raw" in result[0]
+        assert result[0].symbol == "00700"
+        assert result[0].side == "long"
+        assert result[0].quantity == 1000.0
+        assert result[0].entry_price == 350.0
+        assert result[0].raw is not None
 
 
 class TestGetOpenOrders:

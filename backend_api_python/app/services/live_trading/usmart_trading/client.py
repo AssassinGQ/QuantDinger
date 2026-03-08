@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
+from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult, PositionRecord
 from app.utils.logger import get_logger
 from app.services.live_trading.usmart_trading.config import USmartConfig
 from app.services.live_trading.usmart_trading.auth import USmartAuth
@@ -251,17 +251,17 @@ class USmartClient(BaseStatefulClient):
             return resp.get("data", {}).get("list", [])
         return []
 
-    def get_positions_normalized(self) -> list:
+    def get_positions_normalized(self) -> List[PositionRecord]:
         positions = self.get_positions()
-        records = []
+        records: List[PositionRecord] = []
         for pos in positions:
-            records.append({
-                "symbol": pos.get("stockCode", ""),
-                "side": "long",
-                "quantity": float(pos.get("holdAmount", 0)),
-                "entry_price": float(pos.get("costPrice", 0)),
-                "raw": pos,
-            })
+            records.append(PositionRecord(
+                symbol=pos.get("stockCode", ""),
+                side="long",
+                quantity=float(pos.get("holdAmount", 0)),
+                entry_price=float(pos.get("costPrice", 0)),
+                raw=pos,
+            ))
         return records
 
     def get_open_orders(self) -> List[Dict[str, Any]]:
