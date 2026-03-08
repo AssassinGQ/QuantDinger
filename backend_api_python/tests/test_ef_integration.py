@@ -2,12 +2,9 @@
 Integration tests for EFClient with SignalExecutor.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-
 from app.services.live_trading.ef_trading.client import EFClient
 from app.services.live_trading.ef_trading.config import EFConfig
-from app.services.signal_executor import SignalExecutor
+from app.services.live_trading.ef_trading.fsm import OrderEvent, OrderStateMachine
 
 
 class TestEFClientSignalExecutorIntegration:
@@ -54,8 +51,6 @@ class TestEFClientSignalExecutorIntegration:
 
     def test_ef_client_order_lifecycle(self):
         """Test order lifecycle with state machine integration."""
-        from app.services.live_trading.ef_trading.fsm import OrderStateMachine, OrderEvent
-
         fsm = OrderStateMachine("test_order_001")
 
         assert fsm.state.value == "pending"
