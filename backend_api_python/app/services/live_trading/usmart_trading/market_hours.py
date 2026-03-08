@@ -1,5 +1,6 @@
-from datetime import datetime, time
-from typing import Tuple
+from datetime import datetime, time, timedelta
+from typing import Optional, Tuple
+from zoneinfo import ZoneInfo
 
 
 class MarketHours:
@@ -41,12 +42,22 @@ class MarketHours:
         return cls.HONG_KONG
 
     @classmethod
-    def is_trading_time(cls, market_type: str, dt: datetime = None) -> Tuple[bool, str]:
+    def _to_market_time(cls, market: dict, dt: Optional[datetime] = None) -> datetime:
+        tz = ZoneInfo(market["timezone"])
         if dt is None:
-            dt = datetime.now()
+            return datetime.now(tz)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=tz)
+        return dt.astimezone(tz)
 
+    @classmethod
+    def is_trading_time(cls, market_type: str, dt: Optional[datetime] = None) -> Tuple[bool, str]:
         market = cls.get_market_hours(market_type)
-        current_time = dt.time()
+        market_dt = cls._to_market_time(market, dt)
+        current_time = market_dt.time()
+
+        if market_dt.weekday() >= 5:
+            return False, "%s 当前非交易时间（周末）" % market["name"]
 
         for start, end in market["sessions"]:
             if start <= current_time <= end:
@@ -55,15 +66,19 @@ class MarketHours:
         return False, "%s 当前非交易时间" % market["name"]
 
     @classmethod
-    def get_next_open_time(cls, market_type: str, dt: datetime = None) -> datetime:
-        if dt is None:
-            dt = datetime.now()
-
+    def get_next_open_time(cls, market_type: str, dt: Optional[datetime] = None) -> datetime:
         market = cls.get_market_hours(market_type)
-        current_time = dt.time()
+        market_dt = cls._to_market_time(market, dt)
+        current_time = market_dt.time()
 
-        for start, end in market["sessions"]:
+        for start, _end in market["sessions"]:
             if start > current_time:
-                return dt.replace(hour=start.hour, minute=start.minute, second=0)
+                return market_dt.replace(
+                    hour=start.hour, minute=start.minute, second=0, microsecond=0
+                )
 
-        return dt.replace(hour=9, minute=30, second=0)
+        next_day = market_dt + timedelta(days=1)
+        first_start = market["sessions"][0][0]
+        return next_day.replace(
+            hour=first_start.hour, minute=first_start.minute, second=0, microsecond=0
+        )

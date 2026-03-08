@@ -7,9 +7,14 @@ from app.services.live_trading.usmart_trading.fsm import OrderEvent
 
 logger = get_logger(__name__)
 
+STATUS_FILLED = "成交"
+STATUS_PARTIAL = "部分成交"
+
+_DEFAULT_POLL_INTERVAL = 5.0
+
 
 class OrderStatusPoller:
-    def __init__(self, client, interval: float = 1.0):
+    def __init__(self, client, interval: float = _DEFAULT_POLL_INTERVAL):
         self.client = client
         self.interval = interval
         self._running = False
@@ -23,7 +28,7 @@ class OrderStatusPoller:
         self._running = True
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
-        logger.info("OrderStatusPoller started")
+        logger.info("OrderStatusPoller started (interval=%.1fs)", self.interval)
 
     def stop(self):
         self._running = False
@@ -42,7 +47,9 @@ class OrderStatusPoller:
                     continue
 
                 current_orders = self.client.get_open_orders()
-                current_order_ids = {str(o.get("entrustId", "")) for o in current_orders}
+                current_order_ids = {
+                    str(o.get("entrustId", "")) for o in current_orders
+                }
 
                 for order in current_orders:
                     order_id = str(order.get("entrustId", ""))
@@ -56,22 +63,25 @@ class OrderStatusPoller:
                         prev_status = prev_order.get("entrustStatus", "")
                         curr_status = order.get("entrustStatus", "")
 
-                        if curr_status == "成交" and prev_status != "成交":
+                        if curr_status == STATUS_FILLED and prev_status != STATUS_FILLED:
                             self._trigger("order_filled", order)
                             self.client.update_order_state(order_id, OrderEvent.FILL)
 
-                        if curr_status == "部分成交":
+                        if curr_status == STATUS_PARTIAL:
                             self.client.update_order_state(order_id, OrderEvent.FILL)
 
                 for prev_order_id, prev_order in self._previous_orders.items():
                     if prev_order_id not in current_order_ids:
                         prev_status = prev_order.get("entrustStatus", "")
-                        if prev_status == "成交":
+                        if prev_status == STATUS_FILLED:
                             self._trigger("order_filled", prev_order)
                         else:
                             self._trigger("order_cancelled", prev_order)
 
-                self._previous_orders = {str(o.get("entrustId", "")): o for o in current_orders if o.get("entrustId")}
+                self._previous_orders = {
+                    str(o.get("entrustId", "")): o
+                    for o in current_orders if o.get("entrustId")
+                }
 
             except Exception as e:
                 logger.error("OrderStatusPoller error: %s", e)

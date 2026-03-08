@@ -94,6 +94,8 @@ class IBKRClient(BaseStatefulClient):
         "reduce_long": "sell",
     }
 
+    _RECONNECT_DELAYS = [2, 5, 10, 30, 60]
+
     def __init__(self, config: Optional[IBKRConfig] = None):
         self.config = config or IBKRConfig()
         self._ib = None
@@ -106,6 +108,9 @@ class IBKRClient(BaseStatefulClient):
         # FSM-based order tracking
         self._trackers: Dict[int, OrderTracker] = {}
         self._events_registered = False
+
+        self._reconnect_thread: Optional[threading.Thread] = None
+        self._reconnect_stop = threading.Event()
 
         self._start_worker()
 
@@ -201,6 +206,10 @@ class IBKRClient(BaseStatefulClient):
             return False
 
     def disconnect(self):
+        self._reconnect_stop.set()
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            self._reconnect_thread.join(timeout=3)
+
         def _do():
             if self._ib is not None:
                 try:
@@ -216,7 +225,15 @@ class IBKRClient(BaseStatefulClient):
 
     def _ensure_connected(self, retries: int = 3, delay: float = 2.0):
         if self.connected:
-            return
+            if self._health_check():
+                return
+            logger.warning("IBKR health check failed, forcing reconnect")
+            try:
+                self._ib.disconnect()
+            except Exception:
+                pass
+            self._events_registered = False
+
         for attempt in range(1, retries + 1):
             if self._do_connect():
                 return
@@ -227,6 +244,13 @@ class IBKRClient(BaseStatefulClient):
                 )
                 time.sleep(delay)
         raise ConnectionError(f"Cannot connect to IBKR after {retries} attempts")
+
+    def _health_check(self) -> bool:
+        try:
+            dt = self._ib.reqCurrentTime()
+            return dt is not None
+        except Exception:
+            return False
 
     # ── event registration (all 25 IB events) ─────────────────────
 
@@ -345,6 +369,39 @@ class IBKRClient(BaseStatefulClient):
     def _on_disconnected(self):
         logger.warning("[IBKR-Event] disconnectedEvent — connection lost")
         self._events_registered = False
+        self._schedule_reconnect()
+
+    def _schedule_reconnect(self):
+        if self._reconnect_stop.is_set():
+            return
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            return
+        self._reconnect_thread = threading.Thread(
+            target=self._reconnect_loop, daemon=True, name="ibkr-reconnect",
+        )
+        self._reconnect_thread.start()
+
+    def _reconnect_loop(self):
+        for attempt, delay in enumerate(self._RECONNECT_DELAYS, 1):
+            if self._reconnect_stop.is_set():
+                return
+            logger.info(
+                "[IBKR-Reconnect] attempt %d/%d in %ds",
+                attempt, len(self._RECONNECT_DELAYS), delay,
+            )
+            if self._reconnect_stop.wait(timeout=delay):
+                return
+            try:
+                if self._do_connect():
+                    logger.info("[IBKR-Reconnect] reconnected successfully")
+                    return
+            except Exception as e:
+                logger.warning("[IBKR-Reconnect] attempt %d failed: %s", attempt, e)
+
+        logger.error(
+            "[IBKR-Reconnect] all %d attempts exhausted, giving up",
+            len(self._RECONNECT_DELAYS),
+        )
 
     # ── event callbacks: observation (INFO) ───────────────────────
 

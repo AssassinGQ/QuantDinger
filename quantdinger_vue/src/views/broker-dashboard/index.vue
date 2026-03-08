@@ -448,21 +448,30 @@ export default {
   },
   mounted () {
     this.fetchData()
-    this.refreshTimer = setInterval(() => { this.fetchData() }, 30000)
+    this._startPolling(30000)
   },
   beforeDestroy () {
-    if (this.refreshTimer) {
-      clearInterval(this.refreshTimer)
-      this.refreshTimer = null
-    }
+    this._stopPolling()
   },
   methods: {
+    _startPolling (interval) {
+      this._stopPolling()
+      this._pollInterval = interval
+      this.refreshTimer = setInterval(() => { this.fetchData() }, interval)
+    },
+    _stopPolling () {
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer)
+        this.refreshTimer = null
+      }
+    },
     async fetchData () {
       this.loading = true
       try {
         const res = await getIbkrDashboard()
         if (res.code === 1 && res.data) {
           const d = res.data
+          const wasConnected = this.connected
           this.connected = d.connected || false
           this.accountId = (d.account && d.account.account_id) || (d.connection && d.connection.account) || ''
           this.accountCurrency = (d.account && d.account.currency) || 'USD'
@@ -472,6 +481,14 @@ export default {
           this.recentTrades = d.recent_trades || []
           this.executions = d.executions || []
           this.performance = d.performance || {}
+
+          if (!this.connected && wasConnected) {
+            this.$message.warning('IBKR 连接已断开，正在尝试自动重连...')
+            this._startPolling(5000)
+          } else if (this.connected && !wasConnected && this._pollInterval === 5000) {
+            this.$message.success('IBKR 连接已恢复')
+            this._startPolling(30000)
+          }
         }
       } catch (e) {
         console.error('Failed to fetch IBKR dashboard:', e)

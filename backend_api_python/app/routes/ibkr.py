@@ -472,16 +472,21 @@ def ibkr_dashboard():
         "executions": [],
     }
 
-    # 1. Connection & live data from IBKR gateway
+    # 1. Connection status
     user_id = g.user_id
+    client = None
+    is_connected = False
     try:
         client = _get_client()
         is_connected = client.connected
         data["connected"] = is_connected
         data["connection"] = client.get_connection_status()
+    except Exception as e:
+        logger.warning("IBKR connection check failed: %s", e)
 
-        if is_connected:
-            # Account summary
+    # 2. Account summary (requires connection)
+    if is_connected and client:
+        try:
             acct = client.get_account_summary()
             if acct.get("success"):
                 summary = acct.get("summary", {})
@@ -501,7 +506,6 @@ def ibkr_dashboard():
 
                 currency = (parsed.get("NetLiquidation") or {}).get("currency", "USD")
 
-                # PnL via dedicated reqPnL (accountSummary tags don't include PnL)
                 pnl = client.get_pnl()
                 parsed["UnrealizedPnL"] = {"value": pnl.get("unrealizedPnL", 0.0), "currency": currency}
                 parsed["RealizedPnL"] = {"value": pnl.get("realizedPnL", 0.0), "currency": currency}
@@ -515,11 +519,14 @@ def ibkr_dashboard():
                     ),
                     "currency": currency,
                 }
+        except Exception as e:
+            logger.warning("IBKR account summary unavailable: %s", e)
 
-            # Positions
+    # 3. Positions (requires connection)
+    if is_connected and client:
+        try:
             data["positions"] = client.get_positions()
 
-            # Add commission info to positions from trade history
             if data["positions"]:
                 symbol_commission_map = {}
                 with get_db_connection() as db:
@@ -540,13 +547,17 @@ def ibkr_dashboard():
                 for pos in data["positions"]:
                     ib_symbol = pos.get("ib_symbol") or pos.get("symbol", "")
                     pos["commission"] = symbol_commission_map.get(ib_symbol, 0.0)
+        except Exception as e:
+            logger.warning("IBKR positions unavailable: %s", e)
 
-            # Open orders
+    # 4. Open orders (requires connection)
+    if is_connected and client:
+        try:
             data["open_orders"] = client.get_open_orders()
-    except Exception as e:
-        logger.warning("IBKR live data unavailable: %s", e)
+        except Exception as e:
+            logger.warning("IBKR open orders unavailable: %s", e)
 
-    # 2. DB-sourced trade history (IBKR execution records)
+    # 5. DB-sourced trade history (IBKR execution records)
     try:
         with get_db_connection() as db:
             cur = db.cursor()
