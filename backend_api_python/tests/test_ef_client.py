@@ -194,3 +194,200 @@ class TestEFClient:
             result = client.connect()
             assert result is False
             assert client._base_url == ""
+
+    def test_get_exchange_type_ashare(self):
+        """Test exchange type for AShare."""
+        config = EFConfig(account_id="123", password="456")
+        client = EFClient(config)
+        assert client._get_exchange_type("AShare") == "1"
+        assert client._get_exchange_type("CN") == "1"
+
+    def test_get_exchange_type_hkstock(self):
+        """Test exchange type for HKStock."""
+        config = EFConfig(account_id="123", password="456")
+        client = EFClient(config)
+        assert client._get_exchange_type("HKStock") == "0"
+        assert client._get_exchange_type("HK") == "0"
+
+    def test_get_exchange_type_bond(self):
+        """Test exchange type for Bond."""
+        config = EFConfig(account_id="123", password="456")
+        client = EFClient(config)
+        assert client._get_exchange_type("Bond") == "2"
+
+    def test_get_exchange_type_etf(self):
+        """Test exchange type for ETF."""
+        config = EFConfig(account_id="123", password="456")
+        client = EFClient(config)
+        assert client._get_exchange_type("ETF") == "3"
+
+    def test_normalize_symbol_ashare(self):
+        """Test symbol normalization for AShare."""
+        config = EFConfig(account_id="123", password="456")
+        client = EFClient(config)
+        assert client._normalize_symbol("600519", "AShare") == "600519"
+        assert client._normalize_symbol("000001", "CN") == "000001"
+
+    def test_normalize_symbol_hkstock(self):
+        """Test symbol normalization for HKStock."""
+        config = EFConfig(account_id="123", password="456")
+        client = EFClient(config)
+        assert client._normalize_symbol("700", "HKStock") == "00700"
+        assert client._normalize_symbol("0700.HK", "HK") == "00700"
+
+    def test_place_market_order_not_connected(self):
+        """Test market order when not connected."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        result = client.place_market_order("600519", "buy", 100, "AShare")
+        assert result.success is False
+        assert "Not connected" in result.message
+
+    def test_place_limit_order_not_connected(self):
+        """Test limit order when not connected."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        result = client.place_limit_order("600519", "buy", 100, 10.0, "AShare")
+        assert result.success is False
+        assert "Not connected" in result.message
+
+    def test_place_limit_order_success(self):
+        """Test successful limit order."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        client._ticket = "test_ticket"
+        client._base_url = "http://test.com"
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {
+                "code": 0,
+                "data": {
+                    "order_id": "12345",
+                    "deal_amount": 100,
+                    "deal_price": 10.0,
+                    "status": "submitted"
+                }
+            })
+            result = client.place_limit_order("600519", "buy", 100, 10.0, "AShare")
+            assert result.success is True
+            assert result.exchange_order_id == "12345"
+            assert result.filled == 100.0
+
+    def test_cancel_order_not_connected(self):
+        """Test cancel order when not connected."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        result = client.cancel_order(12345)
+        assert result is False
+
+    def test_cancel_order_success(self):
+        """Test successful cancel order."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        client._ticket = "test_ticket"
+        client._base_url = "http://test.com"
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {"code": 0})
+            result = client.cancel_order(12345)
+            assert result is True
+
+    def test_get_positions_not_connected(self):
+        """Test get positions when not connected."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        positions = client.get_positions()
+        assert positions == []
+
+    def test_get_positions_success(self):
+        """Test successful get positions."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        client._ticket = "test_ticket"
+        client._base_url = "http://test.com"
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"stock_code": "600519", "hold_amount": 100, "cost_price": 1500.0}
+                    ]
+                }
+            })
+            positions = client.get_positions()
+            assert len(positions) == 1
+            assert positions[0]["stock_code"] == "600519"
+
+    def test_get_positions_normalized(self):
+        """Test get normalized positions."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        client._ticket = "test_ticket"
+        client._base_url = "http://test.com"
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"stock_code": "600519", "hold_amount": 100, "cost_price": 1500.0}
+                    ]
+                }
+            })
+            positions = client.get_positions_normalized()
+            assert len(positions) == 1
+            assert positions[0].symbol == "600519"
+            assert positions[0].quantity == 100.0
+
+    def test_get_open_orders_not_connected(self):
+        """Test get open orders when not connected."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        orders = client.get_open_orders()
+        assert orders == []
+
+    def test_get_open_orders_success(self):
+        """Test successful get open orders."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        client._ticket = "test_ticket"
+        client._base_url = "http://test.com"
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"order_id": "12345", "stock_code": "600519"}
+                    ]
+                }
+            })
+            orders = client.get_open_orders()
+            assert len(orders) == 1
+            assert orders[0]["order_id"] == "12345"
+
+    def test_get_account_summary_not_connected(self):
+        """Test get account summary when not connected."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        summary = client.get_account_summary()
+        assert summary["success"] is False
+
+    def test_get_account_summary_success(self):
+        """Test successful get account summary."""
+        config = EFConfig(account_id="123456789", password="test_pass")
+        client = EFClient(config)
+        client._ticket = "test_ticket"
+        client._base_url = "http://test.com"
+
+        with patch.object(client, "_request") as mock_request:
+            mock_request.return_value = (200, {
+                "code": 0,
+                "data": {
+                    "total_assets": 100000.0,
+                    "available_cash": 50000.0
+                }
+            })
+            summary = client.get_account_summary()
+            assert summary["total_assets"] == 100000.0
