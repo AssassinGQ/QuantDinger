@@ -248,14 +248,7 @@ class IBKRClient(BaseStatefulClient):
 
     def _ensure_connected(self, retries: int = 3, delay: float = 2.0):
         if self.connected:
-            if self._health_check():
-                return
-            logger.warning("IBKR health check failed, forcing reconnect")
-            try:
-                self._ib.disconnect()
-            except Exception:
-                pass
-            self._events_registered = False
+            return
 
         for attempt in range(1, retries + 1):
             if self._do_connect():
@@ -768,6 +761,7 @@ class IBKRClient(BaseStatefulClient):
             self._ensure_connected()
             positions = self._ib.positions(self._account)
 
+            # Request all PnL singles in batch, then wait once
             con_ids = []
             for pos in positions:
                 cid = pos.contract.conId
@@ -775,10 +769,10 @@ class IBKRClient(BaseStatefulClient):
                     try:
                         self._ib.reqPnLSingle(self._account, "", cid)
                         con_ids.append(cid)
-                    except (AssertionError, Exception):
+                    except Exception:
                         pass
             if con_ids:
-                self._ib.sleep(1)
+                self._ib.sleep(0.5)
 
             pnl_map = {}
             for ps in self._ib.pnlSingle(self._account):
@@ -825,7 +819,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit(_do, timeout=30.0)
+            return self._submit(_do, timeout=15.0)
         except Exception as e:
             logger.error("Get positions failed: %s", e)
             return []
