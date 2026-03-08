@@ -12,6 +12,7 @@ import requests
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult, PositionRecord
 from app.utils.logger import get_logger
 from app.services.live_trading.ef_trading.config import EFConfig
+from app.services.live_trading.ef_trading.market_hours import MarketHours
 
 logger = get_logger(__name__)
 
@@ -406,5 +407,53 @@ class EFClient(BaseStatefulClient):
         return {"connected": self.connected, "engine_id": self.engine_id}
 
     def is_market_open(self, symbol: str = "", market_type: str = "") -> Tuple[bool, str]:
-        """Check if market is open."""
-        raise NotImplementedError
+        """Check if market is open.
+
+        Args:
+            symbol: Stock symbol
+            market_type: Market type (AShare, HKStock, Bond, ETF)
+
+        Returns:
+            Tuple of (is_open, reason)
+        """
+        return MarketHours.is_trading_time(market_type or self.config.market)
+
+    def get_quote(self, symbol: str, market_type: str = "") -> Dict[str, Any]:
+        """Get real-time quote for a symbol.
+
+        Args:
+            symbol: Stock symbol
+            market_type: Market type (AShare, HKStock, Bond, ETF)
+
+        Returns:
+            Quote data dictionary
+        """
+        if not self.connected:
+            return {"success": False, "error": "Not connected"}
+
+        normalized_symbol = self._normalize_symbol(symbol, market_type or self.config.market)
+
+        params = {
+            "token": self.config.token,
+            "ticket": self._ticket,
+            "code": normalized_symbol,
+        }
+
+        try:
+            status, resp = self._request("GET", "/check_price", params=params)
+            if status == 200 and resp.get("code") == 0:
+                data = resp.get("data", {})
+                return {
+                    "success": True,
+                    "symbol": normalized_symbol,
+                    "price": data.get("price", 0),
+                    "open": data.get("open", 0),
+                    "high": data.get("high", 0),
+                    "low": data.get("low", 0),
+                    "volume": data.get("volume", 0),
+                    "amount": data.get("amount", 0),
+                }
+        except (requests.RequestException, json.JSONDecodeError):
+            pass
+
+        return {"success": False, "error": "Failed to get quote"}
