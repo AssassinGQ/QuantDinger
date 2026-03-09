@@ -293,10 +293,10 @@
         <a-select
           v-model="executionFilter"
           size="small"
-          style="width: 100px; margin-right: 8px;"
+          style="width: 100px; margin-left: auto;"
         >
           <a-select-option value="all">全部</a-select-option>
-          <a-select-option value="success">成功</a-select-option>
+          <a-select-option value="completed">成功</a-select-option>
           <a-select-option value="failed">失败</a-select-option>
         </a-select>
         <div class="panel-badge">{{ filteredExecutions.length }}</div>
