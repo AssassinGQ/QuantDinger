@@ -250,9 +250,9 @@ class IBKRClient(BaseStatefulClient):
                 time.sleep(delay)
         raise ConnectionError(f"Cannot connect to IBKR after {retries} attempts")
 
-    def _health_check(self) -> bool:
+    async def _health_check_async(self) -> bool:
         try:
-            dt = self._ib.reqCurrentTime()
+            dt = await self._ib.reqCurrentTimeAsync()
             return dt is not None
         except Exception:
             return False
@@ -826,7 +826,7 @@ class IBKRClient(BaseStatefulClient):
     def get_account_summary(self) -> Dict[str, Any]:
         async def _task():
             await self._ensure_connected_async()
-            summary = self._ib.accountSummary(self._account)
+            summary = await self._ib.accountSummaryAsync(self._account)
             result = {}
             for item in summary:
                 result[item.tag] = {"value": item.value, "currency": item.currency}

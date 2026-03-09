@@ -894,99 +894,134 @@ class TestOrderContextLifecycle:
 
 # ===========================================================================
 # Integration tests - real IBKR connection
+#
+# Env vars:
+#   IBKR_HOST  (default: ib-gateway)
+#   IBKR_PORT  (default: 4004)
+#
+# Run:
+#   IBKR_HOST=hgq-nas pytest tests/test_ibkr_client.py -v -m integration
 # ===========================================================================
+
+@pytest.fixture(scope="module")
+def ibkr_client():
+    import os
+    host = os.environ.get("IBKR_HOST", "ib-gateway")
+    port = int(os.environ.get("IBKR_PORT", "4004"))
+    config = IBKRConfig(host=host, port=port, client_id=99)
+    client = IBKRClient(config)
+    connected = client.connect()
+    if not connected:
+        pytest.skip(f"Cannot connect to IBKR at {host}:{port}")
+    yield client
+    client.shutdown()
+
 
 @pytest.mark.integration
 class TestRealIBKRConnection:
-    """Integration tests that connect to real IBKR Gateway.
+    """Integration tests — requires a running IB Gateway."""
 
-    Requires IBKR Gateway to be running in a Docker container named 'ib-gateway'.
-    Run with: pytest tests/test_ibkr_client.py -v -m integration
-    """
+    def test_connect(self, ibkr_client):
+        assert ibkr_client.connected
+        assert ibkr_client._account
 
-    def test_connect_to_ib_gateway(self):
-        """Test that client can connect to IB Gateway via docker hostname.
+    def test_get_account_summary(self, ibkr_client):
+        result = ibkr_client.get_account_summary()
+        assert result["success"] is True
+        assert "summary" in result
+        summary = result["summary"]
+        assert "NetLiquidation" in summary, f"Missing NetLiquidation, got keys: {list(summary.keys())}"
+        net_liq = summary["NetLiquidation"]
+        assert "value" in net_liq
+        assert float(net_liq["value"]) > 0, "NetLiquidation should be positive"
 
-        Supports environment variables:
-        - IBKR_HOST: override default host (default: ib-gateway)
-        - IBKR_PORT: override default port (default: 4004)
-        """
-        import os
-        host = os.environ.get("IBKR_HOST", "ib-gateway")
-        port = int(os.environ.get("IBKR_PORT", "4004"))
-        config = IBKRConfig(
-            host=host,
-            port=port,
-            client_id=99,
-        )
-        client = IBKRClient(config)
-        try:
-            success = client.connect()
-            if success:
-                assert client.connected
-                assert client._account
-        finally:
-            if client.connected:
-                client.disconnect()
+    def test_get_account_summary_has_key_fields(self, ibkr_client):
+        result = ibkr_client.get_account_summary()
+        summary = result["summary"]
+        for tag in ("TotalCashValue", "AvailableFunds", "BuyingPower"):
+            assert tag in summary, f"Missing {tag}"
+            assert "value" in summary[tag]
+            assert "currency" in summary[tag]
 
-    def test_get_account_summary(self):
-        """Test get_account_summary which internally calls _ensure_connected."""
-        import os
-        host = os.environ.get("IBKR_HOST", "ib-gateway")
-        port = int(os.environ.get("IBKR_PORT", "4004"))
-        config = IBKRConfig(
-            host=host,
-            port=port,
-            client_id=98,
-        )
-        client = IBKRClient(config)
-        try:
-            result = client.get_account_summary()
-            if result.get("success"):
-                assert client.connected
-                assert "summary" in result
-        finally:
-            if client.connected:
-                client.disconnect()
+    def test_get_pnl(self, ibkr_client):
+        result = ibkr_client.get_pnl()
+        assert result["success"] is True
+        for key in ("dailyPnL", "unrealizedPnL", "realizedPnL"):
+            assert key in result, f"Missing {key}"
+            assert isinstance(result[key], float)
 
-    def test_concurrent_get_account_summary(self):
-        """Test concurrent calls to get_account_summary from multiple threads.
+    def test_get_positions(self, ibkr_client):
+        positions = ibkr_client.get_positions()
+        assert isinstance(positions, list)
+        if positions:
+            pos = positions[0]
+            for field in ("symbol", "quantity", "avgCost", "marketValue", "unrealizedPnL"):
+                assert field in pos, f"Position missing field: {field}"
+            assert isinstance(pos["quantity"], float)
+            assert isinstance(pos["avgCost"], float)
 
-        This simulates the actual runtime scenario where multiple API calls
-        may happen simultaneously.
-        """
-        import os
+    def test_get_positions_normalized(self, ibkr_client):
+        records = ibkr_client.get_positions_normalized()
+        assert isinstance(records, list)
+        if records:
+            r = records[0]
+            assert r.symbol
+            assert r.side in ("long", "short")
+            assert r.quantity > 0
+
+    def test_get_open_orders(self, ibkr_client):
+        orders = ibkr_client.get_open_orders()
+        assert isinstance(orders, list)
+        if orders:
+            o = orders[0]
+            for field in ("orderId", "symbol", "action", "quantity", "status"):
+                assert field in o, f"Order missing field: {field}"
+
+    def test_get_quote(self, ibkr_client):
+        result = ibkr_client.get_quote("AAPL", "USStock")
+        assert result.get("success") is True or "error" in result
+        if result.get("success"):
+            assert result["symbol"] == "AAPL"
+
+    def test_get_connection_status(self, ibkr_client):
+        status = ibkr_client.get_connection_status()
+        assert status["connected"] is True
+        assert status["engine_id"] == "ibkr"
+        assert status["account"]
+
+    def test_concurrent_queries(self, ibkr_client):
+        """Multiple threads calling different query methods simultaneously."""
         import threading
-        host = os.environ.get("IBKR_HOST", "ib-gateway")
-        port = int(os.environ.get("IBKR_PORT", "4004"))
-        config = IBKRConfig(
-            host=host,
-            port=port,
-            client_id=97,
-        )
-        client = IBKRClient(config)
-        results = []
+        results = {}
         errors = []
 
-        def call_get_account_summary():
+        def run(name, fn):
             try:
-                result = client.get_account_summary()
-                results.append(result)
+                results[name] = fn()
             except Exception as e:
-                errors.append(str(e))
+                errors.append(f"{name}: {e}")
 
-        try:
-            client.connect()
-            threads = []
-            for _ in range(3):
-                t = threading.Thread(target=call_get_account_summary)
-                threads.append(t)
-                t.start()
-            for t in threads:
-                t.join(timeout=30)
+        threads = [
+            threading.Thread(target=run, args=("summary", ibkr_client.get_account_summary)),
+            threading.Thread(target=run, args=("pnl", ibkr_client.get_pnl)),
+            threading.Thread(target=run, args=("positions", ibkr_client.get_positions)),
+            threading.Thread(target=run, args=("orders", ibkr_client.get_open_orders)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
 
-            assert len(errors) == 0, f"Errors occurred: {errors}"
-            assert len(results) > 0, "No results returned"
-        finally:
-            if client.connected:
-                client.disconnect()
+        assert not errors, f"Concurrent query errors: {errors}"
+        assert results["summary"]["success"] is True
+        assert results["pnl"]["success"] is True
+        assert isinstance(results["positions"], list)
+        assert isinstance(results["orders"], list)
+
+    def test_disconnect_and_reconnect(self, ibkr_client):
+        ibkr_client.disconnect()
+        assert not ibkr_client.connected
+        time.sleep(3)
+        success = ibkr_client.connect()
+        assert success, "Reconnect failed — IB Gateway may need a few seconds after disconnect"
+        assert ibkr_client.connected
