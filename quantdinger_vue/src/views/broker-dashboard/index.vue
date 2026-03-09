@@ -328,9 +328,9 @@
           </div>
         </template>
         <template slot="exec_amount" slot-scope="text, record">
-          <div>{{ formatNumber(text, 4) }}</div>
+          <div>{{ formatQuantity(text) }}</div>
           <div v-if="record.filled_amount" class="sub-text">
-            {{ $t('broker.filled') }}: {{ formatNumber(record.filled_amount, 4) }}
+            {{ $t('broker.filled') }}: {{ formatQuantity(record.filled_amount) }}
           </div>
         </template>
         <template slot="exec_price" slot-scope="text, record">
@@ -527,6 +527,15 @@ export default {
     formatNumber (num, digits = 2) {
       if (num === undefined || num === null) return '0.00'
       return Number(num).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+    },
+    formatQuantity (num) {
+      if (num === undefined || num === null) return '-'
+      const n = Number(num)
+      if (isNaN(n)) return '-'
+      if (n % 1 === 0) {
+        return n.toLocaleString('en-US', { maximumFractionDigits: 0 })
+      }
+      return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     formatTime (timestamp) {
       if (!timestamp) return '-'
