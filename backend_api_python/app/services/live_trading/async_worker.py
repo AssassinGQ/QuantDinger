@@ -48,6 +48,11 @@ class AsyncWorker:
     def _run(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        try:
+            import nest_asyncio
+            nest_asyncio.apply(self._loop)
+        except ImportError:
+            pass
         self._ready.set()
         self._loop.run_forever()
 
