@@ -293,7 +293,7 @@
         <a-select
           v-model="executionFilter"
           size="small"
-          style="width: 100px; margin-left: auto;"
+          style="width: 100px; margin-left: auto; margin-right: 8px;"
         >
           <a-select-option value="all">全部</a-select-option>
           <a-select-option value="completed">成功</a-select-option>
