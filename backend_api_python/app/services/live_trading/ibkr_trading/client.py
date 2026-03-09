@@ -2,9 +2,10 @@
 Interactive Brokers Trading Client
 
 Uses ib_insync library to connect to TWS or IB Gateway for trading.
-All ib_insync calls are dispatched to a dedicated AsyncWorker event-loop
-thread, keeping the event loop responsive and making this client safe
-to call from any number of strategy / Flask / worker threads.
+All ib_insync calls are dispatched via TaskQueue to IBExecutor
+(dedicated asyncio event-loop thread), keeping the event loop responsive
+and making this client safe to call from any number of strategy / Flask /
+worker threads.  DB / notification operations are dispatched to IOExecutor.
 
 Events: all 25 IB events are subscribed. Business-critical ones drive order
 flow; the rest log for observability.
@@ -14,19 +15,17 @@ import json
 import os
 import time
 import threading
-import asyncio
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List, Callable, TypeVar
+from typing import Optional, Dict, Any, List, Callable
 
 from app.utils.logger import get_logger
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, format_display_symbol
 from app.services.live_trading.ibkr_trading.order_tracker import HARD_TERMINAL
-from app.services.live_trading.async_worker import AsyncWorker
+from app.services.live_trading.async_executor import IBExecutor, IOExecutor
+from app.services.live_trading.task_queue import TaskQueue, IB, IO
 
 logger = get_logger(__name__)
-
-T = TypeVar("T")
 
 ib_insync = None
 
@@ -116,8 +115,10 @@ class IBKRClient(BaseStatefulClient):
         self._ib = None
         self._account = ""
 
-        self._worker = AsyncWorker(name="ibkr")
-        self._worker.start()
+        self._ib_executor = IBExecutor(name="ibkr-loop")
+        self._io_executor = IOExecutor(max_workers=4, name="ibkr-io")
+        self._tq = TaskQueue(executors={IB: self._ib_executor, IO: self._io_executor})
+        self._tq.start()
 
         # Fire-and-forget order context: orderId → IBKROrderContext
         self._order_contexts: Dict[int, IBKROrderContext] = {}
@@ -139,40 +140,17 @@ class IBKRClient(BaseStatefulClient):
 
     # ── submit helpers ──────────────────────────────────────────────
 
-    def _submit_sync(self, fn: Callable, timeout: float = 60.0):
-        """Submit a sync callable to the worker and block for the result."""
-        return self._worker.submit(fn).result(timeout=timeout)
+    def _submit_ib(self, fn: Callable, timeout: float = 60.0):
+        """Submit a callable to the IB event-loop thread and block for result."""
+        return self._tq.submit(fn, target=IB).result(timeout=timeout)
 
-    def _submit_with_retry(
-        self,
-        task_factory: Callable,
-        timeout: float = 15.0,
-        retries: int = 2,
-        delay: float = 1.0,
-    ):
-        """Submit a task with automatic retry on connection failures.
+    def _submit_io(self, fn: Callable, timeout: float = 60.0):
+        """Submit a callable to the IO thread pool and block for result."""
+        return self._tq.submit(fn, target=IO).result(timeout=timeout)
 
-        task_factory: zero-arg callable that returns a new callable or coroutine
-        each time (coroutines can only be awaited once, so retries need fresh ones).
-        """
-        last_err = None
-        for attempt in range(1, retries + 1):
-            try:
-                return self._worker.submit(task_factory()).result(timeout=timeout)
-            except (ConnectionError, asyncio.TimeoutError, TimeoutError) as e:
-                last_err = e
-                logger.warning(
-                    "Attempt %d/%d failed for task: %s", attempt, retries, e,
-                )
-                if attempt < retries:
-                    try:
-                        self._do_connect()
-                    except Exception:
-                        pass
-                    time.sleep(delay)
-            except Exception:
-                raise
-        raise last_err
+    def _fire_io(self, fn: Callable) -> None:
+        """Fire-and-forget: submit a callable to the IO thread pool."""
+        self._tq.submit(fn, target=IO)
 
     # ── connection ──────────────────────────────────────────────────
 
@@ -187,9 +165,10 @@ class IBKRClient(BaseStatefulClient):
 
     def connect(self) -> bool:
         self._reconnect_stop.clear()
-        return self._submit_sync(self._do_connect)
+        return self._submit_ib(self._do_connect, timeout=60)
 
     def _do_connect(self) -> bool:
+        """Must run on the IB event-loop thread (via IBExecutor)."""
         if self.connected:
             self._register_events()
             return True
@@ -198,6 +177,11 @@ class IBKRClient(BaseStatefulClient):
             if self._ib is None:
                 self._ib = ib_insync.IB()
                 self._ib.RequestTimeout = 10
+
+            import asyncio as _aio
+            loop = self._ib_executor.loop
+            if loop is not None:
+                _aio.set_event_loop(loop)
 
             logger.info(
                 "Connecting to IBKR: %s:%s (clientId=%s)",
@@ -236,7 +220,7 @@ class IBKRClient(BaseStatefulClient):
                 finally:
                     logger.info("IBKR disconnected")
         try:
-            self._submit_sync(_do, timeout=10)
+            self._submit_ib(_do, timeout=10)
         except Exception:
             pass
 
@@ -330,14 +314,14 @@ class IBKRClient(BaseStatefulClient):
             return
 
         if status == "Filled" and filled > 0:
-            self._worker.submit(lambda: self._handle_fill(ctx, filled, avg_price))
+            self._fire_io(lambda: self._handle_fill(ctx, filled, avg_price))
             self._order_contexts.pop(order_id, None)
         elif status == "Cancelled" and filled > 0:
-            self._worker.submit(lambda: self._handle_fill(ctx, filled, avg_price))
+            self._fire_io(lambda: self._handle_fill(ctx, filled, avg_price))
             self._order_contexts.pop(order_id, None)
         elif status in HARD_TERMINAL:
             error_msgs = [e.message for e in (trade.log or []) if e.message]
-            self._worker.submit(lambda: self._handle_reject(ctx, status, error_msgs))
+            self._fire_io(lambda: self._handle_reject(ctx, status, error_msgs))
             self._order_contexts.pop(order_id, None)
 
     def _on_exec_details(self, trade, fill):
@@ -398,7 +382,7 @@ class IBKRClient(BaseStatefulClient):
             if self._reconnect_stop.wait(timeout=delay):
                 return
             try:
-                result = self._worker.submit(self._do_connect).result(timeout=30)
+                result = self._tq.submit(self._do_connect, target=IB).result(timeout=30)
                 if result:
                     logger.info("[IBKR-Reconnect] reconnected successfully")
                     return
@@ -690,7 +674,7 @@ class IBKRClient(BaseStatefulClient):
             return True, ""
 
         try:
-            return self._submit_with_retry(lambda: _task, timeout=30.0, retries=1)
+            return self._submit_ib(_task, timeout=30.0)
         except Exception as e:
             logger.error(
                 "[RTH] is_market_open failed for %s (%s): %s, "
@@ -749,7 +733,7 @@ class IBKRClient(BaseStatefulClient):
             )
 
         try:
-            return self._submit_sync(_do, timeout=15.0)
+            return self._submit_ib(_do, timeout=15.0)
         except Exception as e:
             logger.error("Order failed: %s", e)
             return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
@@ -802,7 +786,7 @@ class IBKRClient(BaseStatefulClient):
             )
 
         try:
-            return self._submit_sync(_do, timeout=15.0)
+            return self._submit_ib(_do, timeout=15.0)
         except Exception as e:
             logger.error("Limit order failed: %s", e)
             return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
@@ -819,7 +803,7 @@ class IBKRClient(BaseStatefulClient):
             return False
 
         try:
-            return self._submit_sync(_do, timeout=15.0)
+            return self._submit_ib(_do, timeout=15.0)
         except Exception as e:
             logger.error("Cancel order failed: %s", e)
             return False
@@ -836,7 +820,7 @@ class IBKRClient(BaseStatefulClient):
             return {"account": self._account, "summary": result, "success": True}
 
         try:
-            return self._submit_with_retry(lambda: _task, timeout=15.0)
+            return self._submit_ib(_task, timeout=15.0)
         except Exception as e:
             logger.error("Get account summary failed: %s", e)
             return {"success": False, "error": str(e)}
@@ -861,7 +845,7 @@ class IBKRClient(BaseStatefulClient):
             return {"success": True, "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
 
         try:
-            return self._submit_with_retry(lambda: _task, timeout=15.0)
+            return self._submit_ib(_task, timeout=15.0)
         except Exception as e:
             logger.error("Get PnL failed: %s", e)
             return {"success": False, "error": str(e), "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
@@ -929,7 +913,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit_with_retry(lambda: _task, timeout=15.0)
+            return self._submit_ib(_task, timeout=15.0)
         except Exception as e:
             logger.error("Get positions failed: %s", e)
             return []
@@ -974,7 +958,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit_with_retry(lambda: _task, timeout=15.0)
+            return self._submit_ib(_task, timeout=15.0)
         except Exception as e:
             logger.error("Get orders failed: %s", e)
             return []
@@ -1001,7 +985,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit_with_retry(lambda: _task, timeout=15.0)
+            return self._submit_ib(_task, timeout=15.0)
         except Exception as e:
             logger.error("Get quote failed: %s", e)
             return {"success": False, "error": str(e)}
@@ -1018,7 +1002,7 @@ class IBKRClient(BaseStatefulClient):
         }
 
     def shutdown(self):
-        self._worker.shutdown()
+        self._tq.shutdown()
 
 
 # ── Global singleton ──────────────────────────────────────────────

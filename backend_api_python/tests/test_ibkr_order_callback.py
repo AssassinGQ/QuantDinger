@@ -2,7 +2,7 @@
 Tests for IBKR fire-and-forget order callback flow.
 
 Verifies that event callbacks (_on_order_status) correctly dispatch
-_handle_fill / _handle_reject to the AsyncWorker IO pool, and that
+_handle_fill / _handle_reject to the IO executor via TaskQueue, and that
 the DB update logic in those handlers is correct.
 """
 import threading
@@ -27,8 +27,11 @@ def _make_client():
     client._events_registered = False
     client._reconnect_thread = None
     client._reconnect_stop = threading.Event()
-    client._worker = MagicMock()
-    client._worker.submit.return_value = MagicMock()
+    client._tq = MagicMock()
+    client._ib_executor = MagicMock()
+    client._io_executor = MagicMock()
+    client._tq.submit.return_value = MagicMock()
+    client._fire_io = lambda fn: fn()
     return client
 
 
@@ -69,101 +72,130 @@ class TestCallbackDispatchRouting:
 
     def test_filled_dispatches_handle_fill(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=1)
         client._order_contexts[1] = ctx
 
         client._on_order_status(_make_trade(1, "Filled", 10.0, 155.0))
 
         assert 1 not in client._order_contexts
-        client._worker.submit.assert_called_once()
-        handler_fn = client._worker.submit.call_args[0][0]
-        assert callable(handler_fn)
+        assert len(fire_calls) == 1
+        assert callable(fire_calls[0])
 
     def test_cancelled_with_fill_dispatches_handle_fill(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=2)
         client._order_contexts[2] = ctx
 
         client._on_order_status(_make_trade(2, "Cancelled", 5.0, 300.0))
 
         assert 2 not in client._order_contexts
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1
 
     def test_inactive_dispatches_handle_reject(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=3)
         client._order_contexts[3] = ctx
 
         client._on_order_status(_make_trade(3, "Inactive", 0, 0, ["Order rejected"]))
 
         assert 3 not in client._order_contexts
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1
 
     def test_api_error_dispatches_handle_reject(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=4)
         client._order_contexts[4] = ctx
 
         client._on_order_status(_make_trade(4, "ApiError", 0, 0, ["Error 10243"]))
 
         assert 4 not in client._order_contexts
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1
 
     def test_api_cancelled_dispatches_handle_reject(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=5)
         client._order_contexts[5] = ctx
 
         client._on_order_status(_make_trade(5, "ApiCancelled", 0, 0))
 
         assert 5 not in client._order_contexts
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1
 
     def test_validation_error_dispatches_handle_reject(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=6)
         client._order_contexts[6] = ctx
 
         client._on_order_status(_make_trade(6, "ValidationError", 0, 0))
 
         assert 6 not in client._order_contexts
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1
 
     def test_submitted_does_not_dispatch(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=7)
         client._order_contexts[7] = ctx
 
         client._on_order_status(_make_trade(7, "Submitted", 0, 0))
 
         assert 7 in client._order_contexts
-        client._worker.submit.assert_not_called()
+        assert len(fire_calls) == 0
 
     def test_presubmitted_does_not_dispatch(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=8)
         client._order_contexts[8] = ctx
 
         client._on_order_status(_make_trade(8, "PreSubmitted", 0, 0))
 
         assert 8 in client._order_contexts
-        client._worker.submit.assert_not_called()
+        assert len(fire_calls) == 0
 
     def test_cancelled_zero_fills_does_not_dispatch(self):
         """Cancelled(filled=0) is not in HARD_TERMINAL — IBKR may recover."""
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = _make_ctx(order_id=9)
         client._order_contexts[9] = ctx
 
         client._on_order_status(_make_trade(9, "Cancelled", 0, 0))
 
         assert 9 in client._order_contexts
-        client._worker.submit.assert_not_called()
+        assert len(fire_calls) == 0
 
     def test_untracked_order_ignored(self):
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         client._on_order_status(_make_trade(999, "Filled", 10.0, 155.0))
-        client._worker.submit.assert_not_called()
+        assert len(fire_calls) == 0
 
 
 # ===========================================================================
@@ -291,6 +323,9 @@ class TestFullOrderLifecycle:
         mock_ib_mod.Stock = MagicMock()
 
         client = _make_client()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         trade_mock = MagicMock()
         trade_mock.order.orderId = 777
         trade_mock.orderStatus.status = "Submitted"
@@ -298,9 +333,9 @@ class TestFullOrderLifecycle:
         client._ib.qualifyContracts.return_value = [MagicMock()]
         client._ib.isConnected.return_value = True
 
-        def sync_submit(fn, timeout=60.0):
+        def sync_ib(fn, timeout=60.0):
             return fn()
-        client._submit_sync = sync_submit
+        client._submit_ib = sync_ib
 
         result = client.place_market_order(
             "AAPL", "buy", 10, "USStock",
@@ -322,4 +357,4 @@ class TestFullOrderLifecycle:
         client._on_order_status(fill_trade)
 
         assert 777 not in client._order_contexts
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1

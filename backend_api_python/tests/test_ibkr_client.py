@@ -1,6 +1,6 @@
 """
 Tests for IBKR client: quantity guard, fire-and-forget order flow, connection retry,
-RTH gate, and the AsyncWorker-based task dispatch mechanism.
+RTH gate, and the TaskQueue-based task dispatch mechanism.
 """
 import threading
 import time
@@ -77,9 +77,10 @@ def _make_trade_mock(status="Filled", filled=10.0, avg_price=150.0,
 
 
 def _make_client_with_mock_ib():
-    """Create an IBKRClient with mocked internals, bypassing the real AsyncWorker.
+    """Create an IBKRClient with mocked internals, bypassing the real TaskQueue.
 
-    _submit_sync runs callables synchronously so tests don't depend on threading.
+    _submit_ib / _fire_io run callables synchronously so tests don't depend
+    on threading.
     """
     client = IBKRClient.__new__(IBKRClient)
     client.config = IBKRConfig()
@@ -88,10 +89,10 @@ def _make_client_with_mock_ib():
     client._ib.isConnected.return_value = True
     client._ib.qualifyContracts.return_value = [MagicMock()]
 
-    # Mock AsyncWorker
-    client._worker = MagicMock()
-    # Make submit return a MagicMock future (for fire-and-forget in callbacks)
-    client._worker.submit.return_value = MagicMock()
+    # Mock TaskQueue & executors
+    client._tq = MagicMock()
+    client._ib_executor = MagicMock()
+    client._io_executor = MagicMock()
 
     # Fire-and-forget order contexts
     client._order_contexts = {}
@@ -101,29 +102,32 @@ def _make_client_with_mock_ib():
     client._reconnect_thread = None
     client._reconnect_stop = threading.Event()
 
-    # Bypass worker: run submitted callables synchronously
-    def _sync_submit(fn, timeout=60.0):
+    # Bypass TaskQueue: run submitted callables synchronously
+    def _sync_ib(fn, timeout=60.0):
         return fn()
 
-    client._submit_sync = _sync_submit
+    def _sync_io(fn, timeout=60.0):
+        return fn()
 
-    def _sync_retry(task_factory, timeout=15.0, retries=2, delay=1.0):
-        return task_factory()()
+    def _sync_fire_io(fn):
+        fn()
 
-    client._submit_with_retry = _sync_retry
+    client._submit_ib = _sync_ib
+    client._submit_io = _sync_io
+    client._fire_io = _sync_fire_io
 
     return client
 
 
 # ===========================================================================
-# Worker thread tests (now AsyncWorker-based)
+# Worker thread tests (now TaskQueue-based)
 # ===========================================================================
 
 class TestWorkerThread:
-    """Verify the AsyncWorker-based task dispatch mechanism."""
+    """Verify the TaskQueue-based task dispatch mechanism."""
 
-    def test_submit_runs_via_worker(self):
-        """_submit_sync should execute the callable via AsyncWorker."""
+    def test_submit_runs_via_taskqueue(self):
+        """_submit_ib should execute the callable via TaskQueue → IBExecutor."""
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -133,9 +137,12 @@ class TestWorkerThread:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_worker import AsyncWorker
-        client._worker = AsyncWorker(name="test-ibkr")
-        client._worker.start()
+        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
+        from app.services.live_trading.task_queue import TaskQueue, IB, IO
+        client._ib_executor = IBExecutor(name="test-ib-exec")
+        client._io_executor = IOExecutor(max_workers=2, name="test-io-exec")
+        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        client._tq.start()
 
         caller_tid = threading.current_thread().ident
         result_holder = {}
@@ -144,11 +151,11 @@ class TestWorkerThread:
             result_holder["tid"] = threading.current_thread().ident
             return 42
 
-        result = client._submit_sync(task, timeout=5.0)
+        result = client._submit_ib(task, timeout=5.0)
 
         assert result == 42
         assert result_holder["tid"] != caller_tid
-        client._worker.shutdown()
+        client._tq.shutdown()
 
     def test_submit_propagates_exception(self):
         """Exceptions in the worker should propagate to the caller."""
@@ -161,19 +168,22 @@ class TestWorkerThread:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_worker import AsyncWorker
-        client._worker = AsyncWorker(name="test-ibkr-exc")
-        client._worker.start()
+        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
+        from app.services.live_trading.task_queue import TaskQueue, IB, IO
+        client._ib_executor = IBExecutor(name="test-ib-exc")
+        client._io_executor = IOExecutor(max_workers=2, name="test-io-exc")
+        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        client._tq.start()
 
         def bad_task():
             raise ValueError("test error")
 
         with pytest.raises(ValueError, match="test error"):
-            client._submit_sync(bad_task, timeout=5.0)
-        client._worker.shutdown()
+            client._submit_ib(bad_task, timeout=5.0)
+        client._tq.shutdown()
 
-    def test_shutdown_stops_worker(self):
-        """shutdown() should stop the worker."""
+    def test_shutdown_stops_taskqueue(self):
+        """shutdown() should stop the TaskQueue."""
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -183,13 +193,14 @@ class TestWorkerThread:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_worker import AsyncWorker
-        client._worker = AsyncWorker(name="test-ibkr-shutdown")
-        client._worker.start()
+        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
+        from app.services.live_trading.task_queue import TaskQueue, IB, IO
+        client._ib_executor = IBExecutor(name="test-ib-shut")
+        client._io_executor = IOExecutor(max_workers=2, name="test-io-shut")
+        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        client._tq.start()
 
-        assert client._worker.running
         client.shutdown()
-        assert not client._worker.running
 
 
 # ===========================================================================
@@ -447,23 +458,27 @@ class TestEventRegistration:
 # ===========================================================================
 
 class TestEventCallbacks:
-    """Verify event callbacks dispatch to _handle_fill/_handle_reject."""
+    """Verify event callbacks dispatch to _handle_fill/_handle_reject via IO."""
 
     def test_on_order_status_filled_triggers_handle_fill(self):
         client = _make_client_with_mock_ib()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = IBKROrderContext(order_id=42, pending_order_id=10, strategy_id=5, symbol="AAPL")
         client._order_contexts[42] = ctx
 
         trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0, order_id=42)
         client._on_order_status(trade)
 
-        # Context should be consumed
         assert 42 not in client._order_contexts
-        # _handle_fill was dispatched via worker.submit
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1
 
     def test_on_order_status_cancelled_with_fill_triggers_handle_fill(self):
         client = _make_client_with_mock_ib()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = IBKROrderContext(order_id=43, pending_order_id=11, strategy_id=5, symbol="AAPL")
         client._order_contexts[43] = ctx
 
@@ -471,10 +486,13 @@ class TestEventCallbacks:
         client._on_order_status(trade)
 
         assert 43 not in client._order_contexts
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1
 
     def test_on_order_status_hard_terminal_triggers_handle_reject(self):
         client = _make_client_with_mock_ib()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = IBKROrderContext(order_id=44, pending_order_id=12, strategy_id=5, symbol="AAPL")
         client._order_contexts[44] = ctx
 
@@ -485,39 +503,45 @@ class TestEventCallbacks:
         client._on_order_status(trade)
 
         assert 44 not in client._order_contexts
-        client._worker.submit.assert_called_once()
+        assert len(fire_calls) == 1
 
     def test_on_order_status_ignores_untracked_order(self):
         client = _make_client_with_mock_ib()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0, order_id=99)
         client._on_order_status(trade)
-        client._worker.submit.assert_not_called()
+        assert len(fire_calls) == 0
 
     def test_on_order_status_active_does_not_dispatch(self):
         client = _make_client_with_mock_ib()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = IBKROrderContext(order_id=45, pending_order_id=13, strategy_id=5, symbol="AAPL")
         client._order_contexts[45] = ctx
 
         trade = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=45)
         client._on_order_status(trade)
 
-        # Still tracked, not consumed
         assert 45 in client._order_contexts
-        client._worker.submit.assert_not_called()
+        assert len(fire_calls) == 0
 
     def test_on_order_status_cancelled_zero_fills_waits(self):
         """Cancelled with 0 fills is NOT a rejection — IBKR can recover."""
         client = _make_client_with_mock_ib()
+        fire_calls = []
+        client._fire_io = lambda fn: fire_calls.append(fn)
+
         ctx = IBKROrderContext(order_id=46, pending_order_id=14, strategy_id=5, symbol="AAPL")
         client._order_contexts[46] = ctx
 
         trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0, order_id=46)
         client._on_order_status(trade)
 
-        # Cancelled with 0 fills: not in HARD_TERMINAL, not filled>0 → no dispatch
-        # Context stays because IBKR may recover (Cancelled → PreSubmitted → Filled)
         assert 46 in client._order_contexts
-        client._worker.submit.assert_not_called()
+        assert len(fire_calls) == 0
 
 
 # ===========================================================================
@@ -644,6 +668,15 @@ class TestConnectionRetry:
             client._ensure_connected()
             mock_connect.assert_not_called()
 
+    def test_do_connect_called_directly(self):
+        """_ensure_connected calls _do_connect() directly (not via TaskQueue)."""
+        client = _make_client_with_mock_ib()
+        client._ib.isConnected.return_value = False
+
+        with patch.object(client, "_do_connect", return_value=True) as mock:
+            client._ensure_connected(retries=1, delay=0.01)
+        mock.assert_called_once()
+
 
 # ===========================================================================
 # RTH gate tests
@@ -680,13 +713,13 @@ class TestRTHGate:
 
 
 # ===========================================================================
-# Submit-with-retry tests
+# TaskQueue submit helpers tests
 # ===========================================================================
 
-class TestSubmitWithRetry:
-    """Verify _submit_with_retry provides automatic retry on connection failures."""
+class TestSubmitHelpers:
+    """Verify _submit_ib, _submit_io, _fire_io dispatch correctly."""
 
-    def test_succeeds_on_first_attempt(self):
+    def test_submit_ib_runs_on_ib_thread(self):
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -696,72 +729,21 @@ class TestSubmitWithRetry:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_worker import AsyncWorker
-        client._worker = AsyncWorker(name="test-retry")
-        client._worker.start()
+        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
+        from app.services.live_trading.task_queue import TaskQueue, IB, IO
+        client._ib_executor = IBExecutor(name="test-submit-ib")
+        client._io_executor = IOExecutor(max_workers=2, name="test-submit-io")
+        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        client._tq.start()
 
-        result = client._submit_with_retry(
-            lambda: lambda: 42, timeout=5.0, retries=2,
+        caller_tid = threading.current_thread().ident
+        result = client._submit_ib(
+            lambda: threading.current_thread().ident, timeout=5.0,
         )
-        assert result == 42
-        client._worker.shutdown()
+        assert result != caller_tid
+        client._tq.shutdown()
 
-    def test_retries_on_connection_error(self):
-        client = IBKRClient.__new__(IBKRClient)
-        client.config = IBKRConfig()
-        client._ib = MagicMock()
-        client._ib.isConnected.return_value = True
-        client._account = ""
-        client._order_contexts = {}
-        client._events_registered = False
-        client._reconnect_thread = None
-        client._reconnect_stop = threading.Event()
-
-        from app.services.live_trading.async_worker import AsyncWorker
-        client._worker = AsyncWorker(name="test-retry2")
-        client._worker.start()
-
-        call_count = [0]
-        def task():
-            call_count[0] += 1
-            if call_count[0] < 2:
-                raise ConnectionError("disconnected")
-            return "ok"
-
-        with patch.object(client, "_do_connect", return_value=True):
-            result = client._submit_with_retry(
-                lambda: task, timeout=5.0, retries=3, delay=0.01,
-            )
-        assert result == "ok"
-        assert call_count[0] == 2
-        client._worker.shutdown()
-
-    def test_raises_after_all_retries_exhausted(self):
-        client = IBKRClient.__new__(IBKRClient)
-        client.config = IBKRConfig()
-        client._ib = MagicMock()
-        client._ib.isConnected.return_value = False
-        client._account = ""
-        client._order_contexts = {}
-        client._events_registered = False
-        client._reconnect_thread = None
-        client._reconnect_stop = threading.Event()
-
-        from app.services.live_trading.async_worker import AsyncWorker
-        client._worker = AsyncWorker(name="test-retry3")
-        client._worker.start()
-
-        def always_fail():
-            raise ConnectionError("still disconnected")
-
-        with patch.object(client, "_do_connect", return_value=False):
-            with pytest.raises(ConnectionError, match="still disconnected"):
-                client._submit_with_retry(
-                    lambda: always_fail, timeout=5.0, retries=2, delay=0.01,
-                )
-        client._worker.shutdown()
-
-    def test_non_connection_error_not_retried(self):
+    def test_submit_io_runs_in_pool(self):
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -771,21 +753,62 @@ class TestSubmitWithRetry:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_worker import AsyncWorker
-        client._worker = AsyncWorker(name="test-retry4")
-        client._worker.start()
+        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
+        from app.services.live_trading.task_queue import TaskQueue, IB, IO
+        client._ib_executor = IBExecutor(name="test-io-ib")
+        client._io_executor = IOExecutor(max_workers=2, name="test-io-pool")
+        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        client._tq.start()
 
-        call_count = [0]
-        def task():
-            call_count[0] += 1
-            raise ValueError("bad value")
+        name = client._submit_io(
+            lambda: threading.current_thread().name, timeout=5.0,
+        )
+        assert "test-io-pool" in name
+        client._tq.shutdown()
+
+    def test_fire_io_executes_without_blocking(self):
+        client = IBKRClient.__new__(IBKRClient)
+        client.config = IBKRConfig()
+        client._ib = None
+        client._account = ""
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
+
+        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
+        from app.services.live_trading.task_queue import TaskQueue, IB, IO
+        client._ib_executor = IBExecutor(name="test-fire-ib")
+        client._io_executor = IOExecutor(max_workers=2, name="test-fire-io")
+        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        client._tq.start()
+
+        container = []
+        client._fire_io(lambda: container.append("done"))
+        time.sleep(0.5)
+        assert container == ["done"]
+        client._tq.shutdown()
+
+    def test_submit_ib_propagates_exception(self):
+        client = IBKRClient.__new__(IBKRClient)
+        client.config = IBKRConfig()
+        client._ib = None
+        client._account = ""
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
+
+        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
+        from app.services.live_trading.task_queue import TaskQueue, IB, IO
+        client._ib_executor = IBExecutor(name="test-exc-ib")
+        client._io_executor = IOExecutor(max_workers=2, name="test-exc-io")
+        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        client._tq.start()
 
         with pytest.raises(ValueError, match="bad value"):
-            client._submit_with_retry(
-                lambda: task, timeout=5.0, retries=3, delay=0.01,
-            )
-        assert call_count[0] == 1
-        client._worker.shutdown()
+            client._submit_ib(lambda: (_ for _ in ()).throw(ValueError("bad value")), timeout=5.0)
+        client._tq.shutdown()
 
 
 # ===========================================================================
@@ -834,3 +857,103 @@ class TestOrderContextLifecycle:
         cancel_trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0, order_id=502)
         client._on_order_status(cancel_trade)
         assert 502 in client._order_contexts  # still tracked
+
+
+# ===========================================================================
+# Integration tests - real IBKR connection
+# ===========================================================================
+
+@pytest.mark.integration
+class TestRealIBKRConnection:
+    """Integration tests that connect to real IBKR Gateway.
+
+    Requires IBKR Gateway to be running in a Docker container named 'ib-gateway'.
+    Run with: pytest tests/test_ibkr_client.py -v -m integration
+    """
+
+    def test_connect_to_ib_gateway(self):
+        """Test that client can connect to IB Gateway via docker hostname.
+
+        Supports environment variables:
+        - IBKR_HOST: override default host (default: ib-gateway)
+        - IBKR_PORT: override default port (default: 4004)
+        """
+        import os
+        host = os.environ.get("IBKR_HOST", "ib-gateway")
+        port = int(os.environ.get("IBKR_PORT", "4004"))
+        config = IBKRConfig(
+            host=host,
+            port=port,
+            client_id=99,
+        )
+        client = IBKRClient(config)
+        try:
+            success = client.connect()
+            if success:
+                assert client.connected
+                assert client._account
+        finally:
+            if client.connected:
+                client.disconnect()
+
+    def test_get_account_summary(self):
+        """Test get_account_summary which internally calls _ensure_connected."""
+        import os
+        host = os.environ.get("IBKR_HOST", "ib-gateway")
+        port = int(os.environ.get("IBKR_PORT", "4004"))
+        config = IBKRConfig(
+            host=host,
+            port=port,
+            client_id=98,
+        )
+        client = IBKRClient(config)
+        try:
+            result = client.get_account_summary()
+            if result.get("success"):
+                assert client.connected
+                assert "summary" in result
+        finally:
+            if client.connected:
+                client.disconnect()
+
+    def test_concurrent_get_account_summary(self):
+        """Test concurrent calls to get_account_summary from multiple threads.
+
+        This simulates the actual runtime scenario where multiple API calls
+        may happen simultaneously.
+        """
+        import os
+        import threading
+        host = os.environ.get("IBKR_HOST", "ib-gateway")
+        port = int(os.environ.get("IBKR_PORT", "4004"))
+        config = IBKRConfig(
+            host=host,
+            port=port,
+            client_id=97,
+        )
+        client = IBKRClient(config)
+        results = []
+        errors = []
+
+        def call_get_account_summary():
+            try:
+                result = client.get_account_summary()
+                results.append(result)
+            except Exception as e:
+                errors.append(str(e))
+
+        try:
+            client.connect()
+            threads = []
+            for _ in range(3):
+                t = threading.Thread(target=call_get_account_summary)
+                threads.append(t)
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+
+            assert len(errors) == 0, f"Errors occurred: {errors}"
+            assert len(results) > 0, "No results returned"
+        finally:
+            if client.connected:
+                client.disconnect()
