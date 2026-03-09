@@ -63,6 +63,14 @@ class StatefulClientRunner(OrderRunner):
                 side=action,
                 quantity=ctx.amount,
                 market_type=market_type,
+                pending_order_id=ctx.order_id,
+                strategy_id=ctx.strategy_id,
+                signal_type=ctx.signal_type,
+                payload=ctx.payload,
+                order_row=ctx.order_row,
+                notification_config=ctx.notification_config,
+                strategy_name=ctx.strategy_name,
+                market_category=ctx.market_category,
             )
 
             if not result.success:
@@ -71,23 +79,15 @@ class StatefulClientRunner(OrderRunner):
                     error=f"{eid}_order_failed:{result.message or ''}",
                 )
 
-            filled = float(result.filled or 0.0)
-            avg_price = float(result.avg_price or 0.0)
             exchange_order_id = str(result.order_id or "")
-
-            ref_price = float(
-                ctx.payload.get("ref_price") or ctx.payload.get("price") or ctx.order_row.get("price") or 0.0
-            )
-            if filled > 0 and avg_price <= 0 and ref_price > 0:
-                avg_price = ref_price
 
             return ExecutionResult(
                 success=True,
                 exchange_id=eid,
                 exchange_order_id=exchange_order_id,
-                filled=filled,
-                avg_price=avg_price,
-                note=f"{eid}_order_sent",
+                filled=0.0,
+                avg_price=0.0,
+                note=f"{eid}_order_submitted",
                 raw=result.raw or {},
             )
         except Exception as e:

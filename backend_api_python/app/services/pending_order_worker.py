@@ -425,70 +425,25 @@ class PendingOrderWorker:
             )
             return
 
-        filled = float(result.filled or 0.0)
-        avg_price = float(result.avg_price or 0.0)
-        ref_price = float(payload.get("ref_price") or payload.get("price") or order_row.get("price") or 0.0)
-        executed_at = int(time.time())
-
+        # Fire-and-forget: record "submitted" status only.
+        # Fill details (position updates, trade records, notifications)
+        # are handled asynchronously by IBKRClient event callbacks.
         try:
             records.mark_order_sent(
                 order_id=order_id,
-                note=result.note or "live_order_sent",
+                note=result.note or "live_order_submitted",
                 exchange_id=result.exchange_id,
                 exchange_order_id=result.exchange_order_id,
                 exchange_response_json=json.dumps(result.raw or {}, ensure_ascii=False),
-                filled=filled,
-                avg_price=avg_price,
-                executed_at=executed_at,
+                filled=0.0,
+                avg_price=0.0,
             )
             console_print(
-                f"[worker] order sent: strategy_id={strategy_id} pending_id={order_id} "
-                f"exchange={result.exchange_id} order_id={result.exchange_order_id} filled={filled} avg={avg_price}"
+                f"[worker] order submitted: strategy_id={strategy_id} pending_id={order_id} "
+                f"exchange={result.exchange_id} order_id={result.exchange_order_id}"
             )
         except Exception as e:
             logger.warning(f"mark_sent failed: pending_id={order_id}, err={e}")
-
-        _pnl_profit: Optional[float] = None
-        _pnl_entry: float = 0.0
-        try:
-            sig_lower = str(signal_type or "").strip().lower()
-            _side = "long" if "long" in sig_lower else ("short" if "short" in sig_lower else "")
-            if _side:
-                _cur_pos = records._fetch_position(strategy_id, str(symbol), _side)
-                _pnl_entry = float(_cur_pos.get("entry_price") or 0.0)
-        except Exception:
-            pass
-
-        try:
-            if filled > 0 and avg_price > 0:
-                logger.info(
-                    f"live record begin: pending_id={order_id} strategy_id={strategy_id} symbol={symbol} "
-                    f"signal={signal_type} filled={filled} avg_price={avg_price} "
-                    f"fee={result.fee} fee_ccy={result.fee_ccy}"
-                )
-                _pnl_profit, _pos = records.apply_fill_to_local_position(
-                    strategy_id=strategy_id,
-                    symbol=str(symbol),
-                    signal_type=str(signal_type),
-                    filled=filled,
-                    avg_price=avg_price,
-                )
-                if (_pnl_profit is not None and result.fee > 0
-                        and str(result.fee_ccy or "").upper() in ("USDT", "USDC", "USD")):
-                    _pnl_profit = float(_pnl_profit) - float(result.fee)
-                records.record_trade(
-                    strategy_id=strategy_id,
-                    symbol=str(symbol),
-                    trade_type=str(signal_type),
-                    price=avg_price,
-                    amount=filled,
-                    commission=float(result.fee or 0.0),
-                    commission_ccy=str(result.fee_ccy or "").strip().upper(),
-                    profit=_pnl_profit,
-                )
-                logger.info(f"live record done: pending_id={order_id} strategy_id={strategy_id}")
-        except Exception as e:
-            logger.warning(f"record_trade/update_position failed: pending_id={order_id}, err={e}")
 
         self._notify_live_best_effort(
             order_id=order_id,
@@ -496,13 +451,7 @@ class PendingOrderWorker:
             payload=payload,
             order_row=order_row,
             live_ctx=live_ctx,
-            status="filled",
+            status="submitted",
             exchange_id=result.exchange_id,
             exchange_order_id=result.exchange_order_id,
-            price_hint=avg_price if avg_price > 0 else ref_price,
-            amount_hint=filled if filled > 0 else amount,
-            filled_price=avg_price,
-            filled_amount=filled,
-            profit=_pnl_profit,
-            entry_price=_pnl_entry,
         )

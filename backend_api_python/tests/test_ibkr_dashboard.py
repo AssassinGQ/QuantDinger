@@ -187,7 +187,7 @@ _MOCK_TOKEN_PAYLOAD = {
 class TestIbkrDashboardEndpoint:
 
     @patch("app.utils.auth.verify_token", return_value=_MOCK_TOKEN_PAYLOAD)
-    @patch("app.routes.ibkr._get_client")
+    @patch("app.routes.ibkr.get_ibkr_client")
     @patch("app.routes.ibkr.get_db_connection")
     def test_disconnected_returns_data(self, mock_db, mock_client, _vt):
         """When IBKR is disconnected, endpoint still returns DB data."""
@@ -215,7 +215,7 @@ class TestIbkrDashboardEndpoint:
             assert isinstance(data["executions"], list)
 
     @patch("app.utils.auth.verify_token", return_value=_MOCK_TOKEN_PAYLOAD)
-    @patch("app.routes.ibkr._get_client")
+    @patch("app.routes.ibkr.get_ibkr_client")
     @patch("app.routes.ibkr.get_db_connection")
     def test_connected_returns_account_data(self, mock_db, mock_client, _vt):
         """When IBKR is connected, endpoint returns account + positions."""
@@ -269,7 +269,7 @@ class TestIbkrDashboardEndpoint:
             assert len(data["open_orders"]) == 1
 
     @patch("app.utils.auth.verify_token", return_value=_MOCK_TOKEN_PAYLOAD)
-    @patch("app.routes.ibkr._get_client")
+    @patch("app.routes.ibkr.get_ibkr_client")
     @patch("app.routes.ibkr.get_db_connection")
     def test_ibkr_exception_still_returns_db_data(self, mock_db, mock_client, _vt):
         """If IBKR client throws, the endpoint should still return DB data."""
@@ -288,7 +288,7 @@ class TestIbkrDashboardEndpoint:
             assert isinstance(data["performance"], dict)
 
     @patch("app.utils.auth.verify_token", return_value=_MOCK_TOKEN_PAYLOAD)
-    @patch("app.routes.ibkr._get_client")
+    @patch("app.routes.ibkr.get_ibkr_client")
     @patch("app.routes.ibkr.get_db_connection")
     def test_execution_status_normalization(self, mock_db, mock_client, _vt):
         """Status 'sent' → 'completed', 'deferred' → 'pending'."""
@@ -343,7 +343,7 @@ class TestIbkrDashboardEndpoint:
             assert execs[1]["filled_price"] == 50.0
 
     @patch("app.utils.auth.verify_token", return_value=_MOCK_TOKEN_PAYLOAD)
-    @patch("app.routes.ibkr._get_client")
+    @patch("app.routes.ibkr.get_ibkr_client")
     @patch("app.routes.ibkr.get_db_connection")
     def test_trade_datetime_conversion(self, mock_db, mock_client, _vt):
         """datetime objects in created_at are converted to unix timestamps."""
@@ -372,7 +372,7 @@ class TestIbkrDashboardEndpoint:
             assert ts == int(dt.timestamp())
 
     @patch("app.utils.auth.verify_token", return_value=_MOCK_TOKEN_PAYLOAD)
-    @patch("app.routes.ibkr._get_client")
+    @patch("app.routes.ibkr.get_ibkr_client")
     @patch("app.routes.ibkr.get_db_connection")
     def test_performance_stats_from_db(self, mock_db, mock_client, _vt):
         """Performance stats are computed from DB trade data."""

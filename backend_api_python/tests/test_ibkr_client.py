@@ -1,18 +1,17 @@
 """
-Tests for IBKR client: quantity guard, order status polling, connection retry,
-RTH gate, and the worker-thread serialization mechanism.
+Tests for IBKR client: quantity guard, fire-and-forget order flow, connection retry,
+RTH gate, and the AsyncWorker-based task dispatch mechanism.
 """
 import threading
 import time
 from unittest.mock import MagicMock, patch, PropertyMock
-from concurrent.futures import Future
 
 import pytest
 
 from app.services.live_trading.ibkr_trading.client import (
     IBKRClient,
     IBKRConfig,
-    _SENTINEL,
+    IBKROrderContext,
 )
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 
@@ -78,10 +77,9 @@ def _make_trade_mock(status="Filled", filled=10.0, avg_price=150.0,
 
 
 def _make_client_with_mock_ib():
-    """Create an IBKRClient with mocked internals, bypassing real worker thread.
+    """Create an IBKRClient with mocked internals, bypassing the real AsyncWorker.
 
-    The worker thread is started but _submit is patched to run synchronously,
-    so tests don't depend on threading.
+    _submit_sync runs callables synchronously so tests don't depend on threading.
     """
     client = IBKRClient.__new__(IBKRClient)
     client.config = IBKRConfig()
@@ -90,49 +88,54 @@ def _make_client_with_mock_ib():
     client._ib.isConnected.return_value = True
     client._ib.qualifyContracts.return_value = [MagicMock()]
 
-    # Bypass worker thread: run submitted callables synchronously
-    client._queue = MagicMock()
-    client._worker_thread = MagicMock()
-    client._worker_thread.is_alive.return_value = True
-    client._started = threading.Event()
-    client._started.set()
+    # Mock AsyncWorker
+    client._worker = MagicMock()
+    # Make submit return a MagicMock future (for fire-and-forget in callbacks)
+    client._worker.submit.return_value = MagicMock()
 
-    # FSM-based order tracking state
-    client._trackers = {}
+    # Fire-and-forget order contexts
+    client._order_contexts = {}
     client._events_registered = False
 
     # Reconnection thread state
     client._reconnect_thread = None
     client._reconnect_stop = threading.Event()
 
-    original_submit = IBKRClient._submit
-
-    def _sync_submit(self_inner, fn, timeout=60.0):
+    # Bypass worker: run submitted callables synchronously
+    def _sync_submit(fn, timeout=60.0):
         return fn()
 
-    client._submit = lambda fn, timeout=60.0: _sync_submit(client, fn, timeout)
+    client._submit_sync = _sync_submit
+
+    def _sync_retry(task_factory, timeout=15.0, retries=2, delay=1.0):
+        return task_factory()()
+
+    client._submit_with_retry = _sync_retry
 
     return client
 
 
 # ===========================================================================
-# Worker thread tests
+# Worker thread tests (now AsyncWorker-based)
 # ===========================================================================
 
 class TestWorkerThread:
-    """Verify the worker thread serialization mechanism."""
+    """Verify the AsyncWorker-based task dispatch mechanism."""
 
-    def test_submit_runs_on_worker_thread(self):
-        """_submit should execute the callable on the worker thread, not the caller."""
+    def test_submit_runs_via_worker(self):
+        """_submit_sync should execute the callable via AsyncWorker."""
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
         client._account = ""
-        from queue import Queue
-        client._queue = Queue()
-        client._worker_thread = None
-        client._started = threading.Event()
-        client._start_worker()
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
+
+        from app.services.live_trading.async_worker import AsyncWorker
+        client._worker = AsyncWorker(name="test-ibkr")
+        client._worker.start()
 
         caller_tid = threading.current_thread().ident
         result_holder = {}
@@ -141,11 +144,11 @@ class TestWorkerThread:
             result_holder["tid"] = threading.current_thread().ident
             return 42
 
-        result = client._submit(task, timeout=5.0)
+        result = client._submit_sync(task, timeout=5.0)
 
         assert result == 42
         assert result_holder["tid"] != caller_tid
-        client.shutdown()
+        client._worker.shutdown()
 
     def test_submit_propagates_exception(self):
         """Exceptions in the worker should propagate to the caller."""
@@ -153,80 +156,40 @@ class TestWorkerThread:
         client.config = IBKRConfig()
         client._ib = None
         client._account = ""
-        from queue import Queue
-        client._queue = Queue()
-        client._worker_thread = None
-        client._started = threading.Event()
-        client._start_worker()
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
+
+        from app.services.live_trading.async_worker import AsyncWorker
+        client._worker = AsyncWorker(name="test-ibkr-exc")
+        client._worker.start()
 
         def bad_task():
             raise ValueError("test error")
 
         with pytest.raises(ValueError, match="test error"):
-            client._submit(bad_task, timeout=5.0)
-        client.shutdown()
-
-    def test_multiple_submits_are_serial(self):
-        """Tasks submitted from multiple threads are executed serially."""
-        client = IBKRClient.__new__(IBKRClient)
-        client.config = IBKRConfig()
-        client._ib = None
-        client._account = ""
-        from queue import Queue
-        client._queue = Queue()
-        client._worker_thread = None
-        client._started = threading.Event()
-        client._start_worker()
-
-        order_log = []
-        barrier = threading.Barrier(3)
-
-        def make_task(label):
-            def task():
-                order_log.append(f"{label}_start")
-                time.sleep(0.05)
-                order_log.append(f"{label}_end")
-                return label
-            return task
-
-        results = [None, None, None]
-
-        def caller(idx, label):
-            barrier.wait()
-            results[idx] = client._submit(make_task(label), timeout=10.0)
-
-        threads = [
-            threading.Thread(target=caller, args=(i, f"t{i}"))
-            for i in range(3)
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10)
-
-        assert all(r is not None for r in results)
-        # Verify serial execution: each _start is immediately followed by its _end
-        for i in range(0, len(order_log), 2):
-            label = order_log[i].replace("_start", "")
-            assert order_log[i + 1] == f"{label}_end"
-
-        client.shutdown()
+            client._submit_sync(bad_task, timeout=5.0)
+        client._worker.shutdown()
 
     def test_shutdown_stops_worker(self):
-        """shutdown() should stop the worker thread."""
+        """shutdown() should stop the worker."""
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
         client._account = ""
-        from queue import Queue
-        client._queue = Queue()
-        client._worker_thread = None
-        client._started = threading.Event()
-        client._start_worker()
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
 
-        assert client._worker_thread.is_alive()
+        from app.services.live_trading.async_worker import AsyncWorker
+        client._worker = AsyncWorker(name="test-ibkr-shutdown")
+        client._worker.start()
+
+        assert client._worker.running
         client.shutdown()
-        assert not client._worker_thread.is_alive()
+        assert not client._worker.running
 
 
 # ===========================================================================
@@ -239,7 +202,7 @@ class TestQuantityGuard:
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_accepts_whole_number(self):
         client = _make_client_with_mock_ib()
-        trade_mock = _make_trade_mock(status="Filled", filled=7, avg_price=150.0)
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=100)
         client._ib.placeOrder.return_value = trade_mock
 
         result = client.place_market_order("AAPL", "buy", 7, "USStock")
@@ -250,7 +213,7 @@ class TestQuantityGuard:
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_limit_order_accepts_whole_number(self):
         client = _make_client_with_mock_ib()
-        trade_mock = _make_trade_mock(status="Filled", filled=3, avg_price=180.0)
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=101)
         client._ib.placeOrder.return_value = trade_mock
 
         result = client.place_limit_order("GOOGL", "buy", 3, 180.0, "USStock")
@@ -261,7 +224,7 @@ class TestQuantityGuard:
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_accepts_float_whole(self):
         client = _make_client_with_mock_ib()
-        trade_mock = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=102)
         client._ib.placeOrder.return_value = trade_mock
 
         result = client.place_market_order("AAPL", "buy", 10.0, "USStock")
@@ -310,7 +273,7 @@ class TestQuantityGuard:
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_hshare_accepts_lot_multiple(self):
         client = _make_client_with_mock_ib()
-        trade_mock = _make_trade_mock(status="Filled", filled=400, avg_price=130.0)
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=103)
         client._ib.placeOrder.return_value = trade_mock
 
         result = client.place_market_order("00005", "buy", 400, "HShare")
@@ -319,7 +282,7 @@ class TestQuantityGuard:
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_hshare_unknown_symbol_accepts_any_integer(self):
         client = _make_client_with_mock_ib()
-        trade_mock = _make_trade_mock(status="Filled", filled=7, avg_price=50.0)
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=104)
         client._ib.placeOrder.return_value = trade_mock
 
         result = client.place_market_order("00388", "buy", 7, "HShare")
@@ -327,169 +290,98 @@ class TestQuantityGuard:
 
 
 # ===========================================================================
-# _wait_for_order polling tests
+# Fire-and-forget order tests
 # ===========================================================================
 
-class TestWaitForOrder:
-    """Verify _wait_for_order handles all terminal statuses via event-driven callbacks."""
+class TestFireAndForgetOrder:
+    """Verify place_market_order/place_limit_order return immediately with Submitted status."""
 
-    def test_filled_immediately(self):
-        """Order already in Filled status when _wait_for_order starts."""
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_market_order_returns_submitted(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.5)
-        result = client._wait_for_order(trade, timeout=5.0)
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=200)
+        client._ib.placeOrder.return_value = trade_mock
+
+        result = client.place_market_order("AAPL", "buy", 10, "USStock")
         assert result.success is True
-        assert result.filled == 10.0
-        assert result.avg_price == 155.5
-        assert result.status == "Filled"
+        assert result.status == "Submitted"
+        assert result.order_id == 200
+        assert result.filled == 0.0
+        assert result.avg_price == 0.0
 
-    def test_cancelled_returns_failure(self):
-        """Cancelled with 0 fills → waits for timeout → failure."""
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_limit_order_returns_submitted(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(
-            status="Cancelled", filled=0, avg_price=0,
-            log_messages=["Error 10349: Order TIF was set to DAY"]
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=201)
+        client._ib.placeOrder.return_value = trade_mock
+
+        result = client.place_limit_order("AAPL", "buy", 10, 150.0, "USStock")
+        assert result.success is True
+        assert result.status == "Submitted"
+        assert result.order_id == 201
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_order_context_registered_on_placement(self):
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=300)
+        client._ib.placeOrder.return_value = trade_mock
+
+        result = client.place_market_order(
+            "AAPL", "buy", 10, "USStock",
+            pending_order_id=55, strategy_id=7, signal_type="open_long",
+            strategy_name="TestStrat",
         )
-        result = client._wait_for_order(trade, timeout=0.5)
-        assert result.success is False
-        assert result.status == "Cancelled"
-        assert "10349" in result.message
 
-    def test_cancelled_with_fill_returns_success(self):
-        """Cancelled but filled > 0 → success (presubmit scenario)."""
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(
-            status="Cancelled", filled=1.0, avg_price=300.6,
-            log_messages=["Error 10349: Order TIF was set to DAY"]
-        )
-        result = client._wait_for_order(trade, timeout=5.0)
         assert result.success is True
-        assert result.filled == 1.0
-        assert result.avg_price == 300.6
+        assert 300 in client._order_contexts
+        ctx = client._order_contexts[300]
+        assert ctx.pending_order_id == 55
+        assert ctx.strategy_id == 7
+        assert ctx.signal_type == "open_long"
+        assert ctx.symbol == "AAPL"
 
-    def test_inactive_returns_failure(self):
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_invalid_contract_rejected(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(
-            status="Inactive", filled=0, avg_price=0,
-            log_messages=["Order rejected"]
-        )
-        result = client._wait_for_order(trade, timeout=5.0)
+        client._ib.qualifyContracts.return_value = []
+        result = client.place_market_order("INVALID", "buy", 10, "USStock")
         assert result.success is False
-        assert result.status == "Inactive"
+        assert "Invalid contract" in result.message
 
-    def test_api_error_returns_failure(self):
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_sell_action_correct(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(
-            status="ApiError", filled=0, avg_price=0,
-            log_messages=["Error 10243: Fractional-sized order cannot be placed"]
-        )
-        result = client._wait_for_order(trade, timeout=5.0)
-        assert result.success is False
-        assert "10243" in result.message
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=301)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_market_order("AAPL", "sell", 10, "USStock")
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.action == "SELL"
 
-    def test_validation_error_returns_failure(self):
+
+# ===========================================================================
+# TIF = 'DAY' tests
+# ===========================================================================
+
+class TestTifDay:
+    """Verify that orders explicitly set tif='DAY' to prevent Error 10349."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_market_order_sets_tif_day(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="ValidationError", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=5.0)
-        assert result.success is False
-        assert result.status == "ValidationError"
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=400)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_market_order("AAPL", "buy", 10, "USStock")
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.tif == "DAY"
 
-    def test_api_cancelled_returns_failure(self):
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_limit_order_sets_tif_day(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="ApiCancelled", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=5.0)
-        assert result.success is False
-        assert result.status == "ApiCancelled"
-
-    def test_event_fires_during_sleep(self):
-        """Simulate event callback firing during ib.sleep() pump."""
-        client = _make_client_with_mock_ib()
-        trade = MagicMock()
-        trade.order.orderId = 99
-        trade.orderStatus.status = "Submitted"
-        trade.orderStatus.filled = 0
-        trade.orderStatus.avgFillPrice = 0
-        trade.orderStatus.remaining = 10.0
-        trade.log = []
-
-        def simulate_fill(_sleep_time=0):
-            trade.orderStatus.status = "Filled"
-            trade.orderStatus.filled = 10.0
-            trade.orderStatus.avgFillPrice = 200.0
-            client._on_order_status(trade)
-
-        client._ib.sleep.side_effect = simulate_fill
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is True
-        assert result.filled == 10.0
-        assert result.avg_price == 200.0
-        assert client._ib.sleep.called
-
-    def test_timeout_zero_fills_returns_failure(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="PendingSubmit", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=0.5)
-        assert result.success is False
-        assert "timed out" in result.message
-        assert result.filled == 0
-
-    def test_presubmitted_times_out(self):
-        """PreSubmitted is not terminal — order just times out normally."""
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="PreSubmitted", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=0.5)
-        assert result.success is False
-        assert "timed out" in result.message
-
-    def test_timeout_with_partial_fills_returns_success(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Submitted", filled=5.0, avg_price=150.0)
-        result = client._wait_for_order(trade, timeout=0.5)
-        assert result.success is True
-        assert result.filled == 5.0
-
-    def test_filled_with_partial_fill(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(
-            status="Filled", filled=5.0, avg_price=150.0, remaining=5.0
-        )
-        result = client._wait_for_order(trade, timeout=5.0)
-        assert result.success is True
-        assert result.filled == 5.0
-        assert result.raw.get("remaining") == 5.0
-
-    def test_empty_log_on_rejection(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0)
-        result = client._wait_for_order(trade, timeout=0.5)
-        assert result.success is False
-        assert "rejected by IBKR" in result.message
-
-    def test_commission_captured(self):
-        """Commission report is attached to the result via tracker."""
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0)
-
-        def inject_commission(_t=0):
-            oid = trade.order.orderId
-            tracker = client._trackers.get(oid)
-            if tracker is not None:
-                tracker.add_commission(1.25, "USD")
-
-        client._ib.sleep.side_effect = inject_commission
-        result = client._wait_for_order(trade, timeout=5.0)
-        assert result.success is True
-        assert result.fee == 1.25
-        assert result.fee_ccy == "USD"
-
-    def test_cleanup_after_wait(self):
-        """Tracker is cleaned up after _wait_for_order."""
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=5.0, avg_price=100.0)
-        oid = trade.order.orderId
-        client._wait_for_order(trade, timeout=5.0)
-        assert oid not in client._trackers
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=401)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_limit_order("GOOGL", "buy", 5, 180.0, "USStock")
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.tif == "DAY"
 
 
 # ===========================================================================
@@ -515,98 +407,6 @@ class TestTerminalStatusSets:
 
     def test_presubmitted_is_not_terminal(self):
         assert "PreSubmitted" not in IBKRClient._TERMINAL_STATUSES
-
-
-# ===========================================================================
-# Integration: place_market_order → _wait_for_order → result
-# ===========================================================================
-
-class TestPlaceOrderIntegration:
-
-    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_cancelled_by_ibkr(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(
-            status="Cancelled", filled=0, avg_price=0,
-            log_messages=["Error 10349: Order TIF was set to DAY but session is closed"]
-        )
-        client._ib.placeOrder.return_value = trade
-        result = client.place_market_order("GOOGL", "buy", 1, "USStock")
-        assert result.success is False
-        assert "Cancelled" in result.status or "Cancelled" in result.message
-
-    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_fractional_rejected(self):
-        client = _make_client_with_mock_ib()
-        result = client.place_market_order("AAPL", "buy", 0.7, "USStock")
-        assert result.success is False
-        assert "whole number" in result.message.lower()
-        client._ib.placeOrder.assert_not_called()
-
-    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_filled_success(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=400, avg_price=65.5)
-        client._ib.placeOrder.return_value = trade
-        result = client.place_market_order("5", "buy", 400, "HShare")
-        assert result.success is True
-        assert result.filled == 400
-        assert result.avg_price == 65.5
-
-    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_limit_order_inactive_rejected(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(
-            status="Inactive", filled=0, avg_price=0,
-            log_messages=["Order rejected by exchange"]
-        )
-        client._ib.placeOrder.return_value = trade
-        result = client.place_limit_order("AAPL", "buy", 5, 100.0, "USStock")
-        assert result.success is False
-        assert result.status == "Inactive"
-
-    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_invalid_contract_rejected(self):
-        client = _make_client_with_mock_ib()
-        client._ib.qualifyContracts.return_value = []
-        result = client.place_market_order("INVALID", "buy", 10, "USStock")
-        assert result.success is False
-        assert "Invalid contract" in result.message
-
-    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_sell_action_correct(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)
-        client._ib.placeOrder.return_value = trade
-        client.place_market_order("AAPL", "sell", 10, "USStock")
-        placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.action == "SELL"
-
-
-# ===========================================================================
-# TIF = 'DAY' tests
-# ===========================================================================
-
-class TestTifDay:
-    """Verify that orders explicitly set tif='DAY' to prevent Error 10349."""
-
-    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_sets_tif_day(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)
-        client._ib.placeOrder.return_value = trade
-        client.place_market_order("AAPL", "buy", 10, "USStock")
-        placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "DAY"
-
-    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_limit_order_sets_tif_day(self):
-        client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=5, avg_price=180.0)
-        client._ib.placeOrder.return_value = trade
-        client.place_limit_order("GOOGL", "buy", 5, 180.0, "USStock")
-        placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "DAY"
 
 
 # ===========================================================================
@@ -643,117 +443,162 @@ class TestEventRegistration:
 
 
 # ===========================================================================
-# Event callback tests
+# Event callback tests (fire-and-forget)
 # ===========================================================================
 
 class TestEventCallbacks:
-    """Verify event callbacks delegate to OrderTracker correctly."""
+    """Verify event callbacks dispatch to _handle_fill/_handle_reject."""
 
-    def test_on_order_status_sets_done_for_filled(self):
+    def test_on_order_status_filled_triggers_handle_fill(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0)
-        oid = trade.order.orderId
-        from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker
-        tracker = OrderTracker(order_id=oid)
-        client._trackers[oid] = tracker
+        ctx = IBKROrderContext(order_id=42, pending_order_id=10, strategy_id=5, symbol="AAPL")
+        client._order_contexts[42] = ctx
 
+        trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0, order_id=42)
         client._on_order_status(trade)
 
-        assert tracker.done_event.is_set()
-        assert tracker.current_status == "Filled"
-        assert tracker.filled == 10.0
+        # Context should be consumed
+        assert 42 not in client._order_contexts
+        # _handle_fill was dispatched via worker.submit
+        client._worker.submit.assert_called_once()
 
-    def test_on_order_status_cancelled_not_done(self):
-        """Cancelled with 0 fills is NOT done — can still recover."""
+    def test_on_order_status_cancelled_with_fill_triggers_handle_fill(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0,
-                                  log_messages=["Error 10349: TIF set to DAY"])
-        oid = trade.order.orderId
-        from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker
-        tracker = OrderTracker(order_id=oid)
-        client._trackers[oid] = tracker
+        ctx = IBKROrderContext(order_id=43, pending_order_id=11, strategy_id=5, symbol="AAPL")
+        client._order_contexts[43] = ctx
 
+        trade = _make_trade_mock(status="Cancelled", filled=5.0, avg_price=300.0, order_id=43)
         client._on_order_status(trade)
 
-        assert not tracker.done_event.is_set()
-        assert tracker.current_status == "Cancelled"
+        assert 43 not in client._order_contexts
+        client._worker.submit.assert_called_once()
 
-    def test_on_order_status_cancelled_with_fill_is_success(self):
-        """Cancelled but with fill > 0 should set done immediately."""
+    def test_on_order_status_hard_terminal_triggers_handle_reject(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Cancelled", filled=1.0, avg_price=300.0)
-        oid = trade.order.orderId
-        from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker
-        tracker = OrderTracker(order_id=oid)
-        client._trackers[oid] = tracker
+        ctx = IBKROrderContext(order_id=44, pending_order_id=12, strategy_id=5, symbol="AAPL")
+        client._order_contexts[44] = ctx
 
+        trade = _make_trade_mock(
+            status="Inactive", filled=0, avg_price=0, order_id=44,
+            log_messages=["Order rejected"]
+        )
         client._on_order_status(trade)
 
-        assert tracker.done_event.is_set()
-        r = tracker.to_result()
-        assert r.success is True
-        assert r.filled == 1.0
+        assert 44 not in client._order_contexts
+        client._worker.submit.assert_called_once()
 
     def test_on_order_status_ignores_untracked_order(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0)
+        trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0, order_id=99)
         client._on_order_status(trade)
-        assert trade.order.orderId not in client._trackers
+        client._worker.submit.assert_not_called()
 
-    def test_on_order_status_active_does_not_set_done(self):
+    def test_on_order_status_active_does_not_dispatch(self):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Submitted", filled=0, avg_price=0)
-        oid = trade.order.orderId
-        from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker
-        tracker = OrderTracker(order_id=oid)
-        client._trackers[oid] = tracker
+        ctx = IBKROrderContext(order_id=45, pending_order_id=13, strategy_id=5, symbol="AAPL")
+        client._order_contexts[45] = ctx
+
+        trade = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=45)
         client._on_order_status(trade)
-        assert not tracker.done_event.is_set()
 
-    def test_on_exec_details_updates_tracker_without_setting_done(self):
-        """execDetails updates tracker fill data but does NOT set done."""
+        # Still tracked, not consumed
+        assert 45 in client._order_contexts
+        client._worker.submit.assert_not_called()
+
+    def test_on_order_status_cancelled_zero_fills_waits(self):
+        """Cancelled with 0 fills is NOT a rejection — IBKR can recover."""
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Submitted", filled=5.0, avg_price=200.0)
-        oid = trade.order.orderId
-        from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker
-        tracker = OrderTracker(order_id=oid)
-        client._trackers[oid] = tracker
+        ctx = IBKROrderContext(order_id=46, pending_order_id=14, strategy_id=5, symbol="AAPL")
+        client._order_contexts[46] = ctx
 
-        fill = MagicMock()
-        fill.execution.execId = "exec001"
-        fill.execution.side = "BOT"
-        fill.execution.shares = 5
-        fill.execution.price = 200.0
+        trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0, order_id=46)
+        client._on_order_status(trade)
 
-        client._on_exec_details(trade, fill)
+        # Cancelled with 0 fills: not in HARD_TERMINAL, not filled>0 → no dispatch
+        # Context stays because IBKR may recover (Cancelled → PreSubmitted → Filled)
+        assert 46 in client._order_contexts
+        client._worker.submit.assert_not_called()
 
-        assert not tracker.done_event.is_set()
-        assert tracker.filled == 5.0
 
-    def test_on_commission_report_accumulates_in_tracker(self):
+# ===========================================================================
+# _handle_fill / _handle_reject unit tests
+# ===========================================================================
+
+class TestHandleFill:
+    """Verify _handle_fill calls the right DB operations."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.IBKRClient._notify_order_event")
+    @patch("app.services.live_trading.records.record_trade")
+    @patch("app.services.live_trading.records.apply_fill_to_local_position", return_value=(10.5, {}))
+    @patch("app.services.live_trading.records.mark_order_sent")
+    def test_handle_fill_updates_db(self, mock_sent, mock_apply, mock_trade, mock_notify):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=150.0)
-        oid = trade.order.orderId
-        from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker
-        tracker = OrderTracker(order_id=oid)
-        client._trackers[oid] = tracker
+        ctx = IBKROrderContext(
+            order_id=100, pending_order_id=55, strategy_id=7,
+            symbol="AAPL", signal_type="open_long", amount=10,
+        )
 
-        fill = MagicMock()
-        fill.execution.execId = "exec001"
-        report1 = MagicMock()
-        report1.commission = 0.65
-        report1.currency = "USD"
-        report1.realizedPNL = 0.0
-        report2 = MagicMock()
-        report2.commission = 0.35
-        report2.currency = "USD"
-        report2.realizedPNL = 10.0
+        client._handle_fill(ctx, filled=10.0, avg_price=155.0)
 
-        client._on_commission_report(trade, fill, report1)
-        client._on_commission_report(trade, fill, report2)
+        mock_sent.assert_called_once()
+        sent_kwargs = mock_sent.call_args
+        assert sent_kwargs[1]["order_id"] == 55
+        assert sent_kwargs[1]["filled"] == 10.0
 
-        assert tracker.commission == pytest.approx(1.0)
-        assert tracker.commission_ccy == "USD"
+        mock_apply.assert_called_once_with(
+            strategy_id=7, symbol="AAPL", signal_type="open_long",
+            filled=10.0, avg_price=155.0,
+        )
+
+        mock_trade.assert_called_once()
+        mock_notify.assert_called_once()
+
+    @patch("app.services.live_trading.ibkr_trading.client.IBKRClient._notify_order_event")
+    @patch("app.services.live_trading.records.mark_order_sent")
+    def test_handle_fill_no_strategy_skips_position(self, mock_sent, mock_notify):
+        client = _make_client_with_mock_ib()
+        ctx = IBKROrderContext(order_id=101, pending_order_id=56, strategy_id=0, symbol="AAPL")
+
+        client._handle_fill(ctx, filled=10.0, avg_price=155.0)
+
+        mock_sent.assert_called_once()
+        mock_notify.assert_called_once()
+
+    @patch("app.services.live_trading.ibkr_trading.client.IBKRClient._notify_order_event")
+    def test_handle_fill_no_pending_id_skips_mark(self, mock_notify):
+        client = _make_client_with_mock_ib()
+        ctx = IBKROrderContext(order_id=102, pending_order_id=0, strategy_id=0, symbol="AAPL")
+
+        client._handle_fill(ctx, filled=10.0, avg_price=155.0)
+        mock_notify.assert_called_once()
+
+
+class TestHandleReject:
+
+    @patch("app.services.live_trading.ibkr_trading.client.IBKRClient._notify_order_event")
+    @patch("app.services.live_trading.records.mark_order_failed")
+    def test_handle_reject_marks_failed(self, mock_failed, mock_notify):
+        client = _make_client_with_mock_ib()
+        ctx = IBKROrderContext(
+            order_id=200, pending_order_id=60, strategy_id=8,
+            symbol="GOOGL", signal_type="open_long",
+        )
+
+        client._handle_reject(ctx, "Inactive", ["Order rejected by exchange"])
+
+        mock_failed.assert_called_once()
+        args = mock_failed.call_args
+        assert args[1]["order_id"] == 60
+        assert "Inactive" in args[1]["error"]
+        mock_notify.assert_called_once()
+
+    @patch("app.services.live_trading.ibkr_trading.client.IBKRClient._notify_order_event")
+    def test_handle_reject_no_pending_id_skips_mark(self, mock_notify):
+        client = _make_client_with_mock_ib()
+        ctx = IBKROrderContext(order_id=201, pending_order_id=0, strategy_id=0, symbol="AAPL")
+
+        client._handle_reject(ctx, "ApiError", ["Error"])
+        mock_notify.assert_called_once()
 
 
 # ===========================================================================
@@ -805,11 +650,7 @@ class TestConnectionRetry:
 # ===========================================================================
 
 class TestRTHGate:
-    """Verify is_market_open returns correct result based on RTH status.
-
-    RTH check has been lifted from place_*_order into
-    StatefulClientRunner.pre_check → client.is_market_open.
-    """
+    """Verify is_market_open returns correct result based on RTH status."""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=False)
@@ -831,7 +672,7 @@ class TestRTHGate:
     @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True)
     def test_market_order_allowed_during_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
-        trade = _make_trade_mock(status="Filled", filled=10, avg_price=150.0)
+        trade = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=500)
         client._ib.placeOrder.return_value = trade
         result = client.place_market_order("AAPL", "buy", 10, "USStock")
         assert result.success is True
@@ -839,387 +680,157 @@ class TestRTHGate:
 
 
 # ===========================================================================
-# Mock IB Gateway: realistic event-sequence scenarios
+# Submit-with-retry tests
 # ===========================================================================
 
-def _make_stateful_trade(order_id=100):
-    """Create a mutable trade mock whose status/filled/avgPrice can be changed."""
-    trade = MagicMock()
-    trade.order.orderId = order_id
-    trade.order.action = "BUY"
-    trade.order.totalQuantity = 10
-    trade.order.orderType = "MKT"
-    trade.order.tif = "DAY"
-    trade.contract.symbol = "GOOGL"
-    trade.orderStatus.status = "PendingSubmit"
-    trade.orderStatus.filled = 0.0
-    trade.orderStatus.avgFillPrice = 0.0
-    trade.orderStatus.remaining = 10.0
-    trade.log = []
-    return trade
+class TestSubmitWithRetry:
+    """Verify _submit_with_retry provides automatic retry on connection failures."""
 
+    def test_succeeds_on_first_attempt(self):
+        client = IBKRClient.__new__(IBKRClient)
+        client.config = IBKRConfig()
+        client._ib = None
+        client._account = ""
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
 
-def _event_sequencer(client, trade, steps):
-    """Return a side_effect for ib.sleep() that replays a sequence of
-    (status, filled, avg_price, remaining) tuples, driving _on_order_status
-    (and optionally _on_exec_details / _on_commission_report) on each pump.
-    """
-    step_iter = iter(steps)
+        from app.services.live_trading.async_worker import AsyncWorker
+        client._worker = AsyncWorker(name="test-retry")
+        client._worker.start()
 
-    def pump(_sleep_time=0):
-        step = next(step_iter, None)
-        if step is None:
-            return
-        if isinstance(step, dict):
-            action = step.get("action", "status")
-            if action == "exec_details":
-                trade.orderStatus.status = step.get("status", trade.orderStatus.status)
-                trade.orderStatus.filled = step.get("filled", trade.orderStatus.filled)
-                trade.orderStatus.avgFillPrice = step.get("avg_price", trade.orderStatus.avgFillPrice)
-                trade.orderStatus.remaining = step.get("remaining", trade.orderStatus.remaining)
-                fill = MagicMock()
-                fill.execution.execId = step.get("exec_id", "exec-001")
-                fill.execution.side = "BOT"
-                fill.execution.shares = step.get("shares", trade.orderStatus.filled)
-                fill.execution.price = step.get("avg_price", 0)
-                client._on_exec_details(trade, fill)
-            elif action == "commission":
-                report = MagicMock()
-                report.commission = step.get("commission", 1.0)
-                report.currency = step.get("currency", "USD")
-                report.realizedPNL = step.get("realizedPNL", 0.0)
-                fill = MagicMock()
-                fill.execution.execId = step.get("exec_id", "exec-001")
-                client._on_commission_report(trade, fill, report)
-            elif action == "error":
-                client._on_error(
-                    trade.order.orderId,
-                    step.get("code", 0),
-                    step.get("msg", ""),
-                    trade.contract,
-                )
-            elif action == "disconnect":
-                client._on_disconnected()
-            elif action == "noop":
-                pass
-            else:
-                trade.orderStatus.status = step["status"]
-                trade.orderStatus.filled = step.get("filled", trade.orderStatus.filled)
-                trade.orderStatus.avgFillPrice = step.get("avg_price", trade.orderStatus.avgFillPrice)
-                trade.orderStatus.remaining = step.get("remaining", trade.orderStatus.remaining)
-                if "log" in step:
-                    trade.log = [MagicMock(message=m) for m in step["log"]]
-                client._on_order_status(trade)
-        else:
-            status, filled, avg_price, remaining = step
-            trade.orderStatus.status = status
-            trade.orderStatus.filled = filled
-            trade.orderStatus.avgFillPrice = avg_price
-            trade.orderStatus.remaining = remaining
-            client._on_order_status(trade)
+        result = client._submit_with_retry(
+            lambda: lambda: 42, timeout=5.0, retries=2,
+        )
+        assert result == 42
+        client._worker.shutdown()
 
-    return pump
+    def test_retries_on_connection_error(self):
+        client = IBKRClient.__new__(IBKRClient)
+        client.config = IBKRConfig()
+        client._ib = MagicMock()
+        client._ib.isConnected.return_value = True
+        client._account = ""
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
 
-
-class TestMockIBGatewayScenarios:
-    """End-to-end scenarios simulating real IB Gateway event sequences.
-
-    Each test creates a client + trade, wires up a step sequence via
-    _event_sequencer (which runs inside ib.sleep side_effect), then
-    calls _wait_for_order and asserts the result.
-    """
-
-    def test_scenario_normal_fill(self):
-        """Normal flow: PendingSubmit → Submitted → Filled."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=200)
-
-        steps = [
-            ("Submitted", 0, 0, 10),
-            ("Filled", 10, 178.50, 0),
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is True
-        assert result.filled == 10.0
-        assert result.avg_price == 178.50
-        assert result.status == "Filled"
-
-    def test_scenario_normal_fill_with_commission(self):
-        """Filled via orderStatus + trailing commission report attached."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=201)
-
-        steps = [
-            ("Submitted", 0, 0, 10),
-            ("Filled", 10.0, 178.50, 0),
-            {"action": "commission", "commission": 1.25, "currency": "USD"},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is True
-        assert result.filled == 10.0
-        assert result.status == "Filled"
-        assert result.fee == 1.25
-        assert result.fee_ccy == "USD"
-
-    def test_scenario_rejected_by_exchange(self):
-        """Order immediately rejected: PendingSubmit → Inactive."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=202)
-
-        steps = [
-            {"action": "status", "status": "Inactive", "filled": 0, "avg_price": 0,
-             "remaining": 10, "log": ["Order rejected by exchange"]},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is False
-        assert result.status == "Inactive"
-        assert "rejected" in result.message.lower()
-
-    def test_scenario_cancelled_zero_fills(self):
-        """Pure cancellation with 0 fills → failure (after grace)."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=203)
-
-        steps = [
-            {"action": "error", "code": 10349, "msg": "Order TIF was set to DAY"},
-            {"action": "status", "status": "Cancelled", "filled": 0, "avg_price": 0,
-             "remaining": 10, "log": ["Error 10349: Order TIF was set to DAY"]},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=0.5)
-        assert result.success is False
-        assert result.status == "Cancelled"
-        assert "10349" in result.message
-
-    def test_scenario_cancelled_then_presubmit_then_filled(self):
-        """The GOOGL incident: Cancelled → PreSubmitted → Filled.
-
-        With FSM + grace period, the tracker waits after Cancelled(filled=0),
-        allowing subsequent PreSubmitted/Filled events to be processed.
-        """
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=204)
-
-        steps = [
-            {"action": "error", "code": 10349, "msg": "Order TIF was set to DAY"},
-            {"action": "status", "status": "Cancelled", "filled": 0, "avg_price": 0,
-             "remaining": 10, "log": ["Error 10349"]},
-            {"action": "status", "status": "PreSubmitted", "filled": 0, "avg_price": 0,
-             "remaining": 10},
-            {"action": "status", "status": "Submitted", "filled": 0, "avg_price": 0,
-             "remaining": 10},
-            ("Filled", 1, 300.6, 0),
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is True
-        assert result.filled == 1.0
-        assert result.avg_price == 300.6
-        assert result.status == "Filled"
-
-    def test_scenario_cancelled_but_already_partially_filled(self):
-        """Cancelled but filled > 0 → success.
-
-        This happens when IBKR partially fills then cancels remaining.
-        """
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=205)
-
-        steps = [
-            ("Submitted", 0, 0, 10),
-            {"action": "exec_details", "status": "Submitted", "filled": 3.0,
-             "avg_price": 175.0, "remaining": 7, "shares": 3},
-            {"action": "status", "status": "Cancelled", "filled": 3.0,
-             "avg_price": 175.0, "remaining": 7},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is True
-        assert result.filled == 3.0
-        assert result.avg_price == 175.0
-
-    def test_scenario_api_error(self):
-        """ApiError from IBKR (e.g. fractional shares not supported)."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=206)
-
-        steps = [
-            {"action": "error", "code": 10243, "msg": "Fractional-sized order cannot be placed"},
-            {"action": "status", "status": "ApiError", "filled": 0, "avg_price": 0,
-             "remaining": 10, "log": ["Error 10243: Fractional-sized order cannot be placed"]},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is False
-        assert "10243" in result.message
-
-    def test_scenario_timeout_no_fill(self):
-        """Order stays in Submitted forever → timeout with 0 fills."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=207)
-        trade.orderStatus.status = "Submitted"
-
-        # No terminal status ever arrives
-        client._ib.sleep.side_effect = lambda _t: None
-
-        result = client._wait_for_order(trade, timeout=1.0)
-        assert result.success is False
-        assert "timed out" in result.message
-
-    def test_scenario_timeout_with_partial_fill(self):
-        """Order partially fills then hangs → timeout, but success because filled > 0."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=208)
+        from app.services.live_trading.async_worker import AsyncWorker
+        client._worker = AsyncWorker(name="test-retry2")
+        client._worker.start()
 
         call_count = [0]
-        def partial_fill_then_hang(_t):
+        def task():
             call_count[0] += 1
-            if call_count[0] == 1:
-                trade.orderStatus.status = "Submitted"
-                trade.orderStatus.filled = 5.0
-                trade.orderStatus.avgFillPrice = 180.0
-                trade.orderStatus.remaining = 5.0
-                client._on_order_status(trade)
+            if call_count[0] < 2:
+                raise ConnectionError("disconnected")
+            return "ok"
 
-        client._ib.sleep.side_effect = partial_fill_then_hang
+        with patch.object(client, "_do_connect", return_value=True):
+            result = client._submit_with_retry(
+                lambda: task, timeout=5.0, retries=3, delay=0.01,
+            )
+        assert result == "ok"
+        assert call_count[0] == 2
+        client._worker.shutdown()
 
-        result = client._wait_for_order(trade, timeout=1.5)
-        assert result.success is True
-        assert result.filled == 5.0
+    def test_raises_after_all_retries_exhausted(self):
+        client = IBKRClient.__new__(IBKRClient)
+        client.config = IBKRConfig()
+        client._ib = MagicMock()
+        client._ib.isConnected.return_value = False
+        client._account = ""
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
 
-    def test_scenario_disconnect_during_order(self):
-        """Connection drops while waiting for order → timeout."""
+        from app.services.live_trading.async_worker import AsyncWorker
+        client._worker = AsyncWorker(name="test-retry3")
+        client._worker.start()
+
+        def always_fail():
+            raise ConnectionError("still disconnected")
+
+        with patch.object(client, "_do_connect", return_value=False):
+            with pytest.raises(ConnectionError, match="still disconnected"):
+                client._submit_with_retry(
+                    lambda: always_fail, timeout=5.0, retries=2, delay=0.01,
+                )
+        client._worker.shutdown()
+
+    def test_non_connection_error_not_retried(self):
+        client = IBKRClient.__new__(IBKRClient)
+        client.config = IBKRConfig()
+        client._ib = None
+        client._account = ""
+        client._order_contexts = {}
+        client._events_registered = False
+        client._reconnect_thread = None
+        client._reconnect_stop = threading.Event()
+
+        from app.services.live_trading.async_worker import AsyncWorker
+        client._worker = AsyncWorker(name="test-retry4")
+        client._worker.start()
+
+        call_count = [0]
+        def task():
+            call_count[0] += 1
+            raise ValueError("bad value")
+
+        with pytest.raises(ValueError, match="bad value"):
+            client._submit_with_retry(
+                lambda: task, timeout=5.0, retries=3, delay=0.01,
+            )
+        assert call_count[0] == 1
+        client._worker.shutdown()
+
+
+# ===========================================================================
+# IBKROrderContext lifecycle tests
+# ===========================================================================
+
+class TestOrderContextLifecycle:
+    """Verify order contexts are properly registered and cleaned up."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_context_registered_and_cleaned_on_fill(self):
         client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=209)
-        trade.orderStatus.status = "Submitted"
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=500)
+        client._ib.placeOrder.return_value = trade_mock
 
-        steps = [
-            {"action": "disconnect"},
-            {"action": "noop"},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
+        client.place_market_order("AAPL", "buy", 10, "USStock", pending_order_id=99)
+        assert 500 in client._order_contexts
 
-        result = client._wait_for_order(trade, timeout=1.5)
-        assert result.success is False
-        assert client._events_registered is False
+        fill_trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0, order_id=500)
+        client._on_order_status(fill_trade)
+        assert 500 not in client._order_contexts
 
-    def test_scenario_slow_fill_multi_exec(self):
-        """Multiple partial fills via execDetails events → final Filled."""
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_context_cleaned_on_reject(self):
         client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=210)
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=501)
+        client._ib.placeOrder.return_value = trade_mock
 
-        steps = [
-            ("Submitted", 0, 0, 10),
-            {"action": "exec_details", "status": "Submitted", "filled": 3.0,
-             "avg_price": 175.0, "remaining": 7, "shares": 3, "exec_id": "exec-001"},
-            {"action": "commission", "commission": 0.40, "currency": "USD", "exec_id": "exec-001"},
-            {"action": "exec_details", "status": "Submitted", "filled": 7.0,
-             "avg_price": 176.0, "remaining": 3, "shares": 4, "exec_id": "exec-002"},
-            {"action": "commission", "commission": 0.50, "currency": "USD", "exec_id": "exec-002"},
-            ("Filled", 10.0, 176.5, 0),
-            {"action": "commission", "commission": 0.35, "currency": "USD", "exec_id": "exec-003"},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
+        client.place_market_order("AAPL", "buy", 10, "USStock", pending_order_id=100)
+        assert 501 in client._order_contexts
 
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is True
-        assert result.filled == 10.0
-        assert result.fee == pytest.approx(1.25)
-        assert result.fee_ccy == "USD"
+        reject_trade = _make_trade_mock(status="Inactive", filled=0, avg_price=0, order_id=501)
+        client._on_order_status(reject_trade)
+        assert 501 not in client._order_contexts
 
-    def test_scenario_presubmitted_then_filled(self):
-        """PreSubmitted → Submitted → Filled (limit order near market)."""
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_context_survives_cancelled_zero_fills(self):
+        """Cancelled with 0 fills doesn't clean up — IBKR may recover."""
         client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=211)
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=502)
+        client._ib.placeOrder.return_value = trade_mock
 
-        steps = [
-            ("PreSubmitted", 0, 0, 10),
-            ("Submitted", 0, 0, 10),
-            ("Filled", 10, 179.0, 0),
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
+        client.place_market_order("AAPL", "buy", 10, "USStock", pending_order_id=101)
+        assert 502 in client._order_contexts
 
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is True
-        assert result.status == "Filled"
-
-    def test_scenario_validation_error(self):
-        """ValidationError from IBKR."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=212)
-
-        steps = [
-            {"action": "status", "status": "ValidationError", "filled": 0,
-             "avg_price": 0, "remaining": 10, "log": ["Validation failed"]},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is False
-        assert result.status == "ValidationError"
-
-    def test_scenario_exec_details_fires_before_order_status(self):
-        """execDetails arrives before orderStatus=Filled (race condition).
-
-        execDetails updates tracker's fill data. On timeout, tracker
-        has fills > 0, so to_result() returns success.
-        """
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=213)
-
-        steps = [
-            ("Submitted", 0, 0, 10),
-            {"action": "exec_details", "status": "Submitted", "filled": 10.0,
-             "avg_price": 180.0, "remaining": 0, "shares": 10},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=1.5)
-        assert result.success is True
-        assert result.filled == 10.0
-        assert "timeout" in result.message.lower()
-
-    def test_scenario_cancelled_no_recovery_timeout(self):
-        """Cancelled(filled=0) with no recovery → timeout → failure."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=214)
-
-        steps = [
-            {"action": "status", "status": "Cancelled", "filled": 0, "avg_price": 0,
-             "remaining": 10, "log": ["Error 10349"]},
-            {"action": "noop"},
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=0.5)
-        assert result.success is False
-        assert result.status == "Cancelled"
-
-    def test_scenario_cancelled_then_recovery(self):
-        """Cancelled → PreSubmitted → Filled → success (no grace needed)."""
-        client = _make_client_with_mock_ib()
-        trade = _make_stateful_trade(order_id=215)
-
-        steps = [
-            {"action": "status", "status": "Cancelled", "filled": 0, "avg_price": 0,
-             "remaining": 10, "log": ["Error 10349"]},
-            {"action": "status", "status": "PreSubmitted", "filled": 0, "avg_price": 0,
-             "remaining": 10},
-            ("Filled", 10, 185.0, 0),
-        ]
-        client._ib.sleep.side_effect = _event_sequencer(client, trade, steps)
-
-        result = client._wait_for_order(trade, timeout=10.0)
-        assert result.success is True
-        assert result.filled == 10.0
-        assert result.status == "Filled"
+        cancel_trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0, order_id=502)
+        client._on_order_status(cancel_trade)
+        assert 502 in client._order_contexts  # still tracked

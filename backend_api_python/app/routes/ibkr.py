@@ -5,7 +5,6 @@ Standalone API endpoints for US and Hong Kong stock trading.
 """
 
 from typing import Any, Dict, List
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from flask import Blueprint, request, jsonify, g
 
@@ -19,62 +18,32 @@ logger = get_logger(__name__)
 
 ibkr_bp = Blueprint('ibkr', __name__)
 
-# Global client instance
-_client: IBKRClient = None
-
-
-def _get_client() -> IBKRClient:
-    """Get current client instance."""
-    global _client
-    if _client is None:
-        _client = get_ibkr_client()
-    return _client
-
 
 # ==================== Connection Management ====================
 
 @ibkr_bp.route('/status', methods=['GET'])
 def get_status():
-    """
-    Get connection status.
-    
-    GET /api/ibkr/status
-    """
+    """GET /api/ibkr/status"""
     try:
-        client = _get_client()
+        client = get_ibkr_client()
         return jsonify({
             "success": True,
             "data": client.get_connection_status()
         })
     except Exception as e:
         logger.error(f"Get status failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @ibkr_bp.route('/connect', methods=['POST'])
 def connect():
-    """
-    Connect to TWS / IB Gateway.
-    
-    POST /api/ibkr/connect
-    Body: {
-        "host": "127.0.0.1",      // Optional, default 127.0.0.1
-        "port": 7497,             // Optional, TWS Live:7497, TWS Paper:7496, Gateway Live:4001, Gateway Paper:4002
-        "clientId": 1,            // Optional, default 1
-        "account": "",            // Optional, specify for multi-account
-        "readonly": false         // Optional, readonly mode
-    }
-    """
-    global _client
-    
+    """POST /api/ibkr/connect"""
     try:
         data = request.get_json() or {}
-        
+
         has_custom = data.get('host') or data.get('port')
         if has_custom:
+            reset_ibkr_client()
             config = IBKRConfig(
                 host=data.get('host', '127.0.0.1'),
                 port=int(data.get('port', 7497)),
@@ -82,218 +51,134 @@ def connect():
                 account=data.get('account', ''),
                 readonly=data.get('readonly', False),
             )
-            if _client is not None and _client.connected:
-                _client.disconnect()
-            _client = IBKRClient(config)
+            client = get_ibkr_client(config)
         else:
-            _client = get_ibkr_client()
-        
-        if not _client.connected:
-            success = _client.connect()
+            client = get_ibkr_client()
+
+        if not client.connected:
+            success = client.connect()
         else:
             success = True
-        
+
         if success:
             return jsonify({
                 "success": True,
                 "message": "Connected successfully",
-                "data": _client.get_connection_status()
+                "data": client.get_connection_status()
             })
         else:
             return jsonify({
                 "success": False,
                 "error": "Connection failed. Please check if IB Gateway is running."
             }), 400
-            
-    except ImportError as e:
+
+    except ImportError:
         return jsonify({
             "success": False,
             "error": "ib_insync not installed. Run: pip install ib_insync"
         }), 500
     except Exception as e:
         logger.error(f"Connection failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @ibkr_bp.route('/disconnect', methods=['POST'])
 def disconnect():
-    """
-    Disconnect from IBKR.
-    
-    POST /api/ibkr/disconnect
-    """
-    global _client
-    
+    """POST /api/ibkr/disconnect"""
     try:
-        if _client is not None:
-            _client.disconnect()
-            _client = None
-        
         reset_ibkr_client()
-        
-        return jsonify({
-            "success": True,
-            "message": "Disconnected"
-        })
+        return jsonify({"success": True, "message": "Disconnected"})
     except Exception as e:
         logger.error(f"Disconnect failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ==================== Account Queries ====================
 
 @ibkr_bp.route('/account', methods=['GET'])
 def get_account():
-    """
-    Get account information.
-    
-    GET /api/ibkr/account
-    """
+    """GET /api/ibkr/account"""
     try:
-        client = _get_client()
+        client = get_ibkr_client()
         if not client.connected:
-            return jsonify({
-                "success": False,
-                "error": "Not connected to IBKR"
-            }), 400
-        
-        return jsonify({
-            "success": True,
-            "data": client.get_account_summary()
-        })
+            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+
+        return jsonify({"success": True, "data": client.get_account_summary()})
     except Exception as e:
         logger.error(f"Get account info failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @ibkr_bp.route('/positions', methods=['GET'])
 def get_positions():
-    """
-    Get positions.
-    
-    GET /api/ibkr/positions
-    """
+    """GET /api/ibkr/positions"""
     try:
-        client = _get_client()
+        client = get_ibkr_client()
         if not client.connected:
-            return jsonify({
-                "success": False,
-                "error": "Not connected to IBKR"
-            }), 400
-        
-        positions = client.get_positions()
-        return jsonify({
-            "success": True,
-            "data": positions
-        })
+            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+
+        return jsonify({"success": True, "data": client.get_positions()})
     except Exception as e:
         logger.error(f"Get positions failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @ibkr_bp.route('/orders', methods=['GET'])
 def get_orders():
-    """
-    Get open orders.
-    
-    GET /api/ibkr/orders
-    """
+    """GET /api/ibkr/orders"""
     try:
-        client = _get_client()
+        client = get_ibkr_client()
         if not client.connected:
-            return jsonify({
-                "success": False,
-                "error": "Not connected to IBKR"
-            }), 400
-        
-        orders = client.get_open_orders()
-        return jsonify({
-            "success": True,
-            "data": orders
-        })
+            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+
+        return jsonify({"success": True, "data": client.get_open_orders()})
     except Exception as e:
         logger.error(f"Get orders failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ==================== Trading ====================
 
 @ibkr_bp.route('/order', methods=['POST'])
 def place_order():
-    """
-    Place an order.
-    
-    POST /api/ibkr/order
-    Body: {
-        "symbol": "AAPL",         // Required, symbol code
-        "side": "buy",            // Required, buy or sell
-        "quantity": 10,           // Required, number of shares
-        "marketType": "USStock",  // Optional, USStock or HShare, default USStock
-        "orderType": "market",    // Optional, market or limit, default market
-        "price": 150.00           // Required for limit orders
-    }
-    """
+    """POST /api/ibkr/order"""
     try:
-        client = _get_client()
+        client = get_ibkr_client()
         if not client.connected:
-            return jsonify({
-                "success": False,
-                "error": "Not connected to IBKR"
-            }), 400
-        
+            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+
         data = request.get_json() or {}
-        
-        # Validate parameters
+
         symbol = data.get('symbol')
         side = data.get('side')
         quantity = data.get('quantity')
-        
+
         if not symbol:
             return jsonify({"success": False, "error": "Missing symbol"}), 400
         if not side or side.lower() not in ('buy', 'sell'):
             return jsonify({"success": False, "error": "side must be buy or sell"}), 400
         if not quantity or float(quantity) <= 0:
             return jsonify({"success": False, "error": "quantity must be > 0"}), 400
-        
+
         market_type = data.get('marketType', 'USStock')
         order_type = data.get('orderType', 'market').lower()
-        
-        # Place order
+
         if order_type == 'limit':
             price = data.get('price')
             if not price or float(price) <= 0:
                 return jsonify({"success": False, "error": "Limit order requires price"}), 400
-            
             result = client.place_limit_order(
-                symbol=symbol,
-                side=side,
-                quantity=float(quantity),
-                price=float(price),
-                market_type=market_type
+                symbol=symbol, side=side,
+                quantity=float(quantity), price=float(price),
+                market_type=market_type,
             )
         else:
             result = client.place_market_order(
-                symbol=symbol,
-                side=side,
+                symbol=symbol, side=side,
                 quantity=float(quantity),
-                market_type=market_type
+                market_type=market_type,
             )
-        
+
         if result.success:
             return jsonify({
                 "success": True,
@@ -303,91 +188,58 @@ def place_order():
                     "filled": result.filled,
                     "avgPrice": result.avg_price,
                     "status": result.status,
-                    "raw": result.raw
+                    "raw": result.raw,
                 }
             })
         else:
-            return jsonify({
-                "success": False,
-                "error": result.message
-            }), 400
-            
+            return jsonify({"success": False, "error": result.message}), 400
+
     except Exception as e:
         logger.error(f"Place order failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @ibkr_bp.route('/order/<int:order_id>', methods=['DELETE'])
 def cancel_order(order_id: int):
-    """
-    Cancel an order.
-    
-    DELETE /api/ibkr/order/<order_id>
-    """
+    """DELETE /api/ibkr/order/<order_id>"""
     try:
-        client = _get_client()
+        client = get_ibkr_client()
         if not client.connected:
-            return jsonify({
-                "success": False,
-                "error": "Not connected to IBKR"
-            }), 400
-        
+            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+
         success = client.cancel_order(order_id)
-        
+
         if success:
-            return jsonify({
-                "success": True,
-                "message": f"Order {order_id} cancelled"
-            })
+            return jsonify({"success": True, "message": f"Order {order_id} cancelled"})
         else:
-            return jsonify({
-                "success": False,
-                "error": f"Order {order_id} not found"
-            }), 404
-            
+            return jsonify({"success": False, "error": f"Order {order_id} not found"}), 404
+
     except Exception as e:
         logger.error(f"Cancel order failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ==================== Market Data ====================
 
 @ibkr_bp.route('/quote', methods=['GET'])
 def get_quote():
-    """
-    Get real-time quote.
-    
-    GET /api/ibkr/quote?symbol=AAPL&marketType=USStock
-    """
+    """GET /api/ibkr/quote?symbol=AAPL&marketType=USStock"""
     try:
-        client = _get_client()
+        client = get_ibkr_client()
         if not client.connected:
-            return jsonify({
-                "success": False,
-                "error": "Not connected to IBKR"
-            }), 400
-        
+            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+
         symbol = request.args.get('symbol')
         market_type = request.args.get('marketType', 'USStock')
-        
+
         if not symbol:
             return jsonify({"success": False, "error": "Missing symbol"}), 400
-        
-        quote = client.get_quote(symbol, market_type)
-        return jsonify(quote)
-        
+
+        return jsonify(client.get_quote(symbol, market_type))
+
     except Exception as e:
         logger.error(f"Get quote failed: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ==================== Dashboard ====================
@@ -473,31 +325,21 @@ def ibkr_dashboard():
         "executions": [],
     }
 
-    # 1. Connection status
     user_id = g.user_id
     client = None
     is_connected = False
     try:
-        client = _get_client()
+        client = get_ibkr_client()
         is_connected = client.connected
         data["connected"] = is_connected
         data["connection"] = client.get_connection_status()
     except Exception as e:
         logger.warning("IBKR connection check failed: %s", e)
 
-    # 2-4. Account, positions, orders — fetch with per-item timeout guards
-    # Each IB API call goes through the single worker thread and can hang
-    # (especially on weekends or when IB Gateway is unresponsive). Using a
-    # thread pool with tight timeouts prevents one slow call from blocking
-    # the entire dashboard response.
-    IBKR_QUERY_TIMEOUT = 8  # seconds per query
-
     if is_connected and client:
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ibkr-dash")
-
         # Account summary + PnL
         try:
-            acct = pool.submit(client.get_account_summary).result(timeout=IBKR_QUERY_TIMEOUT)
+            acct = client.get_account_summary()
             if acct.get("success"):
                 summary = acct.get("summary", {})
                 key_tags = [
@@ -517,9 +359,9 @@ def ibkr_dashboard():
                 currency = (parsed.get("NetLiquidation") or {}).get("currency", "USD")
 
                 try:
-                    pnl = pool.submit(client.get_pnl).result(timeout=IBKR_QUERY_TIMEOUT)
-                except (FuturesTimeoutError, Exception) as pnl_err:
-                    logger.warning("IBKR PnL query timed out: %s", pnl_err)
+                    pnl = client.get_pnl()
+                except Exception as pnl_err:
+                    logger.warning("IBKR PnL query failed: %s", pnl_err)
                     pnl = {}
                 parsed["UnrealizedPnL"] = {"value": pnl.get("unrealizedPnL", 0.0), "currency": currency}
                 parsed["RealizedPnL"] = {"value": pnl.get("realizedPnL", 0.0), "currency": currency}
@@ -533,12 +375,12 @@ def ibkr_dashboard():
                     ),
                     "currency": currency,
                 }
-        except (FuturesTimeoutError, Exception) as e:
-            logger.warning("IBKR account summary timed out or failed: %s", e)
+        except Exception as e:
+            logger.warning("IBKR account summary failed: %s", e)
 
         # Positions
         try:
-            data["positions"] = pool.submit(client.get_positions).result(timeout=IBKR_QUERY_TIMEOUT)
+            data["positions"] = client.get_positions()
 
             if data["positions"]:
                 symbol_commission_map = {}
@@ -560,22 +402,19 @@ def ibkr_dashboard():
                 for pos in data["positions"]:
                     ib_symbol = pos.get("ib_symbol") or pos.get("symbol", "")
                     pos["commission"] = symbol_commission_map.get(ib_symbol, 0.0)
-        except (FuturesTimeoutError, Exception) as e:
-            logger.warning("IBKR positions timed out or failed: %s", e)
+        except Exception as e:
+            logger.warning("IBKR positions failed: %s", e)
 
         # Open orders
         try:
-            data["open_orders"] = pool.submit(client.get_open_orders).result(timeout=IBKR_QUERY_TIMEOUT)
-        except (FuturesTimeoutError, Exception) as e:
-            logger.warning("IBKR open orders timed out or failed: %s", e)
+            data["open_orders"] = client.get_open_orders()
+        except Exception as e:
+            logger.warning("IBKR open orders failed: %s", e)
 
-        pool.shutdown(wait=False)
-
-    # 5. DB-sourced trade history (IBKR execution records)
+    # DB-sourced trade history
     try:
         with get_db_connection() as db:
             cur = db.cursor()
-            # Recent trades for IBKR strategies
             cur.execute(
                 """
                 SELECT t.*, s.strategy_name
@@ -605,7 +444,6 @@ def ibkr_dashboard():
         data["performance"] = _compute_ibkr_trade_stats(trades)
         data["recent_trades"] = trades[:50]
 
-        # Execution records from pending_orders for IBKR
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(

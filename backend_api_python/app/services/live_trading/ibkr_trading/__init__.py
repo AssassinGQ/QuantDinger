@@ -8,8 +8,8 @@ Port Reference:
 - IB Gateway Live: 4001, IB Gateway Paper: 4002
 """
 
-from app.services.live_trading.ibkr_trading.client import IBKRClient, IBKRConfig
+from app.services.live_trading.ibkr_trading.client import IBKRClient, IBKRConfig, IBKROrderContext
 from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, parse_symbol
 from app.services.live_trading.base import LiveOrderResult
 
-__all__ = ['IBKRClient', 'IBKRConfig', 'LiveOrderResult', 'normalize_symbol', 'parse_symbol']
+__all__ = ['IBKRClient', 'IBKRConfig', 'IBKROrderContext', 'LiveOrderResult', 'normalize_symbol', 'parse_symbol']

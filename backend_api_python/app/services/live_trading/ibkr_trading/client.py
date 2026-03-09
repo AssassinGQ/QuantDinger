@@ -2,26 +2,27 @@
 Interactive Brokers Trading Client
 
 Uses ib_insync library to connect to TWS or IB Gateway for trading.
-All ib_insync calls are serialized onto a dedicated worker thread to
-avoid event-loop conflicts when multiple strategy threads share one client.
+All ib_insync calls are dispatched to a dedicated AsyncWorker event-loop
+thread, keeping the event loop responsive and making this client safe
+to call from any number of strategy / Flask / worker threads.
 
 Events: all 25 IB events are subscribed. Business-critical ones drive order
 flow; the rest log for observability.
 """
 
+import json
 import os
 import time
 import threading
 import asyncio
-from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Callable, TypeVar
-from queue import Queue
 
 from app.utils.logger import get_logger
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, format_display_symbol
-from app.services.live_trading.ibkr_trading.order_tracker import OrderTracker, HARD_TERMINAL
+from app.services.live_trading.ibkr_trading.order_tracker import HARD_TERMINAL
+from app.services.live_trading.async_worker import AsyncWorker
 
 logger = get_logger(__name__)
 
@@ -64,14 +65,28 @@ class IBKRConfig:
         )
 
 
-_SENTINEL = object()
+@dataclass
+class IBKROrderContext:
+    """Registered at order placement, consumed by event callbacks."""
+    order_id: int
+    pending_order_id: int = 0
+    strategy_id: int = 0
+    symbol: str = ""
+    signal_type: str = ""
+    amount: float = 0.0
+    market_type: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
+    order_row: Dict[str, Any] = field(default_factory=dict)
+    notification_config: Dict[str, Any] = field(default_factory=dict)
+    strategy_name: str = ""
+    market_category: str = ""
 
 
 class IBKRClient(BaseStatefulClient):
     """
     Interactive Brokers Trading Client.
 
-    All ib_insync interactions run on a single dedicated worker thread,
+    All ib_insync interactions run on the AsyncWorker event-loop thread,
     making this client safe to call from any number of strategy threads.
     """
 
@@ -101,18 +116,15 @@ class IBKRClient(BaseStatefulClient):
         self._ib = None
         self._account = ""
 
-        self._queue: Queue = Queue()
-        self._worker_thread: Optional[threading.Thread] = None
-        self._started = threading.Event()
+        self._worker = AsyncWorker(name="ibkr")
+        self._worker.start()
 
-        # FSM-based order tracking
-        self._trackers: Dict[int, OrderTracker] = {}
+        # Fire-and-forget order context: orderId → IBKROrderContext
+        self._order_contexts: Dict[int, IBKROrderContext] = {}
         self._events_registered = False
 
         self._reconnect_thread: Optional[threading.Thread] = None
         self._reconnect_stop = threading.Event()
-
-        self._start_worker()
 
     # ── signal mapping ──────────────────────────────────────────────
 
@@ -125,53 +137,42 @@ class IBKRClient(BaseStatefulClient):
             raise ValueError(f"Unsupported signal_type for IBKR: {signal_type}")
         return side
 
-    # ── worker thread ──────────────────────────────────────────────
+    # ── submit helpers ──────────────────────────────────────────────
 
-    def _start_worker(self):
-        if self._worker_thread is not None and self._worker_thread.is_alive():
-            return
-        self._started.clear()
-        t = threading.Thread(target=self._worker_loop, daemon=True, name="ibkr-worker")
-        t.start()
-        self._worker_thread = t
-        self._started.wait(timeout=5)
+    def _submit_sync(self, fn: Callable, timeout: float = 60.0):
+        """Submit a sync callable to the worker and block for the result."""
+        return self._worker.submit(fn).result(timeout=timeout)
 
-    def _worker_loop(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        self._started.set()
+    def _submit_with_retry(
+        self,
+        task_factory: Callable,
+        timeout: float = 15.0,
+        retries: int = 2,
+        delay: float = 1.0,
+    ):
+        """Submit a task with automatic retry on connection failures.
 
-        while True:
-            if self._ib is not None and self._ib.isConnected():
-                try:
-                    self._ib.sleep(0)
-                except Exception:
-                    pass
-
+        task_factory: zero-arg callable that returns a new callable or coroutine
+        each time (coroutines can only be awaited once, so retries need fresh ones).
+        """
+        last_err = None
+        for attempt in range(1, retries + 1):
             try:
-                item = self._queue.get(timeout=0.1)
+                return self._worker.submit(task_factory()).result(timeout=timeout)
+            except (ConnectionError, asyncio.TimeoutError, TimeoutError) as e:
+                last_err = e
+                logger.warning(
+                    "Attempt %d/%d failed for task: %s", attempt, retries, e,
+                )
+                if attempt < retries:
+                    try:
+                        self._do_connect()
+                    except Exception:
+                        pass
+                    time.sleep(delay)
             except Exception:
-                continue
-            if item is _SENTINEL:
-                break
-            fn, future = item
-            try:
-                result = fn()
-                future.set_result(result)
-            except Exception as exc:
-                future.set_exception(exc)
-
-    def _submit(self, fn: Callable[[], T], timeout: float = 60.0) -> T:
-        if not (self._worker_thread and self._worker_thread.is_alive()):
-            self._start_worker()
-        fut: Future[T] = Future()
-        self._queue.put((fn, fut))
-        try:
-            return fut.result(timeout=timeout)
-        except Exception:
-            if not fut.done():
-                fut.cancel()
-            raise
+                raise
+        raise last_err
 
     # ── connection ──────────────────────────────────────────────────
 
@@ -186,7 +187,7 @@ class IBKRClient(BaseStatefulClient):
 
     def connect(self) -> bool:
         self._reconnect_stop.clear()
-        return self._submit(self._do_connect)
+        return self._submit_sync(self._do_connect)
 
     def _do_connect(self) -> bool:
         if self.connected:
@@ -235,7 +236,7 @@ class IBKRClient(BaseStatefulClient):
                 finally:
                     logger.info("IBKR disconnected")
         try:
-            self._submit(_do, timeout=10)
+            self._submit_sync(_do, timeout=10)
         except Exception:
             pass
 
@@ -323,16 +324,21 @@ class IBKRClient(BaseStatefulClient):
             "[IBKR-Event] orderStatus: orderId=%s status=%s filled=%s avgPrice=%s",
             order_id, status, filled, avg_price,
         )
-        tracker = self._trackers.get(order_id)
-        if tracker is None:
+
+        ctx = self._order_contexts.get(order_id)
+        if ctx is None:
             return
-        tracker.on_status(
-            status=status,
-            filled=filled,
-            avg_price=avg_price,
-            remaining=float(trade.orderStatus.remaining or 0),
-            error_msgs=[e.message for e in (trade.log or []) if e.message],
-        )
+
+        if status == "Filled" and filled > 0:
+            self._worker.submit(lambda: self._handle_fill(ctx, filled, avg_price))
+            self._order_contexts.pop(order_id, None)
+        elif status == "Cancelled" and filled > 0:
+            self._worker.submit(lambda: self._handle_fill(ctx, filled, avg_price))
+            self._order_contexts.pop(order_id, None)
+        elif status in HARD_TERMINAL:
+            error_msgs = [e.message for e in (trade.log or []) if e.message]
+            self._worker.submit(lambda: self._handle_reject(ctx, status, error_msgs))
+            self._order_contexts.pop(order_id, None)
 
     def _on_exec_details(self, trade, fill):
         order_id = trade.order.orderId
@@ -344,9 +350,6 @@ class IBKRClient(BaseStatefulClient):
             order_id, exec_id, fill.execution.side, fill.execution.shares,
             fill.execution.price, filled, avg_price,
         )
-        tracker = self._trackers.get(order_id)
-        if tracker is not None and filled > 0:
-            tracker.on_exec_details(filled=filled, avg_price=avg_price, exec_id=exec_id)
 
     def _on_commission_report(self, trade, fill, report):
         order_id = trade.order.orderId
@@ -356,12 +359,6 @@ class IBKRClient(BaseStatefulClient):
             float(report.commission or 0), report.currency or "",
             float(report.realizedPNL or 0),
         )
-        tracker = self._trackers.get(order_id)
-        if tracker is not None:
-            tracker.add_commission(
-                commission=float(report.commission or 0),
-                currency=report.currency or "",
-            )
 
     def _on_error(self, reqId, errorCode, errorString, contract):
         sym = getattr(contract, "symbol", "") if contract else ""
@@ -369,10 +366,6 @@ class IBKRClient(BaseStatefulClient):
             "[IBKR-Event] error: reqId=%s code=%s msg=%s contract=%s",
             reqId, errorCode, errorString, sym,
         )
-        error_msg = f"[{errorCode}] {errorString}" if errorCode else errorString
-        for tracker in self._trackers.values():
-            if tracker.current_status not in HARD_TERMINAL:
-                tracker.add_error_message(error_msg)
 
     # ── event callbacks: connection lifecycle ─────────────────────
 
@@ -405,7 +398,8 @@ class IBKRClient(BaseStatefulClient):
             if self._reconnect_stop.wait(timeout=delay):
                 return
             try:
-                if self._do_connect():
+                result = self._worker.submit(self._do_connect).result(timeout=30)
+                if result:
                     logger.info("[IBKR-Reconnect] reconnected successfully")
                     return
             except Exception as e:
@@ -542,56 +536,130 @@ class IBKRClient(BaseStatefulClient):
             logger.warning("Contract qualification failed: %s", e)
             return False
 
-    # ── order waiting (event-driven with timeout fallback) ────────
+    # ── fire-and-forget order handlers ──────────────────────────────
 
-    def _wait_for_order(self, trade, timeout: float = 30.0) -> LiveOrderResult:
-        order_id = trade.order.orderId
-        tracker = OrderTracker(order_id=order_id, engine_id=self.engine_id)
-        self._trackers[order_id] = tracker
+    def _handle_fill(self, ctx: IBKROrderContext, filled: float, avg_price: float):
+        """Process a fill event — runs in IO thread pool, never blocks event loop."""
+        from app.services.live_trading import records
 
+        logger.info(
+            "[IBKR-Fill] orderId=%s pending=%s strategy=%s filled=%.2f avg=%.4f",
+            ctx.order_id, ctx.pending_order_id, ctx.strategy_id, filled, avg_price,
+        )
+
+        if ctx.pending_order_id:
+            try:
+                records.mark_order_sent(
+                    order_id=ctx.pending_order_id,
+                    note="ibkr_filled",
+                    exchange_id=self.engine_id,
+                    exchange_order_id=str(ctx.order_id),
+                    exchange_response_json=json.dumps({
+                        "orderId": ctx.order_id, "status": "Filled",
+                        "filled": filled, "avgPrice": avg_price,
+                    }),
+                    filled=filled,
+                    avg_price=avg_price,
+                    executed_at=int(time.time()),
+                )
+            except Exception as e:
+                logger.warning("[IBKR-Fill] mark_order_sent failed: %s", e)
+
+        if ctx.strategy_id and filled > 0 and avg_price > 0:
+            try:
+                profit, _pos = records.apply_fill_to_local_position(
+                    strategy_id=ctx.strategy_id,
+                    symbol=ctx.symbol,
+                    signal_type=ctx.signal_type,
+                    filled=filled,
+                    avg_price=avg_price,
+                )
+                records.record_trade(
+                    strategy_id=ctx.strategy_id,
+                    symbol=ctx.symbol,
+                    trade_type=ctx.signal_type,
+                    price=avg_price,
+                    amount=filled,
+                    commission=0.0,
+                    commission_ccy="",
+                    profit=profit,
+                )
+            except Exception as e:
+                logger.warning("[IBKR-Fill] record_trade/position failed: %s", e)
+
+        self._notify_order_event(ctx, "filled", filled=filled, avg_price=avg_price)
+
+    def _handle_reject(self, ctx: IBKROrderContext, status: str, error_msgs: List[str]):
+        """Process a rejection event — runs in IO thread pool."""
+        from app.services.live_trading import records
+
+        error_str = "; ".join(error_msgs) if error_msgs else f"Order {status}"
+        logger.warning(
+            "[IBKR-Reject] orderId=%s pending=%s strategy=%s status=%s error=%s",
+            ctx.order_id, ctx.pending_order_id, ctx.strategy_id, status, error_str,
+        )
+
+        if ctx.pending_order_id:
+            try:
+                records.mark_order_failed(
+                    order_id=ctx.pending_order_id,
+                    error=f"ibkr_{status}:{error_str}",
+                    strategy_id=ctx.strategy_id,
+                    symbol=ctx.symbol,
+                    signal_type=ctx.signal_type,
+                )
+            except Exception as e:
+                logger.warning("[IBKR-Reject] mark_order_failed failed: %s", e)
+
+        self._notify_order_event(ctx, "failed", error=error_str)
+
+    def _notify_order_event(
+        self, ctx: IBKROrderContext, status: str, *,
+        filled: float = 0.0, avg_price: float = 0.0, error: str = "",
+    ):
+        """Send notification for order event (best-effort)."""
         try:
-            # If already non-initial when placeOrder returns synchronously
-            status = trade.orderStatus.status
-            if status != "PendingSubmit":
-                tracker.on_status(
-                    status=status,
-                    filled=float(trade.orderStatus.filled or 0),
-                    avg_price=float(trade.orderStatus.avgFillPrice or 0),
-                    remaining=float(trade.orderStatus.remaining or 0),
-                    error_msgs=[e.message for e in (trade.log or []) if e.message],
-                )
+            notification_config = ctx.notification_config
+            if not notification_config and ctx.strategy_id:
+                from app.services.live_trading import records
+                notification_config = records.load_notification_config(ctx.strategy_id)
+            if not notification_config:
+                return
 
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                if tracker.is_done():
-                    break
-                remaining = min(0.5, deadline - time.monotonic())
-                if remaining <= 0:
-                    break
-                self._ib.sleep(remaining)
+            strategy_name = ctx.strategy_name
+            if not strategy_name and ctx.strategy_id:
+                from app.services.live_trading import records
+                strategy_name = records.load_strategy_name(ctx.strategy_id) or f"Strategy_{ctx.strategy_id}"
 
-            # Drain: pump once more to collect trailing commission reports
-            if tracker.is_done():
-                try:
-                    self._ib.sleep(0.2)
-                except Exception:
-                    pass
-            else:
-                logger.warning(
-                    "Order %s timed out in status '%s' after %ss (filled=%s)",
-                    order_id, tracker.current_status, timeout, tracker.filled,
-                )
-
-            return tracker.to_result()
-        finally:
-            self._trackers.pop(order_id, None)
+            from app.services.notification import send_notification
+            send_notification(
+                notification_config=notification_config,
+                strategy_name=strategy_name,
+                symbol=ctx.symbol,
+                signal_type=ctx.signal_type,
+                price=avg_price,
+                amount=filled if filled > 0 else ctx.amount,
+                mode="live",
+                status=status,
+                error=error,
+                extra={
+                    "pending_order_id": ctx.pending_order_id,
+                    "exchange_id": self.engine_id,
+                    "exchange_order_id": str(ctx.order_id),
+                    "market_category": ctx.market_category,
+                    "filled_price": avg_price,
+                    "filled_amount": filled,
+                },
+            )
+        except Exception as e:
+            logger.debug("[IBKR-Notify] notification failed: %s", e)
 
     # ── RTH check ──────────────────────────────────────────────────
 
     _RTH_QUALIFY_RETRIES = 2
 
     def is_market_open(self, symbol: str, market_type: str = "USStock"):
-        def _do():
+        def _task():
             from app.services.live_trading.ibkr_trading.trading_hours import is_rth
             self._ensure_connected()
             _ensure_ib_insync()
@@ -622,7 +690,7 @@ class IBKRClient(BaseStatefulClient):
             return True, ""
 
         try:
-            return self._submit(_do, timeout=30.0)
+            return self._submit_with_retry(lambda: _task, timeout=30.0, retries=1)
         except Exception as e:
             logger.error(
                 "[RTH] is_market_open failed for %s (%s): %s, "
@@ -655,10 +723,33 @@ class IBKRClient(BaseStatefulClient):
                 tif="DAY",
             )
             trade = self._ib.placeOrder(contract, order)
-            return self._wait_for_order(trade, timeout=30.0)
+            oid = trade.order.orderId
+
+            self._order_contexts[oid] = IBKROrderContext(
+                order_id=oid,
+                pending_order_id=int(kwargs.get("pending_order_id") or 0),
+                strategy_id=int(kwargs.get("strategy_id") or 0),
+                symbol=symbol,
+                signal_type=str(kwargs.get("signal_type") or ""),
+                amount=quantity,
+                market_type=market_type,
+                payload=kwargs.get("payload") or {},
+                order_row=kwargs.get("order_row") or {},
+                notification_config=kwargs.get("notification_config") or {},
+                strategy_name=str(kwargs.get("strategy_name") or ""),
+                market_category=str(kwargs.get("market_category") or ""),
+            )
+
+            return LiveOrderResult(
+                success=True,
+                order_id=oid,
+                status="Submitted",
+                exchange_id=self.engine_id,
+                message="Order submitted (fire-and-forget)",
+            )
 
         try:
-            return self._submit(_do, timeout=60.0)
+            return self._submit_sync(_do, timeout=15.0)
         except Exception as e:
             logger.error("Order failed: %s", e)
             return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
@@ -685,10 +776,33 @@ class IBKRClient(BaseStatefulClient):
                 tif="DAY",
             )
             trade = self._ib.placeOrder(contract, order)
-            return self._wait_for_order(trade, timeout=30.0)
+            oid = trade.order.orderId
+
+            self._order_contexts[oid] = IBKROrderContext(
+                order_id=oid,
+                pending_order_id=int(kwargs.get("pending_order_id") or 0),
+                strategy_id=int(kwargs.get("strategy_id") or 0),
+                symbol=symbol,
+                signal_type=str(kwargs.get("signal_type") or ""),
+                amount=quantity,
+                market_type=market_type,
+                payload=kwargs.get("payload") or {},
+                order_row=kwargs.get("order_row") or {},
+                notification_config=kwargs.get("notification_config") or {},
+                strategy_name=str(kwargs.get("strategy_name") or ""),
+                market_category=str(kwargs.get("market_category") or ""),
+            )
+
+            return LiveOrderResult(
+                success=True,
+                order_id=oid,
+                status="Submitted",
+                exchange_id=self.engine_id,
+                message="Limit order submitted (fire-and-forget)",
+            )
 
         try:
-            return self._submit(_do, timeout=60.0)
+            return self._submit_sync(_do, timeout=15.0)
         except Exception as e:
             logger.error("Limit order failed: %s", e)
             return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
@@ -705,7 +819,7 @@ class IBKRClient(BaseStatefulClient):
             return False
 
         try:
-            return self._submit(_do, timeout=15.0)
+            return self._submit_sync(_do, timeout=15.0)
         except Exception as e:
             logger.error("Cancel order failed: %s", e)
             return False
@@ -713,7 +827,7 @@ class IBKRClient(BaseStatefulClient):
     # ── query ──────────────────────────────────────────────────────
 
     def get_account_summary(self) -> Dict[str, Any]:
-        def _do():
+        def _task():
             self._ensure_connected()
             summary = self._ib.accountSummary(self._account)
             result = {}
@@ -722,13 +836,13 @@ class IBKRClient(BaseStatefulClient):
             return {"account": self._account, "summary": result, "success": True}
 
         try:
-            return self._submit(_do, timeout=15.0)
+            return self._submit_with_retry(lambda: _task, timeout=15.0)
         except Exception as e:
             logger.error("Get account summary failed: %s", e)
             return {"success": False, "error": str(e)}
 
     def get_pnl(self) -> Dict[str, Any]:
-        def _do():
+        def _task():
             self._ensure_connected()
             import math
             pnl_list = self._ib.pnl(self._account)
@@ -747,18 +861,17 @@ class IBKRClient(BaseStatefulClient):
             return {"success": True, "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
 
         try:
-            return self._submit(_do, timeout=15.0)
+            return self._submit_with_retry(lambda: _task, timeout=15.0)
         except Exception as e:
             logger.error("Get PnL failed: %s", e)
             return {"success": False, "error": str(e), "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
 
     def get_positions(self) -> List[Dict[str, Any]]:
-        def _do():
+        def _task():
             import math
             self._ensure_connected()
             positions = self._ib.positions(self._account)
 
-            # Request all PnL singles in batch, then wait once
             con_ids = []
             for pos in positions:
                 cid = pos.contract.conId
@@ -816,7 +929,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit(_do, timeout=15.0)
+            return self._submit_with_retry(lambda: _task, timeout=15.0)
         except Exception as e:
             logger.error("Get positions failed: %s", e)
             return []
@@ -838,7 +951,7 @@ class IBKRClient(BaseStatefulClient):
         return records
 
     def get_open_orders(self) -> List[Dict[str, Any]]:
-        def _do():
+        def _task():
             self._ensure_connected()
             trades = self._ib.openTrades()
             result = []
@@ -861,13 +974,13 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit(_do, timeout=15.0)
+            return self._submit_with_retry(lambda: _task, timeout=15.0)
         except Exception as e:
             logger.error("Get orders failed: %s", e)
             return []
 
     def get_quote(self, symbol: str, market_type: str = "USStock") -> Dict[str, Any]:
-        def _do():
+        def _task():
             self._ensure_connected()
             contract = self._create_contract(symbol, market_type)
             if not self._qualify_contract(contract):
@@ -888,7 +1001,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit(_do, timeout=15.0)
+            return self._submit_with_retry(lambda: _task, timeout=15.0)
         except Exception as e:
             logger.error("Get quote failed: %s", e)
             return {"success": False, "error": str(e)}
@@ -905,9 +1018,7 @@ class IBKRClient(BaseStatefulClient):
         }
 
     def shutdown(self):
-        self._queue.put(_SENTINEL)
-        if self._worker_thread and self._worker_thread.is_alive():
-            self._worker_thread.join(timeout=5)
+        self._worker.shutdown()
 
 
 # ── Global singleton ──────────────────────────────────────────────
