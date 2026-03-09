@@ -85,8 +85,8 @@ class IBKRClient(BaseStatefulClient):
     """
     Interactive Brokers Trading Client.
 
-    All ib_insync interactions run on the AsyncWorker event-loop thread,
-    making this client safe to call from any number of strategy threads.
+    All ib_insync interactions run on the IBExecutor event-loop thread via
+    TaskQueue, making this client safe to call from any number of threads.
     """
 
     engine_id = "ibkr"
