@@ -290,11 +290,20 @@
           <span>{{ $t('broker.executions') }}</span>
           <span class="source-tag">QuantDinger</span>
         </div>
-        <div class="panel-badge">{{ executions.length }}</div>
+        <a-select
+          v-model="executionFilter"
+          size="small"
+          style="width: 100px; margin-right: 8px;"
+        >
+          <a-select-option value="all">全部</a-select-option>
+          <a-select-option value="success">成功</a-select-option>
+          <a-select-option value="failed">失败</a-select-option>
+        </a-select>
+        <div class="panel-badge">{{ filteredExecutions.length }}</div>
       </div>
       <a-table
         :columns="executionColumns"
-        :data-source="executions"
+        :data-source="filteredExecutions"
         rowKey="id"
         :pagination="{ pageSize: 15, size: 'small', showSizeChanger: true }"
         size="small"
@@ -377,6 +386,7 @@ export default {
       openOrders: [],
       recentTrades: [],
       executions: [],
+      executionFilter: 'all',
       performance: {},
       refreshTimer: null
     }
@@ -444,6 +454,12 @@ export default {
         { title: this.$t('broker.col.status'), dataIndex: 'status', scopedSlots: { customRender: 'exec_status' }, width: 100, align: 'left' },
         { title: this.$t('broker.col.timeInfo'), dataIndex: 'created_at', scopedSlots: { customRender: 'time_info' }, width: 150, align: 'left' }
       ]
+    },
+    filteredExecutions () {
+      if (this.executionFilter === 'all') {
+        return this.executions
+      }
+      return this.executions.filter(item => item.status === this.executionFilter)
     }
   },
   mounted () {
