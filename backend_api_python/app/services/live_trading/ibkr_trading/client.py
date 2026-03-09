@@ -140,8 +140,8 @@ class IBKRClient(BaseStatefulClient):
     # ── submit helpers ──────────────────────────────────────────────
 
     def _submit_sync(self, fn: Callable, timeout: float = 60.0):
-        """Submit a sync callable to the worker and block for the result."""
-        return self._worker.submit(fn).result(timeout=timeout)
+        """Submit a sync callable to the event-loop thread and block for the result."""
+        return self._worker.submit_to_loop(fn).result(timeout=timeout)
 
     def _submit_with_retry(
         self,
@@ -158,7 +158,7 @@ class IBKRClient(BaseStatefulClient):
         last_err = None
         for attempt in range(1, retries + 1):
             try:
-                return self._worker.submit(task_factory()).result(timeout=timeout)
+                return self._worker.submit_to_loop(task_factory()).result(timeout=timeout)
             except (ConnectionError, asyncio.TimeoutError, TimeoutError) as e:
                 last_err = e
                 logger.warning(
@@ -398,7 +398,7 @@ class IBKRClient(BaseStatefulClient):
             if self._reconnect_stop.wait(timeout=delay):
                 return
             try:
-                result = self._worker.submit(self._do_connect).result(timeout=30)
+                result = self._worker.submit_to_loop(self._do_connect).result(timeout=30)
                 if result:
                     logger.info("[IBKR-Reconnect] reconnected successfully")
                     return

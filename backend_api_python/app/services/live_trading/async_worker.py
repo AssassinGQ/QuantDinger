@@ -74,6 +74,24 @@ class AsyncWorker:
         coro = self._wrap(fn_or_coro)
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
+    def submit_to_loop(
+        self,
+        fn: Callable[..., Any],
+    ) -> concurrent.futures.Future:
+        """Submit a sync callable to run **on the event-loop thread** itself.
+
+        Use this for libraries that require an asyncio event loop on the
+        current thread (e.g. ib_insync).  The callable blocks the event loop
+        while running, so keep it short or use ``submit()`` for pure I/O.
+        """
+        if self._loop is None or self._loop.is_closed():
+            raise RuntimeError("AsyncWorker is not running")
+
+        async def _run_on_loop():
+            return fn()
+
+        return asyncio.run_coroutine_threadsafe(_run_on_loop(), self._loop)
+
     # ------------------------------------------------------------------
 
     def _wrap(
