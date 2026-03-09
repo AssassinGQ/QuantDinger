@@ -32,6 +32,22 @@ def _make_client():
     client._io_executor = MagicMock()
     client._tq.submit.return_value = MagicMock()
     client._fire_io = lambda fn: fn()
+
+    import asyncio
+    def _sync_ib(fn, timeout=60.0):
+        if asyncio.iscoroutine(fn):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(fn)
+            finally:
+                loop.close()
+        return fn()
+    client._submit_ib = _sync_ib
+
+    async def _noop_ensure(*_a, **_kw):
+        pass
+    client._ensure_connected_async = _noop_ensure
+
     return client
 
 
@@ -331,11 +347,12 @@ class TestFullOrderLifecycle:
         trade_mock.orderStatus.status = "Submitted"
         client._ib.placeOrder.return_value = trade_mock
         client._ib.qualifyContracts.return_value = [MagicMock()]
-        client._ib.isConnected.return_value = True
 
-        def sync_ib(fn, timeout=60.0):
-            return fn()
-        client._submit_ib = sync_ib
+        import asyncio as _aio
+        async def _mock_qualify_async(*args):
+            return client._ib.qualifyContracts.return_value
+        client._ib.qualifyContractsAsync = _mock_qualify_async
+        client._ib.isConnected.return_value = True
 
         result = client.place_market_order(
             "AAPL", "buy", 10, "USStock",

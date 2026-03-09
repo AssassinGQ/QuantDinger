@@ -140,8 +140,8 @@ class IBKRClient(BaseStatefulClient):
 
     # ── submit helpers ──────────────────────────────────────────────
 
-    def _submit_ib(self, fn: Callable, timeout: float = 60.0):
-        """Submit a callable to the IB event-loop thread and block for result."""
+    def _submit_ib(self, fn, timeout: float = 60.0):
+        """Submit a callable or coroutine to the IB event-loop thread and block."""
         return self._tq.submit(fn, target=IB).result(timeout=timeout)
 
     def _submit_io(self, fn: Callable, timeout: float = 60.0):
@@ -165,10 +165,10 @@ class IBKRClient(BaseStatefulClient):
 
     def connect(self) -> bool:
         self._reconnect_stop.clear()
-        return self._submit_ib(self._do_connect, timeout=60)
+        return self._submit_ib(self._do_connect_coro(), timeout=60)
 
-    def _do_connect(self) -> bool:
-        """Must run on the IB event-loop thread (via IBExecutor)."""
+    async def _do_connect_coro(self) -> bool:
+        """Async connect — must run on the IB event-loop thread."""
         if self.connected:
             self._register_events()
             return True
@@ -178,16 +178,11 @@ class IBKRClient(BaseStatefulClient):
                 self._ib = ib_insync.IB()
                 self._ib.RequestTimeout = 10
 
-            import asyncio as _aio
-            loop = self._ib_executor.loop
-            if loop is not None:
-                _aio.set_event_loop(loop)
-
             logger.info(
                 "Connecting to IBKR: %s:%s (clientId=%s)",
                 self.config.host, self.config.port, self.config.client_id,
             )
-            self._ib.connect(
+            await self._ib.connectAsync(
                 host=self.config.host,
                 port=self.config.port,
                 clientId=self.config.client_id,
@@ -224,12 +219,28 @@ class IBKRClient(BaseStatefulClient):
         except Exception:
             pass
 
-    def _ensure_connected(self, retries: int = 3, delay: float = 2.0):
+    async def _ensure_connected_async(self, retries: int = 3, delay: float = 2.0):
+        """Async version — awaitable from coroutines on the IB loop."""
         if self.connected:
             return
-
+        import asyncio as _aio
         for attempt in range(1, retries + 1):
-            if self._do_connect():
+            if await self._do_connect_coro():
+                return
+            if attempt < retries:
+                logger.warning(
+                    "IBKR connect attempt %d/%d failed, retrying in %.1fs",
+                    attempt, retries, delay,
+                )
+                await _aio.sleep(delay)
+        raise ConnectionError(f"Cannot connect to IBKR after {retries} attempts")
+
+    def _ensure_connected(self, retries: int = 3, delay: float = 2.0):
+        """Sync version — used in tests and sync contexts."""
+        if self.connected:
+            return
+        for attempt in range(1, retries + 1):
+            if self._submit_ib(self._do_connect_coro(), timeout=60):
                 return
             if attempt < retries:
                 logger.warning(
@@ -382,7 +393,7 @@ class IBKRClient(BaseStatefulClient):
             if self._reconnect_stop.wait(timeout=delay):
                 return
             try:
-                result = self._tq.submit(self._do_connect, target=IB).result(timeout=30)
+                result = self._tq.submit(self._do_connect_coro(), target=IB).result(timeout=30)
                 if result:
                     logger.info("[IBKR-Reconnect] reconnected successfully")
                     return
@@ -513,9 +524,9 @@ class IBKRClient(BaseStatefulClient):
         ib_symbol, exchange, currency = normalize_symbol(symbol, market_type)
         return ib_insync.Stock(symbol=ib_symbol, exchange=exchange, currency=currency)
 
-    def _qualify_contract(self, contract) -> bool:
+    async def _qualify_contract_async(self, contract) -> bool:
         try:
-            return len(self._ib.qualifyContracts(contract)) > 0
+            return len(await self._ib.qualifyContractsAsync(contract)) > 0
         except Exception as e:
             logger.warning("Contract qualification failed: %s", e)
             return False
@@ -643,15 +654,17 @@ class IBKRClient(BaseStatefulClient):
     _RTH_QUALIFY_RETRIES = 2
 
     def is_market_open(self, symbol: str, market_type: str = "USStock"):
-        def _task():
+        import asyncio as _aio
+
+        async def _task():
             from app.services.live_trading.ibkr_trading.trading_hours import is_rth
-            self._ensure_connected()
+            await self._ensure_connected_async()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
 
             qualified = False
             for attempt in range(1, self._RTH_QUALIFY_RETRIES + 1):
-                if self._qualify_contract(contract):
+                if await self._qualify_contract_async(contract):
                     qualified = True
                     break
                 if attempt < self._RTH_QUALIFY_RETRIES:
@@ -659,7 +672,7 @@ class IBKRClient(BaseStatefulClient):
                         "[RTH] contract qualify attempt %d/%d failed for %s, retrying",
                         attempt, self._RTH_QUALIFY_RETRIES, symbol,
                     )
-                    time.sleep(1)
+                    await _aio.sleep(1)
 
             if not qualified:
                 logger.warning(
@@ -674,7 +687,7 @@ class IBKRClient(BaseStatefulClient):
             return True, ""
 
         try:
-            return self._submit_ib(_task, timeout=30.0)
+            return self._submit_ib(_task(), timeout=30.0)
         except Exception as e:
             logger.error(
                 "[RTH] is_market_open failed for %s (%s): %s, "
@@ -694,11 +707,11 @@ class IBKRClient(BaseStatefulClient):
         if not ok:
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
-        def _do():
-            self._ensure_connected()
+        async def _do():
+            await self._ensure_connected_async()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
-            if not self._qualify_contract(contract):
+            if not await self._qualify_contract_async(contract):
                 return LiveOrderResult(success=False, message=f"Invalid contract: {symbol}",
                                    exchange_id=self.engine_id)
             order = ib_insync.MarketOrder(
@@ -733,7 +746,7 @@ class IBKRClient(BaseStatefulClient):
             )
 
         try:
-            return self._submit_ib(_do, timeout=15.0)
+            return self._submit_ib(_do(), timeout=15.0)
         except Exception as e:
             logger.error("Order failed: %s", e)
             return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
@@ -747,11 +760,11 @@ class IBKRClient(BaseStatefulClient):
         if not ok:
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
-        def _do():
-            self._ensure_connected()
+        async def _do():
+            await self._ensure_connected_async()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
-            if not self._qualify_contract(contract):
+            if not await self._qualify_contract_async(contract):
                 return LiveOrderResult(success=False, message=f"Invalid contract: {symbol}",
                                    exchange_id=self.engine_id)
             order = ib_insync.LimitOrder(
@@ -786,14 +799,14 @@ class IBKRClient(BaseStatefulClient):
             )
 
         try:
-            return self._submit_ib(_do, timeout=15.0)
+            return self._submit_ib(_do(), timeout=15.0)
         except Exception as e:
             logger.error("Limit order failed: %s", e)
             return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
 
     def cancel_order(self, order_id: int) -> bool:
-        def _do():
-            self._ensure_connected()
+        async def _do():
+            await self._ensure_connected_async()
             for trade in self._ib.openTrades():
                 if trade.order.orderId == order_id:
                     self._ib.cancelOrder(trade.order)
@@ -803,7 +816,7 @@ class IBKRClient(BaseStatefulClient):
             return False
 
         try:
-            return self._submit_ib(_do, timeout=15.0)
+            return self._submit_ib(_do(), timeout=15.0)
         except Exception as e:
             logger.error("Cancel order failed: %s", e)
             return False
@@ -811,8 +824,8 @@ class IBKRClient(BaseStatefulClient):
     # ── query ──────────────────────────────────────────────────────
 
     def get_account_summary(self) -> Dict[str, Any]:
-        def _task():
-            self._ensure_connected()
+        async def _task():
+            await self._ensure_connected_async()
             summary = self._ib.accountSummary(self._account)
             result = {}
             for item in summary:
@@ -820,19 +833,21 @@ class IBKRClient(BaseStatefulClient):
             return {"account": self._account, "summary": result, "success": True}
 
         try:
-            return self._submit_ib(_task, timeout=15.0)
+            return self._submit_ib(_task(), timeout=15.0)
         except Exception as e:
             logger.error("Get account summary failed: %s", e)
             return {"success": False, "error": str(e)}
 
     def get_pnl(self) -> Dict[str, Any]:
-        def _task():
-            self._ensure_connected()
+        import asyncio as _aio
+
+        async def _task():
+            await self._ensure_connected_async()
             import math
             pnl_list = self._ib.pnl(self._account)
             if not pnl_list:
-                pnl_obj = self._ib.reqPnL(self._account)
-                self._ib.sleep(1)
+                self._ib.reqPnL(self._account)
+                await _aio.sleep(1)
                 pnl_list = self._ib.pnl(self._account)
             if pnl_list:
                 p = pnl_list[0]
@@ -845,15 +860,17 @@ class IBKRClient(BaseStatefulClient):
             return {"success": True, "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
 
         try:
-            return self._submit_ib(_task, timeout=15.0)
+            return self._submit_ib(_task(), timeout=15.0)
         except Exception as e:
             logger.error("Get PnL failed: %s", e)
             return {"success": False, "error": str(e), "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
 
     def get_positions(self) -> List[Dict[str, Any]]:
-        def _task():
+        import asyncio as _aio
+
+        async def _task():
             import math
-            self._ensure_connected()
+            await self._ensure_connected_async()
             positions = self._ib.positions(self._account)
 
             con_ids = []
@@ -866,7 +883,7 @@ class IBKRClient(BaseStatefulClient):
                     except Exception:
                         pass
             if con_ids:
-                self._ib.sleep(0.5)
+                await _aio.sleep(0.5)
 
             pnl_map = {}
             for ps in self._ib.pnlSingle(self._account):
@@ -913,7 +930,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit_ib(_task, timeout=15.0)
+            return self._submit_ib(_task(), timeout=15.0)
         except Exception as e:
             logger.error("Get positions failed: %s", e)
             return []
@@ -935,8 +952,8 @@ class IBKRClient(BaseStatefulClient):
         return records
 
     def get_open_orders(self) -> List[Dict[str, Any]]:
-        def _task():
-            self._ensure_connected()
+        async def _task():
+            await self._ensure_connected_async()
             trades = self._ib.openTrades()
             result = []
             for trade in trades:
@@ -958,19 +975,21 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit_ib(_task, timeout=15.0)
+            return self._submit_ib(_task(), timeout=15.0)
         except Exception as e:
             logger.error("Get orders failed: %s", e)
             return []
 
     def get_quote(self, symbol: str, market_type: str = "USStock") -> Dict[str, Any]:
-        def _task():
-            self._ensure_connected()
+        import asyncio as _aio
+
+        async def _task():
+            await self._ensure_connected_async()
             contract = self._create_contract(symbol, market_type)
-            if not self._qualify_contract(contract):
+            if not await self._qualify_contract_async(contract):
                 return {"success": False, "error": f"Invalid contract: {symbol}"}
             ticker = self._ib.reqMktData(contract, "", False, False)
-            self._ib.sleep(2)
+            await _aio.sleep(2)
             result = {
                 "success": True, "symbol": symbol,
                 "bid": ticker.bid if ticker.bid and ticker.bid > 0 else None,
@@ -985,7 +1004,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit_ib(_task, timeout=15.0)
+            return self._submit_ib(_task(), timeout=15.0)
         except Exception as e:
             logger.error("Get quote failed: %s", e)
             return {"success": False, "error": str(e)}

@@ -89,6 +89,11 @@ def _make_client_with_mock_ib():
     client._ib.isConnected.return_value = True
     client._ib.qualifyContracts.return_value = [MagicMock()]
 
+    import asyncio
+    async def _mock_qualify_async(*args):
+        return client._ib.qualifyContracts.return_value
+    client._ib.qualifyContractsAsync = _mock_qualify_async
+
     # Mock TaskQueue & executors
     client._tq = MagicMock()
     client._ib_executor = MagicMock()
@@ -102,8 +107,15 @@ def _make_client_with_mock_ib():
     client._reconnect_thread = None
     client._reconnect_stop = threading.Event()
 
-    # Bypass TaskQueue: run submitted callables synchronously
+    import asyncio
+
     def _sync_ib(fn, timeout=60.0):
+        if asyncio.iscoroutine(fn):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(fn)
+            finally:
+                loop.close()
         return fn()
 
     def _sync_io(fn, timeout=60.0):
@@ -112,9 +124,13 @@ def _make_client_with_mock_ib():
     def _sync_fire_io(fn):
         fn()
 
+    async def _noop_ensure(*_a, **_kw):
+        pass
+
     client._submit_ib = _sync_ib
     client._submit_io = _sync_io
     client._fire_io = _sync_fire_io
+    client._ensure_connected_async = _noop_ensure
 
     return client
 
@@ -637,10 +653,11 @@ class TestConnectionRetry:
         client._ensure_connected()
 
     def test_retries_and_succeeds_on_second_attempt(self):
+        import asyncio
         client = _make_client_with_mock_ib()
         call_count = {"n": 0}
 
-        def mock_connect():
+        async def mock_connect():
             call_count["n"] += 1
             if call_count["n"] < 2:
                 client._ib.isConnected.return_value = False
@@ -649,33 +666,49 @@ class TestConnectionRetry:
             return True
 
         client._ib.isConnected.return_value = False
-        with patch.object(client, "_do_connect", side_effect=mock_connect):
-            client._ensure_connected(retries=3, delay=0.01)
+        client._do_connect_coro = mock_connect
+        client._ensure_connected(retries=3, delay=0.01)
         assert call_count["n"] == 2
 
     def test_raises_after_all_retries_exhausted(self):
+        import asyncio
         client = _make_client_with_mock_ib()
         client._ib.isConnected.return_value = False
 
-        with patch.object(client, "_do_connect", return_value=False):
-            with pytest.raises(ConnectionError, match="Cannot connect to IBKR after 3 attempts"):
-                client._ensure_connected(retries=3, delay=0.01)
+        async def mock_connect():
+            return False
+
+        client._do_connect_coro = mock_connect
+        with pytest.raises(ConnectionError, match="Cannot connect to IBKR after 3 attempts"):
+            client._ensure_connected(retries=3, delay=0.01)
 
     def test_no_retry_when_already_connected(self):
         client = _make_client_with_mock_ib()
         client._ib.isConnected.return_value = True
-        with patch.object(client, "_do_connect") as mock_connect:
-            client._ensure_connected()
-            mock_connect.assert_not_called()
+        call_count = {"n": 0}
 
-    def test_do_connect_called_directly(self):
-        """_ensure_connected calls _do_connect() directly (not via TaskQueue)."""
+        async def mock_connect():
+            call_count["n"] += 1
+            return True
+
+        client._do_connect_coro = mock_connect
+        client._ensure_connected()
+        assert call_count["n"] == 0
+
+    def test_do_connect_coro_called_via_submit_ib(self):
+        """_ensure_connected submits _do_connect_coro via _submit_ib."""
+        import asyncio
         client = _make_client_with_mock_ib()
         client._ib.isConnected.return_value = False
+        call_count = {"n": 0}
 
-        with patch.object(client, "_do_connect", return_value=True) as mock:
-            client._ensure_connected(retries=1, delay=0.01)
-        mock.assert_called_once()
+        async def mock_connect():
+            call_count["n"] += 1
+            return True
+
+        client._do_connect_coro = mock_connect
+        client._ensure_connected(retries=1, delay=0.01)
+        assert call_count["n"] == 1
 
 
 # ===========================================================================
