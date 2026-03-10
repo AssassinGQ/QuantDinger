@@ -173,19 +173,20 @@ def is_rth(ib, contract, now: Optional[datetime.datetime] = None) -> bool:
     if cached is None:
         cached = _load_sessions(ib, contract, cache_key)
         if cached is None:
-            return True  # fail-open
+            logger.error("Failed to load sessions for %s, fail-closed", contract)
+            return False
 
     tz, sessions = cached
     if not sessions:
-        logger.warning("No liquidHours sessions parsed for %s, assuming RTH", contract)
-        return True
+        logger.error("No liquidHours sessions parsed for %s, fail-closed", contract)
+        return False
 
     if now is None:
         try:
             now = _get_server_time(ib).astimezone(tz)
         except Exception as e:
-            logger.error("reqCurrentTime failed: %s, falling back to local clock", e)
-            now = datetime.datetime.now(tz)
+            logger.error("reqCurrentTime failed: %s, fail-closed", e)
+            return False
 
     for start, end in sessions:
         if start <= now <= end:

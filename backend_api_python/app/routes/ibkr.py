@@ -163,6 +163,10 @@ def place_order():
         market_type = data.get('marketType', 'USStock')
         order_type = data.get('orderType', 'market').lower()
 
+        is_open, reason = client.is_market_open(symbol, market_type)
+        if not is_open:
+            return jsonify({"success": False, "error": f"Market closed: {reason}"}), 400
+
         if order_type == 'limit':
             price = data.get('price')
             if not price or float(price) <= 0:
