@@ -110,6 +110,16 @@ class IBKRClient(BaseStatefulClient):
 
     _RECONNECT_DELAYS = [2, 5, 10, 30, 60]
 
+    @staticmethod
+    def _get_tif_for_signal(signal_type: str) -> str:
+        """Get TIF (Time in Force) based on signal type.
+
+        Close signals (close_long, close_short) use IOC to allow pre/post-market execution.
+        Open signals use DAY to ensure fresh in-session data.
+        """
+        is_close = signal_type in ("close_long", "close_short")
+        return "IOC" if is_close else "DAY"
+
     def __init__(self, config: Optional[IBKRConfig] = None):
         self.config = config or IBKRConfig()
         self._ib = None
@@ -707,6 +717,9 @@ class IBKRClient(BaseStatefulClient):
         if not ok:
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
+        signal_type = str(kwargs.get("signal_type", ""))
+        tif = self._get_tif_for_signal(signal_type)
+
         async def _do():
             await self._ensure_connected_async()
             _ensure_ib_insync()
@@ -717,7 +730,7 @@ class IBKRClient(BaseStatefulClient):
             order = ib_insync.MarketOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, account=self._account,
-                tif="DAY",
+                tif=tif,
             )
             trade = self._ib.placeOrder(contract, order)
             oid = trade.order.orderId
@@ -760,6 +773,9 @@ class IBKRClient(BaseStatefulClient):
         if not ok:
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
+        signal_type = str(kwargs.get("signal_type", ""))
+        tif = self._get_tif_for_signal(signal_type)
+
         async def _do():
             await self._ensure_connected_async()
             _ensure_ib_insync()
@@ -770,7 +786,7 @@ class IBKRClient(BaseStatefulClient):
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
                 totalQuantity=quantity, lmtPrice=price, account=self._account,
-                tif="DAY",
+                tif=tif,
             )
             trade = self._ib.placeOrder(contract, order)
             oid = trade.order.orderId

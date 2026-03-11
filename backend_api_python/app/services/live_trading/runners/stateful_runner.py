@@ -13,9 +13,22 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _is_close_signal(signal_type: str) -> bool:
+    """Check if signal is a close signal (close_long, close_short)."""
+    return signal_type in ("close_long", "close_short")
+
+
 class StatefulClientRunner(OrderRunner):
     def pre_check(self, *, client: BaseStatefulClient, order_context: OrderContext) -> PreCheckResult:
         ctx = order_context
+
+        if _is_close_signal(ctx.signal_type):
+            logger.info(
+                "[RTH] close signal %s for %s, skipping RTH check",
+                ctx.signal_type, ctx.symbol,
+            )
+            return PreCheckResult(ok=True)
+
         market_type = str(
             ctx.market_category or
             ctx.payload.get("market_type") or
