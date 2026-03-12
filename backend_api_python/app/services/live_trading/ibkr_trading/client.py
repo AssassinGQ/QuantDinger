@@ -111,14 +111,20 @@ class IBKRClient(BaseStatefulClient):
     _RECONNECT_DELAYS = [2, 5, 10, 30, 60]
 
     @staticmethod
-    def _get_tif_for_signal(signal_type: str) -> str:
-        """Get TIF (Time in Force) based on signal type.
+    def _get_tif_for_signal(signal_type: str, market_type: str = "USStock") -> str:
+        """Get TIF (Time in Force) based on signal type and market type.
 
         Close signals (close_long, close_short) use IOC to allow pre/post-market execution.
         Open signals use DAY to ensure fresh in-session data.
+
+        Note: HShare (Hong Kong stocks) does not support IOC orders.
         """
         is_close = signal_type in ("close_long", "close_short")
-        return "IOC" if is_close else "DAY"
+        if not is_close:
+            return "DAY"
+        if market_type == "HShare":
+            return "DAY"
+        return "IOC"
 
     def __init__(self, config: Optional[IBKRConfig] = None):
         self.config = config or IBKRConfig()
@@ -737,7 +743,7 @@ class IBKRClient(BaseStatefulClient):
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
         signal_type = str(kwargs.get("signal_type", ""))
-        tif = self._get_tif_for_signal(signal_type)
+        tif = self._get_tif_for_signal(signal_type, market_type)
 
         async def _do():
             await self._ensure_connected_async()
@@ -793,7 +799,7 @@ class IBKRClient(BaseStatefulClient):
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
         signal_type = str(kwargs.get("signal_type", ""))
-        tif = self._get_tif_for_signal(signal_type)
+        tif = self._get_tif_for_signal(signal_type, market_type)
 
         async def _do():
             await self._ensure_connected_async()
