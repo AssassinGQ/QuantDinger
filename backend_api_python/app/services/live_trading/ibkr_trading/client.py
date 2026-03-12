@@ -662,12 +662,14 @@ class IBKRClient(BaseStatefulClient):
     # ── RTH check ──────────────────────────────────────────────────
 
     _RTH_QUALIFY_RETRIES = 2
+    _rth_details_cache: dict = {}  # (conId, date_str) -> ContractDetails
 
     def is_market_open(self, symbol: str, market_type: str = "USStock"):
         import asyncio as _aio
+        import pytz as _pytz
 
         async def _task():
-            from app.services.live_trading.ibkr_trading.trading_hours import is_rth
+            from app.services.live_trading.ibkr_trading.trading_hours import is_rth_check
             await self._ensure_connected_async()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
@@ -691,8 +693,25 @@ class IBKRClient(BaseStatefulClient):
                     symbol, market_type, self._RTH_QUALIFY_RETRIES,
                 )
                 return False, f"{symbol} contract not found"
-            if not is_rth(self._ib, contract):
-                sym = getattr(contract, "symbol", "?")
+
+            server_time = await self._ib.reqCurrentTimeAsync()
+            if server_time.tzinfo is None:
+                server_time = server_time.replace(tzinfo=_pytz.UTC)
+
+            con_id = getattr(contract, "conId", 0) or 0
+            cache_key = (con_id, server_time.date().isoformat())
+            details = self._rth_details_cache.get(cache_key)
+
+            if details is None:
+                details_list = await self._ib.reqContractDetailsAsync(contract)
+                if not details_list:
+                    logger.warning("[RTH] no contract details for %s, fail-closed", symbol)
+                    return False, f"{symbol} contract details not found"
+                details = details_list[0]
+                self._rth_details_cache[cache_key] = details
+
+            sym = getattr(contract, "symbol", symbol)
+            if not is_rth_check(details, server_time, con_id=con_id, symbol=sym):
                 return False, f"{sym} is outside RTH (market closed)"
             return True, ""
 

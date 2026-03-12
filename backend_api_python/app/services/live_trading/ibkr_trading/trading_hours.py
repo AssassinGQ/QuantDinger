@@ -1,13 +1,13 @@
 """
-RTH (Regular Trading Hours) check via IBKR API.
+RTH (Regular Trading Hours) check for IBKR contracts.
 
-Uses reqContractDetails().liquidHours for session windows and
-reqCurrentTime() for server-side clock — completely independent of
-the local system clock.
+Pure logic module — does NOT call ib_insync directly.
+All IBKR API calls should happen in IBKRClient; this module only
+receives pre-fetched data (contract_details, server_time).
 
 Fuse: after determining a contract is outside RTH, the next session
 start time is cached per contract. Subsequent calls return False
-immediately (no IBGateway traffic) until that time is reached.
+immediately until that time is reached.
 """
 
 import datetime
@@ -40,10 +40,7 @@ _TZ_MAP = {
     "MET": "Europe/Berlin",
 }
 
-# (conId, date_str) -> (tz, sessions)
-_details_cache: dict = {}
-
-# conId -> monotonic timestamp before which we skip IBGateway queries
+# conId -> monotonic timestamp before which we skip checks
 _fuse_until: dict = {}
 
 
@@ -80,48 +77,12 @@ def parse_liquid_hours(liquid_hours: str, tz: pytz.BaseTzInfo) -> List[Tuple[dat
     return sessions
 
 
-def _get_server_time(ib) -> datetime.datetime:
-    """Get current time from IBKR server (UTC-aware)."""
-    server_time = ib.reqCurrentTime()
-    if server_time.tzinfo is None:
-        server_time = server_time.replace(tzinfo=pytz.UTC)
-    return server_time
-
-
 def _next_session_start(now: datetime.datetime,
                         sessions: List[Tuple[datetime.datetime, datetime.datetime]],
                         ) -> Optional[datetime.datetime]:
     """Find the earliest session start that is strictly after *now*."""
     future = [s for s, _e in sessions if s > now]
     return min(future) if future else None
-
-
-def _load_sessions(ib, contract, cache_key):
-    """Fetch and cache liquidHours sessions for a contract.
-
-    Returns (tz, sessions) or None on error (caller should fail-open).
-    """
-    try:
-        details_list = ib.reqContractDetails(contract)
-    except Exception as e:
-        logger.error("reqContractDetails failed for %s: %s", contract, e)
-        return None
-
-    if not details_list:
-        logger.warning("No contract details for %s, assuming RTH", contract)
-        return None
-
-    details = details_list[0]
-    tz = _resolve_tz(details.timeZoneId or "UTC")
-    sessions = parse_liquid_hours(details.liquidHours or "", tz)
-    result = (tz, sessions)
-    _details_cache[cache_key] = result
-    logger.info(
-        "Cached %d liquidHours sessions for %s (tz=%s): %s",
-        len(sessions), contract.symbol, details.timeZoneId,
-        "; ".join(f"{s.strftime('%H:%M')}-{e.strftime('%H:%M')}" for s, e in sessions),
-    )
-    return result
 
 
 _FUSE_THRESHOLD = 30  # seconds; don't bother fusing below this
@@ -137,7 +98,7 @@ def _activate_fuse(con_id: int, now, sessions, symbol: str):
             _fuse_until[con_id] = _time.monotonic() + wait_seconds
             logger.info(
                 "RTH fuse for %s: market closed, next open in %.0f min (%s), "
-                "suppressing IBGateway queries for %.0f min (half of remaining)",
+                "suppressing queries for %.0f min (half of remaining)",
                 symbol, remaining / 60,
                 next_open.strftime("%H:%M %Z"), wait_seconds / 60,
             )
@@ -145,54 +106,46 @@ def _activate_fuse(con_id: int, now, sessions, symbol: str):
         _fuse_until[con_id] = _time.monotonic() + 1800
         logger.info(
             "RTH fuse for %s: no more sessions today, "
-            "suppressing IBGateway queries for 30 min",
+            "suppressing queries for 30 min",
             symbol,
         )
 
 
-def is_rth(ib, contract, now: Optional[datetime.datetime] = None) -> bool:
-    """Check whether the IBKR server time falls within a liquidHours session.
+def is_rth_check(
+    contract_details,
+    server_time_utc: datetime.datetime,
+    con_id: int = 0,
+    symbol: str = "?",
+    now: Optional[datetime.datetime] = None,
+) -> bool:
+    """Pure logic: check whether server_time falls within a liquidHours session.
+
+    Does NOT call any IBKR API. All data must be pre-fetched by the caller.
 
     Per-contract fuse: once determined outside RTH, further calls return
-    False without contacting IBGateway until the next session starts.
+    False immediately until the next session starts.
 
     Args:
-        ib: connected ib_insync.IB instance
-        contract: qualified ib_insync contract
+        contract_details: IBKR ContractDetails object (needs .timeZoneId, .liquidHours)
+        server_time_utc: UTC-aware datetime from IBKR server
+        con_id: contract ID for fuse tracking
+        symbol: symbol name for logging
         now: override for current time (testing only); bypasses fuse
     """
-    con_id = getattr(contract, "conId", 0) or id(contract)
-
     if now is None:
         fuse_deadline = _fuse_until.get(con_id)
         if fuse_deadline is not None and _time.monotonic() < fuse_deadline:
             return False
 
-        # Get server time once for both cache key and time check
-        try:
-            server_time_utc = ib.reqCurrentTime()
-            if server_time_utc.tzinfo is None:
-                server_time_utc = server_time_utc.replace(tzinfo=pytz.UTC)
-            # Use server's UTC date as cache key to avoid timezone mismatch
-            cache_key = (con_id, server_time_utc.date().isoformat())
-        except Exception as e:
-            logger.error("reqCurrentTime failed: %s, fail-closed", e)
-            return False
-    else:
-        # When now is provided (testing), use local date for cache key
-        cache_key = (con_id, now.date().isoformat())
+    tz = _resolve_tz(contract_details.timeZoneId or "UTC")
+    sessions = parse_liquid_hours(contract_details.liquidHours or "", tz)
 
-    cached = _details_cache.get(cache_key)
-    if cached is None:
-        cached = _load_sessions(ib, contract, cache_key)
-        if cached is None:
-            logger.error("Failed to load sessions for %s, fail-closed", contract)
-            return False
-
-    tz, sessions = cached
     if not sessions:
-        logger.error("No liquidHours sessions parsed for %s, fail-closed", contract)
+        logger.error("No liquidHours sessions parsed for %s, fail-closed", symbol)
         return False
+
+    if server_time_utc.tzinfo is None:
+        server_time_utc = server_time_utc.replace(tzinfo=pytz.UTC)
 
     if now is None:
         now = server_time_utc.astimezone(tz)
@@ -202,11 +155,10 @@ def is_rth(ib, contract, now: Optional[datetime.datetime] = None) -> bool:
             _fuse_until.pop(con_id, None)
             return True
 
-    _activate_fuse(con_id, now, sessions, contract.symbol)
+    _activate_fuse(con_id, now, sessions, symbol)
     return False
 
 
 def clear_cache():
-    """Clear all caches (useful for testing or daily reset)."""
-    _details_cache.clear()
+    """Clear fuse timers (useful for testing or daily reset)."""
     _fuse_until.clear()

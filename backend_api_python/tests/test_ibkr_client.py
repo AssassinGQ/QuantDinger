@@ -2,6 +2,7 @@
 Tests for IBKR client: quantity guard, fire-and-forget order flow, connection retry,
 RTH gate, and the TaskQueue-based task dispatch mechanism.
 """
+import datetime
 import threading
 import time
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -18,7 +19,7 @@ from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 @pytest.fixture(autouse=True)
 def _always_rth():
     """Default: assume market is open so is_market_open doesn't block tests."""
-    with patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True):
+    with patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth_check", return_value=True):
         yield
 
 
@@ -93,6 +94,19 @@ def _make_client_with_mock_ib():
     async def _mock_qualify_async(*args):
         return client._ib.qualifyContracts.return_value
     client._ib.qualifyContractsAsync = _mock_qualify_async
+
+    _mock_details = MagicMock()
+    _mock_details.liquidHours = "20260305:0930-20260305:1600"
+    _mock_details.timeZoneId = "EST"
+
+    async def _mock_req_details_async(*args, **kwargs):
+        return [_mock_details]
+    client._ib.reqContractDetailsAsync = _mock_req_details_async
+
+    async def _mock_req_current_time_async():
+        import pytz
+        return datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC)
+    client._ib.reqCurrentTimeAsync = _mock_req_current_time_async
 
     # Mock TaskQueue & executors
     client._tq = MagicMock()
@@ -719,7 +733,7 @@ class TestRTHGate:
     """Verify is_market_open returns correct result based on RTH status."""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=False)
+    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth_check", return_value=False)
     def test_is_market_open_returns_false_outside_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
         is_open, reason = client.is_market_open("AAPL", "USStock")
@@ -727,7 +741,7 @@ class TestRTHGate:
         assert "market closed" in reason.lower()
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True)
+    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth_check", return_value=True)
     def test_is_market_open_returns_true_during_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
         is_open, reason = client.is_market_open("AAPL", "USStock")
@@ -735,7 +749,7 @@ class TestRTHGate:
         assert reason == ""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth", return_value=True)
+    @patch("app.services.live_trading.ibkr_trading.trading_hours.is_rth_check", return_value=True)
     def test_market_order_allowed_during_rth(self, _mock_rth):
         client = _make_client_with_mock_ib()
         trade = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=500)

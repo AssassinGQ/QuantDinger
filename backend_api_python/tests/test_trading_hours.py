@@ -1,14 +1,15 @@
-"""Tests for IBKR RTH (Regular Trading Hours) gate."""
+"""Tests for IBKR RTH (Regular Trading Hours) pure logic."""
 
 import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+import time as _time
 
 import pytz
 import pytest
 
 from app.services.live_trading.ibkr_trading.trading_hours import (
     parse_liquid_hours,
-    is_rth,
+    is_rth_check,
     clear_cache,
     _resolve_tz,
     _fuse_until,
@@ -20,6 +21,14 @@ def _clear_cache():
     clear_cache()
     yield
     clear_cache()
+
+
+def _make_details(liquid_hours: str, tz_id: str = "EST"):
+    """Create a mock ContractDetails with liquidHours and timeZoneId."""
+    details = MagicMock()
+    details.liquidHours = liquid_hours
+    details.timeZoneId = tz_id
+    return details
 
 
 # ── parse_liquid_hours ────────────────────────────────────────────────
@@ -79,129 +88,70 @@ class TestResolveTz:
         assert _resolve_tz("XYZABC") == pytz.UTC
 
 
-# ── is_rth ────────────────────────────────────────────────────────────
+# ── is_rth_check ─────────────────────────────────────────────────────
 
-def _make_mock_ib(liquid_hours: str, tz_id: str = "EST",
-                  server_utc: datetime.datetime = None):
-    """Create a mock IB instance with reqContractDetails and reqCurrentTime."""
-    ib = MagicMock()
-    details = MagicMock()
-    details.liquidHours = liquid_hours
-    details.timeZoneId = tz_id
-    ib.reqContractDetails.return_value = [details]
-    if server_utc is None:
+class TestIsRTHCheck:
+
+    def test_inside_session(self):
+        details = _make_details("20260305:0930-20260305:1600", "EST")
         server_utc = datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC)
-    ib.reqCurrentTime.return_value = server_utc
-    return ib
+        assert is_rth_check(details, server_utc, con_id=12345) is True
 
+    def test_outside_session(self):
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc = datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc, con_id=12346) is False
 
-def _make_contract(con_id=12345):
-    c = MagicMock()
-    c.conId = con_id
-    c.symbol = "AAPL"
-    return c
-
-
-class TestIsRTH:
-
-    def test_inside_session_with_server_time(self):
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract()
-        assert is_rth(ib, contract) is True
-        ib.reqCurrentTime.assert_called_once()
-
-    def test_outside_session_with_server_time(self):
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract()
-        assert is_rth(ib, contract) is False
-
-    def test_now_override_bypasses_server_time(self):
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-        )
-        contract = _make_contract()
+    def test_now_override_inside(self):
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc = datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC)
         tz_ny = pytz.timezone("US/Eastern")
         within = tz_ny.localize(datetime.datetime(2026, 3, 5, 10, 0))
-        assert is_rth(ib, contract, now=within) is True
-        ib.reqCurrentTime.assert_not_called()
+        assert is_rth_check(details, server_utc, now=within) is True
 
     def test_now_override_outside(self):
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-        )
-        contract = _make_contract()
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc = datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC)
         tz_ny = pytz.timezone("US/Eastern")
         outside = tz_ny.localize(datetime.datetime(2026, 3, 5, 20, 0))
-        assert is_rth(ib, contract, now=outside) is False
+        assert is_rth_check(details, server_utc, now=outside) is False
 
     def test_hk_market_morning_session(self):
-        tz_hk = pytz.timezone("Asia/Hong_Kong")
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1200;20260305:1300-20260305:1600",
-            tz_id="HKT",
-            server_utc=datetime.datetime(2026, 3, 5, 2, 30, 0, tzinfo=pytz.UTC),
+        details = _make_details(
+            "20260305:0930-20260305:1200;20260305:1300-20260305:1600", "HKT"
         )
-        contract = _make_contract(con_id=99999)
-        assert is_rth(ib, contract) is True
+        server_utc = datetime.datetime(2026, 3, 5, 2, 30, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc, con_id=99999) is True
 
     def test_hk_market_lunch_break(self):
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1200;20260305:1300-20260305:1600",
-            tz_id="HKT",
-            server_utc=datetime.datetime(2026, 3, 5, 4, 30, 0, tzinfo=pytz.UTC),
+        details = _make_details(
+            "20260305:0930-20260305:1200;20260305:1300-20260305:1600", "HKT"
         )
-        contract = _make_contract(con_id=99998)
-        assert is_rth(ib, contract) is False
+        server_utc = datetime.datetime(2026, 3, 5, 4, 30, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc, con_id=99998) is False
 
-    def test_cache_reuses_details(self):
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract(con_id=11111)
-        is_rth(ib, contract)
-        is_rth(ib, contract)
-        ib.reqContractDetails.assert_called_once()
-        assert ib.reqCurrentTime.call_count == 2
+    def test_no_sessions_returns_false(self):
+        details = _make_details("20260307:CLOSED", "EST")
+        server_utc = datetime.datetime(2026, 3, 7, 15, 0, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc) is False
 
-    def test_fail_open_on_details_error(self):
-        ib = MagicMock()
-        ib.reqContractDetails.side_effect = Exception("timeout")
-        contract = _make_contract(con_id=77777)
-        assert is_rth(ib, contract) is False
+    def test_empty_liquid_hours_returns_false(self):
+        details = _make_details("", "EST")
+        server_utc = datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc) is False
 
-    def test_fail_open_on_empty_details(self):
-        ib = MagicMock()
-        ib.reqContractDetails.return_value = []
-        contract = _make_contract(con_id=88888)
-        assert is_rth(ib, contract) is False
+    def test_naive_server_time_gets_utc(self):
+        """server_time_utc without tzinfo should be treated as UTC."""
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_naive = datetime.datetime(2026, 3, 5, 15, 0, 0)
+        assert is_rth_check(details, server_naive, con_id=12347) is True
 
-    def test_fail_open_on_no_sessions(self):
-        ib = _make_mock_ib(liquid_hours="20260307:CLOSED", tz_id="EST")
-        contract = _make_contract(con_id=66666)
-        assert is_rth(ib, contract) is False
-
-    def test_server_time_fallback_on_reqCurrentTime_error(self):
-        """If reqCurrentTime fails, fall back to local clock."""
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-        )
-        ib.reqCurrentTime.side_effect = Exception("disconnected")
-        contract = _make_contract(con_id=55555)
-        result = is_rth(ib, contract)
-        assert isinstance(result, bool)
+    def test_cross_timezone_china_midnight(self):
+        """Key scenario: user in China at midnight, US market still open."""
+        details = _make_details("20260311:0930-20260311:1600", "EST")
+        # 北京时间 03:00 = UTC 19:00 = EDT 15:00 (盘中)
+        server_utc = datetime.datetime(2026, 3, 11, 19, 0, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc, con_id=10001, symbol="GOOGL") is True
 
 
 # ── fuse (circuit breaker) ────────────────────────────────────────
@@ -209,128 +159,75 @@ class TestIsRTH:
 class TestFuse:
 
     def test_fuse_activates_on_outside_rth(self):
-        """After detecting outside-RTH, fuse should be set for this contract."""
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract(con_id=40001)
-        assert is_rth(ib, contract) is False
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc = datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc, con_id=40001, symbol="AAPL") is False
         assert 40001 in _fuse_until
 
-    def test_fuse_skips_ibgateway_queries(self):
-        """While fuse is active, no reqCurrentTime or reqContractDetails calls."""
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract(con_id=40002)
-        is_rth(ib, contract)
+    def test_fuse_returns_false_immediately(self):
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc = datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC)
+        is_rth_check(details, server_utc, con_id=40002, symbol="AAPL")
 
-        ib.reset_mock()
-        assert is_rth(ib, contract) is False
-        ib.reqCurrentTime.assert_not_called()
-        ib.reqContractDetails.assert_not_called()
+        # Second call should return False immediately via fuse
+        assert is_rth_check(details, server_utc, con_id=40002, symbol="AAPL") is False
 
     def test_fuse_does_not_affect_other_contracts(self):
-        """Fuse is per-contract; other contracts still query normally."""
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract_a = _make_contract(con_id=40003)
-        is_rth(ib, contract_a)
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc_closed = datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC)
+        is_rth_check(details, server_utc_closed, con_id=40003, symbol="AAPL")
 
-        ib2 = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract_b = _make_contract(con_id=40004)
-        assert is_rth(ib2, contract_b) is True
+        server_utc_open = datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc_open, con_id=40004, symbol="MSFT") is True
 
     def test_fuse_waits_half_of_remaining(self):
-        """Fuse duration should be half the time until next session."""
-        import time as _time
-
-        # Server time 13:00 UTC, session starts 09:30 EST = 14:30 UTC
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        # Server time 13:00 UTC → 08:00 EST, session starts 09:30 EST = 14:30 UTC
         # remaining = 90 min = 5400s, fuse = half = 2700s
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 13, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract(con_id=40005)
+        server_utc = datetime.datetime(2026, 3, 5, 13, 0, 0, tzinfo=pytz.UTC)
         before = _time.monotonic()
-        is_rth(ib, contract)
+        is_rth_check(details, server_utc, con_id=40005, symbol="AAPL")
 
         fuse_deadline = _fuse_until[40005]
         fuse_duration = fuse_deadline - before
-        remaining_seconds = 90 * 60  # 5400s
+        remaining_seconds = 90 * 60
 
-        assert abs(fuse_duration - remaining_seconds / 2) < 5  # ~2700s
+        assert abs(fuse_duration - remaining_seconds / 2) < 5
 
     def test_no_fuse_when_near_open(self):
-        """When remaining < 60s (half < 30s threshold), no fuse is set."""
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-        )
-        contract = _make_contract(con_id=40009)
+        details = _make_details("20260305:0930-20260305:1600", "EST")
         tz_ny = pytz.timezone("US/Eastern")
         almost_open = tz_ny.localize(datetime.datetime(2026, 3, 5, 9, 29, 10))
-        is_rth(ib, contract, now=almost_open)
+        server_utc = datetime.datetime(2026, 3, 5, 14, 29, 10, tzinfo=pytz.UTC)
+        is_rth_check(details, server_utc, con_id=40009, symbol="AAPL", now=almost_open)
         assert 40009 not in _fuse_until
 
     def test_fuse_clears_on_rth(self):
-        """When market opens, fuse should be cleared."""
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract(con_id=40006)
-        is_rth(ib, contract)
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc_closed = datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC)
+        is_rth_check(details, server_utc_closed, con_id=40006, symbol="AAPL")
         assert 40006 in _fuse_until
 
         _fuse_until[40006] = 0  # expire the fuse
-        ib.reqCurrentTime.return_value = datetime.datetime(
-            2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC
-        )
-        assert is_rth(ib, contract) is True
+        server_utc_open = datetime.datetime(2026, 3, 5, 15, 0, 0, tzinfo=pytz.UTC)
+        assert is_rth_check(details, server_utc_open, con_id=40006, symbol="AAPL") is True
         assert 40006 not in _fuse_until
 
     def test_fuse_bypassed_with_now_override(self):
-        """now= override should bypass fuse (for testing)."""
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract(con_id=40007)
-        is_rth(ib, contract)  # activates fuse
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc = datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC)
+        is_rth_check(details, server_utc, con_id=40007, symbol="AAPL")
         assert 40007 in _fuse_until
 
         tz_ny = pytz.timezone("US/Eastern")
         within = tz_ny.localize(datetime.datetime(2026, 3, 5, 10, 0))
-        assert is_rth(ib, contract, now=within) is True
+        assert is_rth_check(details, server_utc, con_id=40007, symbol="AAPL", now=within) is True
 
     def test_no_future_sessions_fuse_30min(self):
-        """When no future sessions exist today, fuse for 30 min."""
-        import time as _time
-        tz_ny = pytz.timezone("US/Eastern")
-
-        ib = _make_mock_ib(
-            liquid_hours="20260305:0930-20260305:1600",
-            tz_id="EST",
-            server_utc=datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC),
-        )
-        contract = _make_contract(con_id=40008)
+        details = _make_details("20260305:0930-20260305:1600", "EST")
+        server_utc = datetime.datetime(2026, 3, 5, 22, 0, 0, tzinfo=pytz.UTC)
         before = _time.monotonic()
-        is_rth(ib, contract)
+        is_rth_check(details, server_utc, con_id=40008, symbol="AAPL")
 
         fuse_deadline = _fuse_until[40008]
         fuse_duration = fuse_deadline - before
