@@ -168,7 +168,20 @@ def is_rth(ib, contract, now: Optional[datetime.datetime] = None) -> bool:
         if fuse_deadline is not None and _time.monotonic() < fuse_deadline:
             return False
 
-    cache_key = (con_id, datetime.date.today().isoformat())
+        # Get server time once for both cache key and time check
+        try:
+            server_time_utc = ib.reqCurrentTime()
+            if server_time_utc.tzinfo is None:
+                server_time_utc = server_time_utc.replace(tzinfo=pytz.UTC)
+            # Use server's UTC date as cache key to avoid timezone mismatch
+            cache_key = (con_id, server_time_utc.date().isoformat())
+        except Exception as e:
+            logger.error("reqCurrentTime failed: %s, fail-closed", e)
+            return False
+    else:
+        # When now is provided (testing), use local date for cache key
+        cache_key = (con_id, now.date().isoformat())
+
     cached = _details_cache.get(cache_key)
     if cached is None:
         cached = _load_sessions(ib, contract, cache_key)
@@ -182,11 +195,7 @@ def is_rth(ib, contract, now: Optional[datetime.datetime] = None) -> bool:
         return False
 
     if now is None:
-        try:
-            now = _get_server_time(ib).astimezone(tz)
-        except Exception as e:
-            logger.error("reqCurrentTime failed: %s, fail-closed", e)
-            return False
+        now = server_time_utc.astimezone(tz)
 
     for start, end in sessions:
         if start <= now <= end:

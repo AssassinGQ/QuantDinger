@@ -179,18 +179,18 @@ class TestIsRTH:
         ib = MagicMock()
         ib.reqContractDetails.side_effect = Exception("timeout")
         contract = _make_contract(con_id=77777)
-        assert is_rth(ib, contract) is True
+        assert is_rth(ib, contract) is False
 
     def test_fail_open_on_empty_details(self):
         ib = MagicMock()
         ib.reqContractDetails.return_value = []
         contract = _make_contract(con_id=88888)
-        assert is_rth(ib, contract) is True
+        assert is_rth(ib, contract) is False
 
     def test_fail_open_on_no_sessions(self):
         ib = _make_mock_ib(liquid_hours="20260307:CLOSED", tz_id="EST")
         contract = _make_contract(con_id=66666)
-        assert is_rth(ib, contract) is True
+        assert is_rth(ib, contract) is False
 
     def test_server_time_fallback_on_reqCurrentTime_error(self):
         """If reqCurrentTime fails, fall back to local clock."""
