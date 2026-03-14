@@ -2,10 +2,8 @@
 AsyncExecutor — abstract interface for non-blocking task execution.
 
 Two concrete implementations:
-  - IBExecutor:  runs tasks on a dedicated asyncio event-loop thread
-                 (required by ib_insync for TCP socket I/O and thread safety).
-  - IOExecutor:  runs tasks in a ThreadPoolExecutor
-                 (for DB writes, notifications, and other blocking I/O).
+  - LoopExecutor:   runs coroutines on a dedicated asyncio event-loop thread.
+  - ThreadsPoolExecutor: runs blocking callables in a ThreadPoolExecutor.
 """
 
 import asyncio
@@ -46,7 +44,7 @@ class AsyncExecutor(ABC):
     def shutdown(self) -> None: ...
 
 
-class IBExecutor(AsyncExecutor):
+class LoopExecutor(AsyncExecutor):
     """Runs tasks on a dedicated asyncio event-loop thread.
 
     - Coroutines are scheduled directly on the loop.
@@ -105,7 +103,7 @@ class IBExecutor(AsyncExecutor):
         self._thread = None
 
 
-class IOExecutor(AsyncExecutor):
+class ThreadsPoolExecutor(AsyncExecutor):
     """Runs tasks in a thread pool (for DB, notifications, etc.)."""
 
     def __init__(self, max_workers: int = 4, name: str = "io"):

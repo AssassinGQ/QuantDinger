@@ -80,7 +80,7 @@ def _make_trade_mock(status="Filled", filled=10.0, avg_price=150.0,
 def _make_client_with_mock_ib():
     """Create an IBKRClient with mocked internals, bypassing the real TaskQueue.
 
-    _submit_ib / _fire_io run callables synchronously so tests don't depend
+    _submit_ib / _fire_submit run callables synchronously so tests don't depend
     on threading.
     """
     client = IBKRClient.__new__(IBKRClient)
@@ -123,7 +123,15 @@ def _make_client_with_mock_ib():
 
     import asyncio
 
-    def _sync_ib(fn, timeout=60.0):
+    def _sync_fire_submit(fn, is_blocking=True):
+        fn()
+
+    async def _noop_ensure(*_a, **_kw):
+        pass
+
+    client._fire_submit = _sync_fire_submit
+
+    def _submit(fn, timeout=60.0, is_blocking=False):
         if asyncio.iscoroutine(fn):
             loop = asyncio.new_event_loop()
             try:
@@ -131,19 +139,7 @@ def _make_client_with_mock_ib():
             finally:
                 loop.close()
         return fn()
-
-    def _sync_io(fn, timeout=60.0):
-        return fn()
-
-    def _sync_fire_io(fn):
-        fn()
-
-    async def _noop_ensure(*_a, **_kw):
-        pass
-
-    client._submit_ib = _sync_ib
-    client._submit_io = _sync_io
-    client._fire_io = _sync_fire_io
+    client._submit = _submit
     client._ensure_connected_async = _noop_ensure
 
     return client
@@ -157,7 +153,7 @@ class TestWorkerThread:
     """Verify the TaskQueue-based task dispatch mechanism."""
 
     def test_submit_runs_via_taskqueue(self):
-        """_submit_ib should execute the callable via TaskQueue → IBExecutor."""
+        """_submit should execute the callable via TaskQueue → LoopExecutor."""
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -167,11 +163,8 @@ class TestWorkerThread:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
-        from app.services.live_trading.task_queue import TaskQueue, IB, IO
-        client._ib_executor = IBExecutor(name="test-ib-exec")
-        client._io_executor = IOExecutor(max_workers=2, name="test-io-exec")
-        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        from app.services.live_trading.task_queue import TaskQueue
+        client._tq = TaskQueue(loop_executor_name="test-loop", pool_executor_name="test-pool", pool_workers=2)
         client._tq.start()
 
         caller_tid = threading.current_thread().ident
@@ -181,7 +174,7 @@ class TestWorkerThread:
             result_holder["tid"] = threading.current_thread().ident
             return 42
 
-        result = client._submit_ib(task, timeout=5.0)
+        result = client._submit(task, timeout=5.0, is_blocking=False)
 
         assert result == 42
         assert result_holder["tid"] != caller_tid
@@ -198,18 +191,15 @@ class TestWorkerThread:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
-        from app.services.live_trading.task_queue import TaskQueue, IB, IO
-        client._ib_executor = IBExecutor(name="test-ib-exc")
-        client._io_executor = IOExecutor(max_workers=2, name="test-io-exc")
-        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        from app.services.live_trading.task_queue import TaskQueue
+        client._tq = TaskQueue(loop_executor_name="test-loop", pool_executor_name="test-pool", pool_workers=2)
         client._tq.start()
 
         def bad_task():
             raise ValueError("test error")
 
         with pytest.raises(ValueError, match="test error"):
-            client._submit_ib(bad_task, timeout=5.0)
+            client._submit(bad_task, timeout=5.0, is_blocking=False)
         client._tq.shutdown()
 
     def test_shutdown_stops_taskqueue(self):
@@ -223,11 +213,8 @@ class TestWorkerThread:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
-        from app.services.live_trading.task_queue import TaskQueue, IB, IO
-        client._ib_executor = IBExecutor(name="test-ib-shut")
-        client._io_executor = IOExecutor(max_workers=2, name="test-io-shut")
-        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        from app.services.live_trading.task_queue import TaskQueue
+        client._tq = TaskQueue(loop_executor_name="test-loop", pool_executor_name="test-pool", pool_workers=2)
         client._tq.start()
 
         client.shutdown()
@@ -493,7 +480,7 @@ class TestEventCallbacks:
     def test_on_order_status_filled_triggers_handle_fill(self):
         client = _make_client_with_mock_ib()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = IBKROrderContext(order_id=42, pending_order_id=10, strategy_id=5, symbol="AAPL")
         client._order_contexts[42] = ctx
@@ -507,7 +494,7 @@ class TestEventCallbacks:
     def test_on_order_status_cancelled_with_fill_triggers_handle_fill(self):
         client = _make_client_with_mock_ib()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = IBKROrderContext(order_id=43, pending_order_id=11, strategy_id=5, symbol="AAPL")
         client._order_contexts[43] = ctx
@@ -521,7 +508,7 @@ class TestEventCallbacks:
     def test_on_order_status_hard_terminal_triggers_handle_reject(self):
         client = _make_client_with_mock_ib()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = IBKROrderContext(order_id=44, pending_order_id=12, strategy_id=5, symbol="AAPL")
         client._order_contexts[44] = ctx
@@ -538,7 +525,7 @@ class TestEventCallbacks:
     def test_on_order_status_ignores_untracked_order(self):
         client = _make_client_with_mock_ib()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0, order_id=99)
         client._on_order_status(trade)
@@ -547,7 +534,7 @@ class TestEventCallbacks:
     def test_on_order_status_active_does_not_dispatch(self):
         client = _make_client_with_mock_ib()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = IBKROrderContext(order_id=45, pending_order_id=13, strategy_id=5, symbol="AAPL")
         client._order_contexts[45] = ctx
@@ -562,7 +549,7 @@ class TestEventCallbacks:
         """Cancelled with 0 fills is NOT a rejection — IBKR can recover."""
         client = _make_client_with_mock_ib()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = IBKROrderContext(order_id=46, pending_order_id=14, strategy_id=5, symbol="AAPL")
         client._order_contexts[46] = ctx
@@ -764,9 +751,9 @@ class TestRTHGate:
 # ===========================================================================
 
 class TestSubmitHelpers:
-    """Verify _submit_ib, _submit_io, _fire_io dispatch correctly."""
+    """Verify _submit dispatch correctly with is_blocking parameter."""
 
-    def test_submit_ib_runs_on_ib_thread(self):
+    def test_submit_runs_on_loop_thread(self):
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -776,21 +763,20 @@ class TestSubmitHelpers:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
-        from app.services.live_trading.task_queue import TaskQueue, IB, IO
-        client._ib_executor = IBExecutor(name="test-submit-ib")
-        client._io_executor = IOExecutor(max_workers=2, name="test-submit-io")
-        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        from app.services.live_trading.task_queue import TaskQueue
+        client._tq = TaskQueue(loop_executor_name="test-loop", pool_executor_name="test-pool", pool_workers=2)
         client._tq.start()
 
         caller_tid = threading.current_thread().ident
-        result = client._submit_ib(
-            lambda: threading.current_thread().ident, timeout=5.0,
-        )
+
+        def task():
+            return threading.current_thread().ident
+
+        result = client._submit(task, timeout=5.0, is_blocking=False)
         assert result != caller_tid
         client._tq.shutdown()
 
-    def test_submit_io_runs_in_pool(self):
+    def test_submit_runs_in_pool(self):
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -800,20 +786,18 @@ class TestSubmitHelpers:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
-        from app.services.live_trading.task_queue import TaskQueue, IB, IO
-        client._ib_executor = IBExecutor(name="test-io-ib")
-        client._io_executor = IOExecutor(max_workers=2, name="test-io-pool")
-        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        from app.services.live_trading.task_queue import TaskQueue
+        client._tq = TaskQueue(loop_executor_name="test-loop", pool_executor_name="test-pool", pool_workers=2)
         client._tq.start()
 
-        name = client._submit_io(
-            lambda: threading.current_thread().name, timeout=5.0,
-        )
-        assert "test-io-pool" in name
+        def task():
+            return threading.current_thread().name
+
+        result = client._submit(task, timeout=5.0, is_blocking=True)
+        assert "test-pool" in result
         client._tq.shutdown()
 
-    def test_fire_io_executes_without_blocking(self):
+    def test_fire_submit_executes_without_blocking(self):
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -823,20 +807,17 @@ class TestSubmitHelpers:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
-        from app.services.live_trading.task_queue import TaskQueue, IB, IO
-        client._ib_executor = IBExecutor(name="test-fire-ib")
-        client._io_executor = IOExecutor(max_workers=2, name="test-fire-io")
-        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        from app.services.live_trading.task_queue import TaskQueue
+        client._tq = TaskQueue(loop_executor_name="test-loop", pool_executor_name="test-pool", pool_workers=2)
         client._tq.start()
 
         container = []
-        client._fire_io(lambda: container.append("done"))
+        client._fire_submit(lambda: container.append("done"))
         time.sleep(0.5)
         assert container == ["done"]
         client._tq.shutdown()
 
-    def test_submit_ib_propagates_exception(self):
+    def test_submit_propagates_exception(self):
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client._ib = None
@@ -846,15 +827,15 @@ class TestSubmitHelpers:
         client._reconnect_thread = None
         client._reconnect_stop = threading.Event()
 
-        from app.services.live_trading.async_executor import IBExecutor, IOExecutor
-        from app.services.live_trading.task_queue import TaskQueue, IB, IO
-        client._ib_executor = IBExecutor(name="test-exc-ib")
-        client._io_executor = IOExecutor(max_workers=2, name="test-exc-io")
-        client._tq = TaskQueue(executors={IB: client._ib_executor, IO: client._io_executor})
+        from app.services.live_trading.task_queue import TaskQueue
+        client._tq = TaskQueue(loop_executor_name="test-loop", pool_executor_name="test-pool", pool_workers=2)
         client._tq.start()
 
+        def bad_task():
+            raise ValueError("bad value")
+
         with pytest.raises(ValueError, match="bad value"):
-            client._submit_ib(lambda: (_ for _ in ()).throw(ValueError("bad value")), timeout=5.0)
+            client._submit(bad_task, timeout=5.0, is_blocking=False)
         client._tq.shutdown()
 
 

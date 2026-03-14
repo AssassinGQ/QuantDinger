@@ -31,9 +31,10 @@ def _make_client():
     client._ib_executor = MagicMock()
     client._io_executor = MagicMock()
     client._tq.submit.return_value = MagicMock()
-    client._fire_io = lambda fn: fn()
+    client._fire_submit = lambda fn, is_blocking=False: fn()
 
     import asyncio
+
     def _sync_ib(fn, timeout=60.0):
         if asyncio.iscoroutine(fn):
             loop = asyncio.new_event_loop()
@@ -42,7 +43,7 @@ def _make_client():
             finally:
                 loop.close()
         return fn()
-    client._submit_ib = _sync_ib
+    client._submit = _sync_ib
 
     async def _noop_ensure(*_a, **_kw):
         pass
@@ -89,7 +90,7 @@ class TestCallbackDispatchRouting:
     def test_filled_dispatches_handle_fill(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=1)
         client._order_contexts[1] = ctx
@@ -103,7 +104,7 @@ class TestCallbackDispatchRouting:
     def test_cancelled_with_fill_dispatches_handle_fill(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=2)
         client._order_contexts[2] = ctx
@@ -116,7 +117,7 @@ class TestCallbackDispatchRouting:
     def test_inactive_dispatches_handle_reject(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=3)
         client._order_contexts[3] = ctx
@@ -129,7 +130,7 @@ class TestCallbackDispatchRouting:
     def test_api_error_dispatches_handle_reject(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=4)
         client._order_contexts[4] = ctx
@@ -142,7 +143,7 @@ class TestCallbackDispatchRouting:
     def test_api_cancelled_dispatches_handle_reject(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=5)
         client._order_contexts[5] = ctx
@@ -155,7 +156,7 @@ class TestCallbackDispatchRouting:
     def test_validation_error_dispatches_handle_reject(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=6)
         client._order_contexts[6] = ctx
@@ -168,7 +169,7 @@ class TestCallbackDispatchRouting:
     def test_submitted_does_not_dispatch(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=7)
         client._order_contexts[7] = ctx
@@ -181,7 +182,7 @@ class TestCallbackDispatchRouting:
     def test_presubmitted_does_not_dispatch(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=8)
         client._order_contexts[8] = ctx
@@ -195,7 +196,7 @@ class TestCallbackDispatchRouting:
         """Cancelled(filled=0) is not in HARD_TERMINAL — IBKR may recover."""
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         ctx = _make_ctx(order_id=9)
         client._order_contexts[9] = ctx
@@ -208,7 +209,7 @@ class TestCallbackDispatchRouting:
     def test_untracked_order_ignored(self):
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         client._on_order_status(_make_trade(999, "Filled", 10.0, 155.0))
         assert len(fire_calls) == 0
@@ -340,7 +341,7 @@ class TestFullOrderLifecycle:
 
         client = _make_client()
         fire_calls = []
-        client._fire_io = lambda fn: fire_calls.append(fn)
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
 
         trade_mock = MagicMock()
         trade_mock.order.orderId = 777

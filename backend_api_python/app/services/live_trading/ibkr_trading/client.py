@@ -22,8 +22,7 @@ from app.utils.logger import get_logger
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
 from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, format_display_symbol
 from app.services.live_trading.ibkr_trading.order_tracker import HARD_TERMINAL
-from app.services.live_trading.async_executor import IBExecutor, IOExecutor
-from app.services.live_trading.task_queue import TaskQueue, IB, IO
+from app.services.live_trading.task_queue import TaskQueue
 
 logger = get_logger(__name__)
 
@@ -131,9 +130,7 @@ class IBKRClient(BaseStatefulClient):
         self._ib = None
         self._account = ""
 
-        self._ib_executor = IBExecutor(name="ibkr-loop")
-        self._io_executor = IOExecutor(max_workers=4, name="ibkr-io")
-        self._tq = TaskQueue(executors={IB: self._ib_executor, IO: self._io_executor})
+        self._tq = TaskQueue(loop_executor_name="ibkr-loop-executor", pool_executor_name="ibkr-pool-executor", pool_workers=4)
         self._tq.start()
 
         # Fire-and-forget order context: orderId → IBKROrderContext
@@ -156,17 +153,30 @@ class IBKRClient(BaseStatefulClient):
 
     # ── submit helpers ──────────────────────────────────────────────
 
-    def _submit_ib(self, fn, timeout: float = 60.0):
+    def _submit(self, fn, timeout: float = 60.0, is_blocking: bool = False):
         """Submit a callable or coroutine to the IB event-loop thread and block."""
-        return self._tq.submit(fn, target=IB).result(timeout=timeout)
+        return self._tq.submit(fn, is_blocking=is_blocking).result(timeout=timeout)
 
-    def _submit_io(self, fn: Callable, timeout: float = 60.0):
-        """Submit a callable to the IO thread pool and block for result."""
-        return self._tq.submit(fn, target=IO).result(timeout=timeout)
+    def _submit_with_retry(self, fn, is_blocking: bool = False, timeout_per_try: float = 15.0, max_retries: int = 3, retry_delay: float = 1.0):
+        """Submit with retry logic: retry the entire fn execution on failure."""
+        last_error = None
+        for i in range(max_retries):
+            if i > 0:
+                time.sleep(retry_delay)
+            try:
+                result = self._submit(fn, timeout=timeout_per_try, is_blocking=is_blocking)
+                if result:
+                    return result
+            except Exception as e:
+                last_error = e
+                logger.warning("[Retry] attempt %d/%d failed: %s", i + 1, max_retries, e)
+        if last_error:
+            raise last_error
+        return None
 
-    def _fire_io(self, fn: Callable) -> None:
-        """Fire-and-forget: submit a callable to the IO thread pool."""
-        self._tq.submit(fn, target=IO)
+    def _fire_submit(self, fn: Callable, is_blocking: bool = False):
+        """Fire-and-forget submit to IB or IO executor. Returns Future."""
+        return self._tq.submit(fn, is_blocking=is_blocking)
 
     # ── connection ──────────────────────────────────────────────────
 
@@ -181,7 +191,7 @@ class IBKRClient(BaseStatefulClient):
 
     def connect(self) -> bool:
         self._reconnect_stop.clear()
-        return self._submit_ib(self._do_connect_coro(), timeout=60)
+        return self._submit(self._do_connect_coro(), timeout=60)
 
     async def _do_connect_coro(self) -> bool:
         """Async connect — must run on the IB event-loop thread."""
@@ -231,9 +241,9 @@ class IBKRClient(BaseStatefulClient):
                 finally:
                     logger.info("IBKR disconnected")
         try:
-            self._submit_ib(_do, timeout=10)
-        except Exception:
-            pass
+            self._submit(_do, timeout=10)
+        except Exception as e:
+            logger.warning("Disconnect submit failed: %s", e)
 
     async def _ensure_connected_async(self, retries: int = 3, delay: float = 2.0):
         """Async version — awaitable from coroutines on the IB loop."""
@@ -256,7 +266,7 @@ class IBKRClient(BaseStatefulClient):
         if self.connected:
             return
         for attempt in range(1, retries + 1):
-            if self._submit_ib(self._do_connect_coro(), timeout=60):
+            if self._submit(self._do_connect_coro(), timeout=60):
                 return
             if attempt < retries:
                 logger.warning(
@@ -341,14 +351,14 @@ class IBKRClient(BaseStatefulClient):
             return
 
         if status == "Filled" and filled > 0:
-            self._fire_io(lambda: self._handle_fill(ctx, filled, avg_price))
+            self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
             self._order_contexts.pop(order_id, None)
         elif status == "Cancelled" and filled > 0:
-            self._fire_io(lambda: self._handle_fill(ctx, filled, avg_price))
+            self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
             self._order_contexts.pop(order_id, None)
         elif status in HARD_TERMINAL:
             error_msgs = [e.message for e in (trade.log or []) if e.message]
-            self._fire_io(lambda: self._handle_reject(ctx, status, error_msgs))
+            self._fire_submit(lambda: self._handle_reject(ctx, status, error_msgs), is_blocking=True)
             self._order_contexts.pop(order_id, None)
 
     def _on_exec_details(self, trade, fill):
@@ -409,7 +419,7 @@ class IBKRClient(BaseStatefulClient):
             if self._reconnect_stop.wait(timeout=delay):
                 return
             try:
-                result = self._tq.submit(self._do_connect_coro(), target=IB).result(timeout=30)
+                result = self._tq.submit(self._do_connect_coro(), is_blocking=False).result(timeout=30)
                 if result:
                     logger.info("[IBKR-Reconnect] reconnected successfully")
                     return
@@ -722,7 +732,7 @@ class IBKRClient(BaseStatefulClient):
             return True, ""
 
         try:
-            return self._submit_ib(_task(), timeout=30.0)
+            return self._submit(_task(), timeout=30.0)
         except Exception as e:
             logger.error(
                 "[RTH] is_market_open failed for %s (%s): %s, "
@@ -784,7 +794,7 @@ class IBKRClient(BaseStatefulClient):
             )
 
         try:
-            return self._submit_ib(_do(), timeout=15.0)
+            return self._submit(_do(), timeout=15.0)
         except Exception as e:
             logger.error("Order failed: %s", e)
             return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
@@ -840,7 +850,7 @@ class IBKRClient(BaseStatefulClient):
             )
 
         try:
-            return self._submit_ib(_do(), timeout=15.0)
+            return self._submit(_do(), timeout=15.0)
         except Exception as e:
             logger.error("Limit order failed: %s", e)
             return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
@@ -857,7 +867,7 @@ class IBKRClient(BaseStatefulClient):
             return False
 
         try:
-            return self._submit_ib(_do(), timeout=15.0)
+            return self._submit(_do(), timeout=15.0)
         except Exception as e:
             logger.error("Cancel order failed: %s", e)
             return False
@@ -874,7 +884,7 @@ class IBKRClient(BaseStatefulClient):
             return {"account": self._account, "summary": result, "success": True}
 
         try:
-            return self._submit_ib(_task(), timeout=15.0)
+            return self._submit(_task(), timeout=15.0)
         except Exception as e:
             logger.error("Get account summary failed: %s", e)
             return {"success": False, "error": str(e)}
@@ -885,11 +895,9 @@ class IBKRClient(BaseStatefulClient):
         async def _task():
             await self._ensure_connected_async()
             import math
+            await self._fire_submit(lambda: self._ib.reqPnL(self._account), is_blocking=True)
+            await _aio.sleep(1)
             pnl_list = self._ib.pnl(self._account)
-            if not pnl_list:
-                self._ib.reqPnL(self._account)
-                await _aio.sleep(1)
-                pnl_list = self._ib.pnl(self._account)
             if pnl_list:
                 p = pnl_list[0]
                 return {
@@ -898,13 +906,13 @@ class IBKRClient(BaseStatefulClient):
                     "unrealizedPnL": 0.0 if math.isnan(p.unrealizedPnL) else float(p.unrealizedPnL),
                     "realizedPnL": 0.0 if math.isnan(p.realizedPnL) else float(p.realizedPnL),
                 }
-            return {"success": True, "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
+            return None
 
         try:
-            return self._submit_ib(_task(), timeout=15.0)
+            return self._submit_with_retry(_task, is_blocking=False, timeout_per_try=15.0, max_retries=3, retry_delay=1.0)
         except Exception as e:
             logger.error("Get PnL failed: %s", e)
-            return {"success": False, "error": str(e), "dailyPnL": 0.0, "unrealizedPnL": 0.0, "realizedPnL": 0.0}
+            return None
 
     def get_positions(self) -> List[Dict[str, Any]]:
         import asyncio as _aio
@@ -912,29 +920,27 @@ class IBKRClient(BaseStatefulClient):
         async def _task():
             import math
             await self._ensure_connected_async()
+            await self._ib.reqPositionsAsync()
+            await _aio.sleep(1)
             positions = self._ib.positions(self._account)
 
-            con_ids = []
             for pos in positions:
                 cid = pos.contract.conId
                 if cid:
                     try:
-                        self._ib.reqPnLSingle(self._account, "", cid)
-                        con_ids.append(cid)
-                    except Exception:
-                        pass
-            if con_ids:
-                await _aio.sleep(0.5)
+                        await self._fire_submit(lambda cid=cid: self._ib.reqPnLSingle(self._account, "", cid), is_blocking=True)
+                    except Exception as e:
+                        logger.warning("reqPnLSingle failed for conId=%s: %s", cid, e)
+            await _aio.sleep(1)
 
-            pnl_map = {}
-            for ps in self._ib.pnlSingle(self._account):
-                pnl_map[ps.conId] = ps
+            pnl_list = self._ib.pnlSingle(self._account)
+            pnl_map = {ps.conId: ps for ps in pnl_list}
 
-            for cid in con_ids:
+            for cid in pnl_map.keys():
                 try:
                     self._ib.cancelPnLSingle(self._account, "", cid)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("cancelPnLSingle failed for conId=%s: %s", cid, e)
 
             result = []
             for pos in positions:
@@ -968,10 +974,10 @@ class IBKRClient(BaseStatefulClient):
                     "unrealizedPnL": unrealized,
                     "dailyPnL": daily_pnl,
                 })
-            return result
+            return result if result else None
 
         try:
-            return self._submit_ib(_task(), timeout=15.0)
+            return self._submit_with_retry(_task, is_blocking=False, timeout_per_try=15.0, max_retries=3, retry_delay=1.0) or []
         except Exception as e:
             logger.error("Get positions failed: %s", e)
             return []
@@ -1016,7 +1022,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit_ib(_task(), timeout=15.0)
+            return self._submit(_task(), timeout=15.0)
         except Exception as e:
             logger.error("Get orders failed: %s", e)
             return []
@@ -1045,7 +1051,7 @@ class IBKRClient(BaseStatefulClient):
             return result
 
         try:
-            return self._submit_ib(_task(), timeout=15.0)
+            return self._submit(_task(), timeout=15.0)
         except Exception as e:
             logger.error("Get quote failed: %s", e)
             return {"success": False, "error": str(e)}
