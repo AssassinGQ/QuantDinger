@@ -344,6 +344,7 @@ def ibkr_dashboard():
         # Account summary + PnL
         try:
             acct = client.get_account_summary()
+            logger.info("IBKR account summary result: %s", acct)
             if acct.get("success"):
                 summary = acct.get("summary", {})
                 key_tags = [
