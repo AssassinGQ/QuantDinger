@@ -344,7 +344,6 @@ def ibkr_dashboard():
         # Account summary + PnL
         try:
             acct = client.get_account_summary()
-            logger.info("IBKR account summary result: %s", acct)
             if acct.get("success"):
                 summary = acct.get("summary", {})
                 key_tags = [
@@ -366,7 +365,6 @@ def ibkr_dashboard():
                 pnl = {}
                 try:
                     pnl_result = client.get_pnl()
-                    logger.info("IBKR PnL result: %s", pnl_result)
                     if pnl_result:
                         pnl = pnl_result
                 except Exception as pnl_err:
