@@ -363,12 +363,14 @@ def ibkr_dashboard():
 
                 currency = (parsed.get("NetLiquidation") or {}).get("currency", "USD")
 
+                pnl = {}
                 try:
-                    pnl = client.get_pnl()
-                    logger.info("IBKR PnL result: %s", pnl)
+                    pnl_result = client.get_pnl()
+                    logger.info("IBKR PnL result: %s", pnl_result)
+                    if pnl_result:
+                        pnl = pnl_result
                 except Exception as pnl_err:
                     logger.warning("IBKR PnL query failed: %s", pnl_err)
-                    pnl = {}
                 parsed["UnrealizedPnL"] = {"value": pnl.get("unrealizedPnL", 0.0), "currency": currency}
                 parsed["RealizedPnL"] = {"value": pnl.get("realizedPnL", 0.0), "currency": currency}
                 parsed["DailyPnL"] = {"value": pnl.get("dailyPnL", 0.0), "currency": currency}
