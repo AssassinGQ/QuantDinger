@@ -365,6 +365,7 @@ def ibkr_dashboard():
 
                 try:
                     pnl = client.get_pnl()
+                    logger.info("IBKR PnL result: %s", pnl)
                 except Exception as pnl_err:
                     logger.warning("IBKR PnL query failed: %s", pnl_err)
                     pnl = {}
@@ -373,7 +374,7 @@ def ibkr_dashboard():
                 parsed["DailyPnL"] = {"value": pnl.get("dailyPnL", 0.0), "currency": currency}
 
                 data["account"] = {
-                    "account_id": acct.get("account", ""),
+                    "account_id": acct.get("account", "") if acct else "",
                     "items": parsed,
                     "net_liquidation": _safe_float(
                         (parsed.get("NetLiquidation") or {}).get("value")
