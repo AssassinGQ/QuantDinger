@@ -909,7 +909,7 @@ class IBKRClient(BaseStatefulClient):
             return None
 
         try:
-            return self._submit_with_retry(_task, is_blocking=False, timeout_per_try=15.0, max_retries=3, retry_delay=1.0)
+            return self._submit_with_retry(_task(), is_blocking=False, timeout_per_try=15.0, max_retries=3, retry_delay=1.0)
         except Exception as e:
             logger.error("Get PnL failed: %s", e)
             return None
@@ -977,7 +977,7 @@ class IBKRClient(BaseStatefulClient):
             return result if result else None
 
         try:
-            return self._submit_with_retry(_task, is_blocking=False, timeout_per_try=15.0, max_retries=3, retry_delay=1.0) or []
+            return self._submit_with_retry(_task(), is_blocking=False, timeout_per_try=15.0, max_retries=3, retry_delay=1.0) or []
         except Exception as e:
             logger.error("Get positions failed: %s", e)
             return []
