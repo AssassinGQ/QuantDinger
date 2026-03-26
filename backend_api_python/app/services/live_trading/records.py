@@ -19,8 +19,14 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+_IBKR_TABLES_ENSURED = False
+
+
 def _ensure_tables() -> None:
-    """Ensure IBKR PnL tables exist. Called on module load."""
+    """Ensure IBKR PnL tables exist. 同 kline_fetcher 模式：全局标志 + 按需调用"""
+    global _IBKR_TABLES_ENSURED
+    if _IBKR_TABLES_ENSURED:
+        return
     try:
         with get_db_connection() as db:
             cur = db.cursor()
@@ -53,11 +59,10 @@ def _ensure_tables() -> None:
             """)
             db.commit()
             cur.close()
-            logger.info("IBKR PnL tables ensured")
+        _IBKR_TABLES_ENSURED = True
+        logger.info("IBKR PnL tables ensured")
     except Exception as e:
-        logger.warning(f"Failed to ensure IBKR PnL tables: {e}")
-
-_ensure_tables()
+        logger.debug("IBKR tables ensure skipped: %s", e)
 
 
 # ── pending_orders lifecycle ─────────────────────────────────────────
@@ -496,6 +501,7 @@ def ibkr_save_pnl(
     unrealized_pnl: float,
     realized_pnl: float,
 ) -> bool:
+    _ensure_tables()
     try:
         with get_db_connection() as db:
             cur = db.cursor()
@@ -531,6 +537,7 @@ def ibkr_save_position(
     realized_pnl: float = 0.0,
     value: float = 0.0,
 ) -> bool:
+    _ensure_tables()
     try:
         with get_db_connection() as db:
             cur = db.cursor()
@@ -561,6 +568,7 @@ def ibkr_save_position(
 
 
 def ibkr_get_pnl(account: str) -> Optional[Dict[str, Any]]:
+    _ensure_tables()
     try:
         with get_db_connection() as db:
             cur = db.cursor()
@@ -577,6 +585,7 @@ def ibkr_get_pnl(account: str) -> Optional[Dict[str, Any]]:
 
 
 def ibkr_get_positions(account: str) -> List[Dict[str, Any]]:
+    _ensure_tables()
     try:
         with get_db_connection() as db:
             cur = db.cursor()
