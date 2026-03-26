@@ -340,6 +340,28 @@ def record_trade(
         cur.close()
 
 
+def update_trade_commission(
+    strategy_id: int,
+    symbol: str,
+    trade_type: str,
+    commission: float,
+    commission_ccy: str,
+) -> None:
+    with get_db_connection() as db:
+        cur = db.cursor()
+        cur.execute(
+            """
+            UPDATE qd_strategy_trades
+            SET commission = %s, commission_ccy = %s
+            WHERE strategy_id = %s AND symbol = %s AND type = %s
+              AND commission = 0
+            """,
+            (float(commission), str(commission_ccy), int(strategy_id), str(symbol), str(trade_type)),
+        )
+        db.commit()
+        cur.close()
+
+
 def _fetch_position(strategy_id: int, symbol: str, side: str) -> Dict[str, Any]:
     with get_db_connection() as db:
         cur = db.cursor()

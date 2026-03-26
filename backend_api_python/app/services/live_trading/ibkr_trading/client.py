@@ -398,12 +398,38 @@ class IBKRClient(BaseStatefulClient):
 
     def _on_commission_report(self, trade, fill, report):
         order_id = trade.order.orderId
+        commission = float(report.commission or 0)
+        currency = report.currency or ""
+        realized_pnl = float(report.realizedPNL or 0)
         logger.info(
             "[IBKR-Event] commissionReport: orderId=%s execId=%s commission=%.4f currency=%s realizedPNL=%.2f",
             order_id, fill.execution.execId,
-            float(report.commission or 0), report.currency or "",
-            float(report.realizedPNL or 0),
+            commission, currency, realized_pnl,
         )
+
+        ctx = self._order_contexts.get(order_id)
+        if ctx and ctx.strategy_id and commission > 0:
+            strategy_id = ctx.strategy_id
+            symbol = ctx.symbol
+            signal_type = ctx.signal_type
+
+            def _do_update():
+                from app.services.live_trading import records
+                records.update_trade_commission(
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    trade_type=signal_type,
+                    commission=commission,
+                    commission_ccy=currency,
+                )
+                logger.info("[IBKR-Commission] Updated commission for strategy=%s symbol=%s", strategy_id, symbol)
+
+            self._submit_with_retry(
+                _do_update,
+                is_blocking=True,
+                max_retries=3,
+                retry_delay=1.0,
+            )
 
     def _on_error(self, reqId, errorCode, errorString, contract):
         sym = getattr(contract, "symbol", "") if contract else ""

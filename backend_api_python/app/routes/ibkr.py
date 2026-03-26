@@ -532,17 +532,17 @@ def ibkr_dashboard():
 
         strategy_pnl = []
         for row in strategy_rows:
-            total_trades = row[2] or 0
-            winning_trades = row[6] or 0
+            total_trades = row.get("total_trades") or 0
+            winning_trades = row.get("winning_trades") or 0
             strategy_pnl.append({
-                "strategy_id": row[0],
-                "strategy_name": row[1] or f"Strategy_{row[0]}",
+                "strategy_id": row.get("strategy_id"),
+                "strategy_name": row.get("strategy_name") or f"Strategy_{row.get('strategy_id')}",
                 "total_trades": total_trades,
-                "total_value": round(float(row[3] or 0), 2),
-                "total_commission": round(float(row[4] or 0), 2),
-                "total_profit": round(float(row[5] or 0), 2),
+                "total_value": round(float(row.get("total_value") or 0), 2),
+                "total_commission": round(float(row.get("total_commission") or 0), 2),
+                "total_profit": round(float(row.get("total_profit") or 0), 2),
                 "winning_trades": winning_trades,
-                "losing_trades": row[7] or 0,
+                "losing_trades": row.get("losing_trades") or 0,
                 "win_rate": round(winning_trades / total_trades * 100, 2) if total_trades > 0 else 0,
             })
         data["strategy_pnl"] = strategy_pnl
