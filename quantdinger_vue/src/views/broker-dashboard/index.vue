@@ -385,6 +385,7 @@ export default {
       positions: [],
       openOrders: [],
       recentTrades: [],
+      strategyPnl: [],
       executions: [],
       executionFilter: 'all',
       performance: {},
@@ -455,6 +456,18 @@ export default {
         { title: this.$t('broker.col.timeInfo'), dataIndex: 'created_at', scopedSlots: { customRender: 'time_info' }, width: 150, align: 'left' }
       ]
     },
+    strategyPnlColumns () {
+      return [
+        { title: this.$t('broker.col.strategy'), dataIndex: 'strategy_name', width: 150, align: 'left' },
+        { title: this.$t('broker.col.totalTrades'), dataIndex: 'total_trades', width: 100, align: 'right' },
+        { title: this.$t('broker.col.totalValue'), dataIndex: 'total_value', scopedSlots: { customRender: 'total_value' }, width: 130, align: 'right' },
+        { title: this.$t('broker.col.totalCommission'), dataIndex: 'total_commission', scopedSlots: { customRender: 'commission' }, width: 110, align: 'right' },
+        { title: this.$t('broker.col.profit'), dataIndex: 'total_profit', scopedSlots: { customRender: 'profit' }, width: 120, align: 'right' },
+        { title: this.$t('broker.col.winningTrades'), dataIndex: 'winning_trades', width: 100, align: 'right' },
+        { title: this.$t('broker.col.losingTrades'), dataIndex: 'losing_trades', width: 100, align: 'right' },
+        { title: this.$t('broker.col.winRate'), dataIndex: 'win_rate', scopedSlots: { customRender: 'win_rate' }, width: 100, align: 'right' }
+      ]
+    },
     filteredExecutions () {
       if (this.executionFilter === 'all') {
         return this.executions
@@ -495,6 +508,7 @@ export default {
           this.positions = d.positions || []
           this.openOrders = d.open_orders || []
           this.recentTrades = d.recent_trades || []
+          this.strategyPnl = d.strategy_pnl || []
           this.executions = d.executions || []
           this.performance = d.performance || {}
 
