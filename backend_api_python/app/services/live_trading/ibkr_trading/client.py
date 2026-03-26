@@ -1074,19 +1074,19 @@ class IBKRClient(BaseStatefulClient):
 
     def get_positions_normalized(self):
         from app.services.live_trading.base import PositionRecord
-        records = []
+        position_records = []
         for p in self.get_positions():
             qty = float(p.get("quantity") or 0)
             if abs(qty) <= 0:
                 continue
-            records.append(PositionRecord(
+            position_records.append(PositionRecord(
                 symbol=str(p.get("symbol") or ""),
                 side="long" if qty > 0 else "short",
                 quantity=abs(qty),
                 entry_price=float(p.get("avgCost") or 0),
                 raw=p,
             ))
-        return records
+        return position_records
 
     def get_open_orders(self) -> List[Dict[str, Any]]:
         async def _task():
