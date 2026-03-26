@@ -19,6 +19,47 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _ensure_tables() -> None:
+    """Ensure IBKR PnL tables exist. Called on module load."""
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS qd_ibkr_pnl (
+                    id SERIAL PRIMARY KEY,
+                    account VARCHAR(50) NOT NULL UNIQUE,
+                    daily_pnl DECIMAL(20, 4) DEFAULT 0,
+                    unrealized_pnl DECIMAL(20, 4) DEFAULT 0,
+                    realized_pnl DECIMAL(20, 4) DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS qd_ibkr_pnl_single (
+                    id SERIAL PRIMARY KEY,
+                    account VARCHAR(50) NOT NULL,
+                    con_id BIGINT NOT NULL,
+                    symbol VARCHAR(100) NOT NULL DEFAULT '',
+                    daily_pnl DECIMAL(20, 4) DEFAULT 0,
+                    unrealized_pnl DECIMAL(20, 4) DEFAULT 0,
+                    realized_pnl DECIMAL(20, 4) DEFAULT 0,
+                    position DECIMAL(20, 8) DEFAULT 0,
+                    value DECIMAL(20, 4) DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(account, con_id)
+                )
+            """)
+            db.commit()
+            cur.close()
+            logger.info("IBKR PnL tables ensured")
+    except Exception as e:
+        logger.warning(f"Failed to ensure IBKR PnL tables: {e}")
+
+_ensure_tables()
+
+
 # ── pending_orders lifecycle ─────────────────────────────────────────
 
 
