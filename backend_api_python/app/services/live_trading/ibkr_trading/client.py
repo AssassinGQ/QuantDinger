@@ -567,9 +567,20 @@ class IBKRClient(BaseStatefulClient):
     # ── event callbacks: observation (DEBUG, high-frequency) ──────
 
     def _on_pnl(self, entry):
-        daily_pnl = float(entry.dailyPnL or 0) if not math.isnan(entry.dailyPnL or 0) else 0.0
-        unrealized_pnl = float(entry.unrealizedPnL or 0) if not math.isnan(entry.unrealizedPnL or 0) else 0.0
-        realized_pnl = float(entry.realizedPnL or 0) if not math.isnan(entry.realizedPnL or 0) else 0.0
+        def _safe_float(val):
+            if val is None:
+                return 0.0
+            try:
+                f = float(val)
+                if math.isnan(f) or math.isinf(f):
+                    return 0.0
+                return f
+            except (ValueError, TypeError):
+                return 0.0
+
+        daily_pnl = _safe_float(entry.dailyPnL)
+        unrealized_pnl = _safe_float(entry.unrealizedPnL)
+        realized_pnl = _safe_float(entry.realizedPnL)
 
         logger.debug(
             "[IBKR-Event] pnl: dailyPnL=%.2f unrealizedPnL=%.2f realizedPnL=%.2f",
@@ -593,11 +604,22 @@ class IBKRClient(BaseStatefulClient):
         self._fire_submit(_save_to_db, is_blocking=True)
 
     def _on_pnl_single(self, entry):
-        daily_pnl = float(entry.dailyPnL or 0) if not math.isnan(entry.dailyPnL or 0) else 0.0
-        unrealized_pnl = float(entry.unrealizedPnL or 0) if not math.isnan(entry.unrealizedPnL or 0) else 0.0
-        realized_pnl = float(entry.realizedPnL or 0) if not math.isnan(entry.realizedPnL or 0) else 0.0
-        position = float(entry.position or 0)
-        value = float(entry.value or 0)
+        def _safe_float(val):
+            if val is None:
+                return 0.0
+            try:
+                f = float(val)
+                if math.isnan(f) or math.isinf(f):
+                    return 0.0
+                return f
+            except (ValueError, TypeError):
+                return 0.0
+
+        daily_pnl = _safe_float(entry.dailyPnL)
+        unrealized_pnl = _safe_float(entry.unrealizedPnL)
+        realized_pnl = _safe_float(entry.realizedPnL)
+        position = _safe_float(entry.position)
+        value = _safe_float(entry.value)
 
         logger.debug(
             "[IBKR-Event] pnlSingle: conId=%s dailyPnL=%.2f unrealizedPnL=%.2f realizedPnL=%.2f pos=%s value=%.2f",
