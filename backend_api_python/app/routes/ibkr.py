@@ -327,6 +327,7 @@ def ibkr_dashboard():
         "performance": {},
         "recent_trades": [],
         "executions": [],
+        "strategy_pnl": [],
     }
 
     user_id = g.user_id
@@ -469,6 +470,28 @@ def ibkr_dashboard():
                 (user_id, user_id),
             )
             exec_rows = cur.fetchall() or []
+
+            cur.execute(
+                """
+                SELECT 
+                    t.strategy_id,
+                    s.strategy_name,
+                    COUNT(*) as total_trades,
+                    SUM(t.value) as total_value,
+                    SUM(t.commission) as total_commission,
+                    SUM(t.profit) as total_profit,
+                    SUM(CASE WHEN t.profit > 0 THEN 1 ELSE 0 END) as winning_trades,
+                    SUM(CASE WHEN t.profit < 0 THEN 1 ELSE 0 END) as losing_trades
+                FROM qd_strategy_trades t
+                LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
+                WHERE t.user_id = ?
+                  AND s.market_category IN ('USStock', 'HShare')
+                GROUP BY t.strategy_id, s.strategy_name
+                ORDER BY total_profit DESC
+                """,
+                (user_id,),
+            )
+            strategy_rows = cur.fetchall() or []
             cur.close()
 
         executions = []
@@ -506,6 +529,23 @@ def ibkr_dashboard():
             executions.append(row)
 
         data["executions"] = executions
+
+        strategy_pnl = []
+        for row in strategy_rows:
+            total_trades = row[2] or 0
+            winning_trades = row[6] or 0
+            strategy_pnl.append({
+                "strategy_id": row[0],
+                "strategy_name": row[1] or f"Strategy_{row[0]}",
+                "total_trades": total_trades,
+                "total_value": round(float(row[3] or 0), 2),
+                "total_commission": round(float(row[4] or 0), 2),
+                "total_profit": round(float(row[5] or 0), 2),
+                "winning_trades": winning_trades,
+                "losing_trades": row[7] or 0,
+                "win_rate": round(winning_trades / total_trades * 100, 2) if total_trades > 0 else 0,
+            })
+        data["strategy_pnl"] = strategy_pnl
 
     except Exception as e:
         logger.error("IBKR dashboard DB query failed: %s", e, exc_info=True)
