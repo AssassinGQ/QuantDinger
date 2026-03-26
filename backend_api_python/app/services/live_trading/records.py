@@ -591,7 +591,8 @@ def ibkr_get_positions(account: str) -> List[Dict[str, Any]]:
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT account, con_id, symbol, position, avg_cost, updated_at
+                SELECT account, con_id, symbol, position, avg_cost, 
+                       daily_pnl, unrealized_pnl, realized_pnl, value, updated_at
                 FROM qd_ibkr_pnl_single
                 WHERE account = %s AND position != 0
                 ORDER BY updated_at DESC
