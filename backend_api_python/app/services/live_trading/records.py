@@ -445,3 +445,114 @@ def apply_fill_to_local_position(
     return None, None
 
 
+# ── IBKR PnL & Position helpers ───────────────────────────────────────
+
+
+def ibkr_save_pnl(
+    *,
+    account: str,
+    daily_pnl: float,
+    unrealized_pnl: float,
+    realized_pnl: float,
+) -> bool:
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """
+                INSERT INTO qd_ibkr_pnl (account, daily_pnl, unrealized_pnl, realized_pnl, updated_at)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (account) DO UPDATE SET
+                    daily_pnl = EXCLUDED.daily_pnl,
+                    unrealized_pnl = EXCLUDED.unrealized_pnl,
+                    realized_pnl = EXCLUDED.realized_pnl,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (str(account), float(daily_pnl), float(unrealized_pnl), float(realized_pnl)),
+            )
+            db.commit()
+            cur.close()
+        return True
+    except Exception as e:
+        logger.warning(f"ibkr_save_pnl failed: {e}")
+        return False
+
+
+def ibkr_save_position(
+    *,
+    account: str,
+    con_id: int,
+    symbol: str = "",
+    position: float = 0.0,
+    avg_cost: float = 0.0,
+    daily_pnl: float = 0.0,
+    unrealized_pnl: float = 0.0,
+    realized_pnl: float = 0.0,
+    value: float = 0.0,
+) -> bool:
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """
+                INSERT INTO qd_ibkr_pnl_single
+                (account, con_id, symbol, position, avg_cost, daily_pnl, unrealized_pnl, realized_pnl, value, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (account, con_id) DO UPDATE SET
+                    symbol = COALESCE(NULLIF(EXCLUDED.symbol, ''), qd_ibkr_pnl_single.symbol),
+                    position = EXCLUDED.position,
+                    avg_cost = COALESCE(NULLIF(EXCLUDED.avg_cost, 0), qd_ibkr_pnl_single.avg_cost),
+                    daily_pnl = EXCLUDED.daily_pnl,
+                    unrealized_pnl = EXCLUDED.unrealized_pnl,
+                    realized_pnl = EXCLUDED.realized_pnl,
+                    value = EXCLUDED.value,
+                    updated_at = NOW()
+                """,
+                (str(account), int(con_id), str(symbol), float(position), float(avg_cost),
+                 float(daily_pnl), float(unrealized_pnl), float(realized_pnl), float(value)),
+            )
+            db.commit()
+            cur.close()
+        return True
+    except Exception as e:
+        logger.warning(f"ibkr_save_position failed: con_id={con_id}, {e}")
+        return False
+
+
+def ibkr_get_pnl(account: str) -> Optional[Dict[str, Any]]:
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT daily_pnl, unrealized_pnl, realized_pnl, updated_at FROM qd_ibkr_pnl WHERE account = %s",
+                (str(account),),
+            )
+            row = cur.fetchone() or {}
+            cur.close()
+        return row if isinstance(row, dict) else {}
+    except Exception as e:
+        logger.warning(f"ibkr_get_pnl failed: {e}")
+        return None
+
+
+def ibkr_get_positions(account: str) -> List[Dict[str, Any]]:
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """
+                SELECT account, con_id, symbol, position, avg_cost, updated_at
+                FROM qd_ibkr_pnl_single
+                WHERE account = %s AND position != 0
+                ORDER BY updated_at DESC
+                """,
+                (str(account),),
+            )
+            rows = cur.fetchall() or []
+            cur.close()
+        return rows if isinstance(rows, list) else []
+    except Exception as e:
+        logger.warning(f"ibkr_get_positions failed: {e}")
+        return []
+
+

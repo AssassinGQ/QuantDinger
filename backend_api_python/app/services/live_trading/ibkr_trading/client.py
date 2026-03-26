@@ -17,12 +17,14 @@ import time
 import threading
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Callable
+import math
 
 from app.utils.logger import get_logger
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
-from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, format_display_symbol
+from app.services.live_trading.ibkr_trading.symbols import normalize_symbol
 from app.services.live_trading.ibkr_trading.order_tracker import HARD_TERMINAL
 from app.services.live_trading.task_queue import TaskQueue
+from app.services.live_trading import records
 
 logger = get_logger(__name__)
 
@@ -140,6 +142,9 @@ class IBKRClient(BaseStatefulClient):
         self._reconnect_thread: Optional[threading.Thread] = None
         self._reconnect_stop = threading.Event()
 
+        self._conid_to_symbol: Dict[int, str] = {}
+        self._subscribed_conids: set = set()
+
     # ── signal mapping ──────────────────────────────────────────────
 
     def map_signal_to_side(self, signal_type: str) -> str:
@@ -222,6 +227,9 @@ class IBKRClient(BaseStatefulClient):
             else:
                 logger.warning("IBKR connected but no account info retrieved")
             self._register_events()
+
+            await self._activate_pnl_subscriptions()
+
             return True
         except Exception as e:
             logger.error("IBKR connection failed: %s", e)
@@ -333,6 +341,22 @@ class IBKRClient(BaseStatefulClient):
 
         self._events_registered = True
         logger.info("[IBKR-Event] All 25 IB events registered")
+
+    async def _activate_pnl_subscriptions(self):
+        """Activate PnL subscriptions after connection."""
+        if not self._account:
+            logger.warning("[IBKR] No account available for PnL subscriptions")
+            return
+        try:
+            self._ib.reqPnL(self._account)
+            logger.info("[IBKR] reqPnL subscription activated for account: %s", self._account)
+        except Exception as e:
+            logger.error("[IBKR] Failed to activate reqPnL: %s", e)
+        try:
+            positions = await self._ib.reqPositionsAsync()
+            logger.info("[IBKR] reqPositionsAsync returned %d positions", len(positions))
+        except Exception as e:
+            logger.error("[IBKR] Failed to activate reqPositionsAsync: %s", e)
 
     # ── event callbacks: business logic ───────────────────────────
 
@@ -470,11 +494,53 @@ class IBKRClient(BaseStatefulClient):
         )
 
     def _on_position(self, position):
+        symbol = position.contract.symbol or ""
+        con_id = position.contract.conId
+        account = position.account
+        pos = float(position.position or 0)
+        avg_cost = float(position.avgCost or 0)
+
         logger.info(
             "[IBKR-Event] position: account=%s symbol=%s pos=%s avgCost=%.4f",
-            position.account, position.contract.symbol,
-            position.position, float(position.avgCost or 0),
+            account, symbol, pos, avg_cost,
         )
+
+        self._conid_to_symbol[con_id] = symbol
+
+        def _save_to_db():
+            for attempt in range(3):
+                if records.ibkr_save_position(
+                    account=account,
+                    con_id=con_id,
+                    symbol=symbol,
+                    position=pos,
+                    avg_cost=avg_cost,
+                ):
+                    return
+                if attempt < 2:
+                    logger.warning("[IBKR-Event] Retry save position to DB (attempt %d/3)", attempt + 1)
+                    time.sleep(0.5 * (attempt + 1))
+            logger.error("[IBKR-Event] Failed to save position to DB after 3 attempts")
+
+        self._fire_submit(_save_to_db, is_blocking=True)
+
+        if con_id in self._subscribed_conids:
+            logger.debug("[IBKR-Event] conId=%s already subscribed, skipping reqPnLSingle", con_id)
+            return
+
+        def _subscribe_pnl_single():
+            try:
+                self._ib.cancelPnLSingle(account, "", con_id)
+            except Exception:
+                pass
+            try:
+                self._ib.reqPnLSingle(account, "", con_id)
+                self._subscribed_conids.add(con_id)
+                logger.debug("[IBKR-Event] reqPnLSingle: account=%s conId=%s", account, con_id)
+            except Exception as e:
+                logger.error("[IBKR-Event] Failed to reqPnLSingle: %s", e)
+
+        self._fire_submit(_subscribe_pnl_single, is_blocking=False)
 
     def _on_tick_news(self, news):
         logger.info(
@@ -501,19 +567,65 @@ class IBKRClient(BaseStatefulClient):
     # ── event callbacks: observation (DEBUG, high-frequency) ──────
 
     def _on_pnl(self, entry):
+        daily_pnl = float(entry.dailyPnL or 0) if not math.isnan(entry.dailyPnL or 0) else 0.0
+        unrealized_pnl = float(entry.unrealizedPnL or 0) if not math.isnan(entry.unrealizedPnL or 0) else 0.0
+        realized_pnl = float(entry.realizedPnL or 0) if not math.isnan(entry.realizedPnL or 0) else 0.0
+
         logger.debug(
             "[IBKR-Event] pnl: dailyPnL=%.2f unrealizedPnL=%.2f realizedPnL=%.2f",
-            float(entry.dailyPnL or 0), float(entry.unrealizedPnL or 0),
-            float(entry.realizedPnL or 0),
+            daily_pnl, unrealized_pnl, realized_pnl,
         )
 
+        def _save_to_db():
+            for attempt in range(3):
+                if records.ibkr_save_pnl(
+                    account=entry.account,
+                    daily_pnl=daily_pnl,
+                    unrealized_pnl=unrealized_pnl,
+                    realized_pnl=realized_pnl,
+                ):
+                    return
+                if attempt < 2:
+                    logger.warning("[IBKR-Event] Retry save pnl to DB (attempt %d/3)", attempt + 1)
+                    time.sleep(0.5 * (attempt + 1))
+            logger.error("[IBKR-Event] Failed to save pnl to DB after 3 attempts")
+
+        self._fire_submit(_save_to_db, is_blocking=True)
+
     def _on_pnl_single(self, entry):
+        daily_pnl = float(entry.dailyPnL or 0) if not math.isnan(entry.dailyPnL or 0) else 0.0
+        unrealized_pnl = float(entry.unrealizedPnL or 0) if not math.isnan(entry.unrealizedPnL or 0) else 0.0
+        realized_pnl = float(entry.realizedPnL or 0) if not math.isnan(entry.realizedPnL or 0) else 0.0
+        position = float(entry.position or 0)
+        value = float(entry.value or 0)
+
         logger.debug(
             "[IBKR-Event] pnlSingle: conId=%s dailyPnL=%.2f unrealizedPnL=%.2f realizedPnL=%.2f pos=%s value=%.2f",
-            entry.conId, float(entry.dailyPnL or 0),
-            float(entry.unrealizedPnL or 0), float(entry.realizedPnL or 0),
-            entry.position, float(entry.value or 0),
+            entry.conId, daily_pnl, unrealized_pnl, realized_pnl, position, value,
         )
+
+        symbol = self._conid_to_symbol.get(entry.conId, "")
+
+        def _save_to_db():
+            for attempt in range(3):
+                if records.ibkr_save_position(
+                    account=entry.account,
+                    con_id=entry.conId,
+                    symbol=symbol,
+                    position=position,
+                    avg_cost=value / position if position != 0 else 0.0,
+                    daily_pnl=daily_pnl,
+                    unrealized_pnl=unrealized_pnl,
+                    realized_pnl=realized_pnl,
+                    value=value,
+                ):
+                    return
+                if attempt < 2:
+                    logger.warning("[IBKR-Event] Retry save pnl_single to DB (attempt %d/3)", attempt + 1)
+                    time.sleep(0.5 * (attempt + 1))
+            logger.error("[IBKR-Event] Failed to save pnl_single to DB after 3 attempts")
+
+        self._fire_submit(_save_to_db, is_blocking=True)
 
     def _on_account_value(self, value):
         logger.debug(
@@ -890,96 +1002,74 @@ class IBKRClient(BaseStatefulClient):
             return {"success": False, "error": str(e)}
 
     def get_pnl(self) -> Dict[str, Any]:
-        import asyncio as _aio
-
-        async def _task():
-            await self._ensure_connected_async()
-            import math
-            await self._fire_submit(lambda: self._ib.reqPnL(self._account), is_blocking=True)
-            await _aio.sleep(1)
-            pnl_list = self._ib.pnl(self._account)
-            if pnl_list:
-                p = pnl_list[0]
-                return {
-                    "success": True,
-                    "dailyPnL": 0.0 if math.isnan(p.dailyPnL) else float(p.dailyPnL),
-                    "unrealizedPnL": 0.0 if math.isnan(p.unrealizedPnL) else float(p.unrealizedPnL),
-                    "realizedPnL": 0.0 if math.isnan(p.realizedPnL) else float(p.realizedPnL),
-                }
+        if not self.connected:
+            logger.warning("[IBKR] get_pnl called but not connected")
             return None
 
+        account = self._account
+        if not account:
+            logger.warning("[IBKR] get_pnl called but no account configured")
+            return None
+
+        def _query():
+            return records.ibkr_get_pnl(account)
+
         try:
-            return self._submit_with_retry(_task(), is_blocking=False, timeout_per_try=15.0, max_retries=3, retry_delay=1.0)
+            row = self._submit(_query, timeout=15.0)
+            if row:
+                updated_at = row.get("updated_at")
+                return {
+                    "success": True,
+                    "dailyPnL": float(row.get("daily_pnl") or 0),
+                    "unrealizedPnL": float(row.get("unrealized_pnl") or 0),
+                    "realizedPnL": float(row.get("realized_pnl") or 0),
+                    "updatedAt": updated_at.isoformat() if updated_at else None,
+                }
+            logger.warning("[IBKR] No PnL data found in DB for account: %s", account)
+            return None
         except Exception as e:
-            logger.error("Get PnL failed: %s", e)
+            logger.error("[IBKR] Failed to get PnL from DB: %s", e)
             return None
 
     def get_positions(self) -> List[Dict[str, Any]]:
-        import asyncio as _aio
+        if not self.connected:
+            logger.warning("[IBKR] get_positions called but not connected")
+            return []
 
-        async def _task():
-            import math
-            await self._ensure_connected_async()
-            await self._ib.reqPositionsAsync()
-            await _aio.sleep(1)
-            positions = self._ib.positions(self._account)
+        account = self._account
+        if not account:
+            logger.warning("[IBKR] get_positions called but no account configured")
+            return []
 
-            for pos in positions:
-                cid = pos.contract.conId
-                if cid:
-                    try:
-                        await self._fire_submit(lambda cid=cid: self._ib.reqPnLSingle(self._account, "", cid), is_blocking=True)
-                    except Exception as e:
-                        logger.warning("reqPnLSingle failed for conId=%s: %s", cid, e)
-            await _aio.sleep(1)
-
-            pnl_list = self._ib.pnlSingle(self._account)
-            pnl_map = {ps.conId: ps for ps in pnl_list}
-
-            for cid in pnl_map.keys():
-                try:
-                    self._ib.cancelPnLSingle(self._account, "", cid)
-                except Exception as e:
-                    logger.warning("cancelPnLSingle failed for conId=%s: %s", cid, e)
-
-            result = []
-            for pos in positions:
-                contract = pos.contract
-                exchange = contract.exchange or contract.primaryExchange or "SMART"
-                qty = float(pos.position)
-                avg = float(pos.avgCost)
-                cost = qty * avg
-
-                ps = pnl_map.get(contract.conId)
-                unrealized = 0.0
-                mkt_value = cost
-                daily_pnl = 0.0
-                if ps:
-                    if not math.isnan(ps.unrealizedPnL):
-                        unrealized = float(ps.unrealizedPnL)
-                    if not math.isnan(ps.value):
-                        mkt_value = float(ps.value)
-                    if not math.isnan(ps.dailyPnL):
-                        daily_pnl = float(ps.dailyPnL)
-
-                result.append({
-                    "symbol": format_display_symbol(contract.symbol, exchange),
-                    "ib_symbol": contract.symbol,
-                    "secType": contract.secType,
-                    "exchange": exchange,
-                    "currency": contract.currency,
-                    "quantity": qty,
-                    "avgCost": avg,
-                    "marketValue": mkt_value,
-                    "unrealizedPnL": unrealized,
-                    "dailyPnL": daily_pnl,
-                })
-            return result if result else None
+        def _query():
+            return records.ibkr_get_positions(account)
 
         try:
-            return self._submit_with_retry(_task(), is_blocking=False, timeout_per_try=15.0, max_retries=3, retry_delay=1.0) or []
+            rows = self._submit(_query, timeout=15.0)
+            result = []
+            for row in rows:
+                unrealized_pnl = float(row.get("unrealized_pnl") or 0)
+                market_value = float(row.get("value") or 0)
+                position = float(row.get("position") or 0)
+                avg_cost = float(row.get("avg_cost") or 0)
+                if market_value == 0.0:
+                    market_value = position * avg_cost
+
+                result.append({
+                    "symbol": row.get("symbol") or "",
+                    "ib_symbol": row.get("symbol") or "",
+                    "secType": "STK",
+                    "exchange": "SMART",
+                    "currency": "USD",
+                    "quantity": position,
+                    "avgCost": avg_cost,
+                    "marketValue": market_value,
+                    "unrealizedPnL": unrealized_pnl,
+                    "dailyPnL": float(row.get("daily_pnl") or 0),
+                })
+            return result
         except Exception as e:
-            logger.error("Get positions failed: %s", e)
+            logger.error("[IBKR] Failed to get positions from DB: %s", e)
             return []
 
     def get_positions_normalized(self):

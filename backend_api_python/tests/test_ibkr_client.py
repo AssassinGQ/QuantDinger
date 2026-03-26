@@ -121,15 +121,19 @@ def _make_client_with_mock_ib():
     client._reconnect_thread = None
     client._reconnect_stop = threading.Event()
 
-    import asyncio
+    # conid to symbol mapping for PnL
+    client._conid_to_symbol = {}
+    client._subscribed_conids = set()
 
-    def _sync_fire_submit(fn, is_blocking=True):
-        fn()
+    import asyncio
 
     async def _noop_ensure(*_a, **_kw):
         pass
 
-    client._fire_submit = _sync_fire_submit
+    def _sync_fire_submit(fn, is_blocking=True):
+        fn()
+
+    client._fire_submit = MagicMock(side_effect=_sync_fire_submit)
 
     def _submit(fn, timeout=60.0, is_blocking=False):
         if asyncio.iscoroutine(fn):
@@ -837,6 +841,523 @@ class TestSubmitHelpers:
         with pytest.raises(ValueError, match="bad value"):
             client._submit(bad_task, timeout=5.0, is_blocking=False)
         client._tq.shutdown()
+
+
+# ===========================================================================
+# PnL Subscription Activation Tests
+# ===========================================================================
+
+class TestActivatePnLSubscriptions:
+    """Verify _activate_pnl_subscriptions activates reqPnL and reqPositionsAsync."""
+
+    def test_activate_pnl_calls_reqpnl_and_reqpositions(self):
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(client._activate_pnl_subscriptions())
+        finally:
+            loop.close()
+
+        client._ib.reqPnL.assert_called_once_with("DU123456")
+        client._ib.reqPositionsAsync.assert_called_once()
+
+    def test_activate_pnl_skips_when_no_account(self):
+        client = _make_client_with_mock_ib()
+        client._account = ""
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(client._activate_pnl_subscriptions())
+        finally:
+            loop.close()
+
+        client._ib.reqPnL.assert_not_called()
+        client._ib.reqPositionsAsync.assert_not_called()
+
+    def test_activate_pnl_handles_reqpnl_error(self):
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+        client._ib.reqPnL.side_effect = Exception("reqPnL failed")
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(client._activate_pnl_subscriptions())
+        finally:
+            loop.close()
+
+        client._ib.reqPositionsAsync.assert_called_once()
+
+    def test_activate_pnl_handles_reqpositions_error(self):
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+        client._ib.reqPositionsAsync.side_effect = Exception("reqPositionsAsync failed")
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(client._activate_pnl_subscriptions())
+        finally:
+            loop.close()
+
+        client._ib.reqPnL.assert_called_once()
+
+
+# ===========================================================================
+# PnL Event Tests
+# ===========================================================================
+
+class TestPnLEventCallbacks:
+    """Verify PnL event callbacks store data to database correctly."""
+
+    @patch("app.services.live_trading.records.ibkr_save_pnl")
+    def test_on_pnl_stores_to_database(self, mock_save_pnl):
+        mock_save_pnl.return_value = True
+        client = _make_client_with_mock_ib()
+
+        pnl_entry = MagicMock()
+        pnl_entry.account = "DU123456"
+        pnl_entry.dailyPnL = 100.50
+        pnl_entry.unrealizedPnL = 500.25
+        pnl_entry.realizedPnL = 200.75
+
+        client._on_pnl(pnl_entry)
+
+        client._fire_submit.assert_called_once()
+        mock_save_pnl.assert_called_once_with(
+            account="DU123456",
+            daily_pnl=100.50,
+            unrealized_pnl=500.25,
+            realized_pnl=200.75,
+        )
+
+    @patch("app.services.live_trading.records.ibkr_save_pnl")
+    def test_on_pnl_handles_nan_values(self, mock_save_pnl):
+        mock_save_pnl.return_value = True
+        client = _make_client_with_mock_ib()
+
+        pnl_entry = MagicMock()
+        pnl_entry.account = "DU123456"
+        pnl_entry.dailyPnL = float("nan")
+        pnl_entry.unrealizedPnL = None
+        pnl_entry.realizedPnL = 200.75
+
+        client._on_pnl(pnl_entry)
+
+        client._fire_submit.assert_called_once()
+        mock_save_pnl.assert_called_once()
+        args = mock_save_pnl.call_args
+        assert args[1]["daily_pnl"] == 0.0
+        assert args[1]["unrealized_pnl"] == 0.0
+        assert args[1]["realized_pnl"] == 200.75
+
+    @patch("app.services.live_trading.records.ibkr_save_pnl")
+    def test_on_pnl_logs_error_on_db_failure(self, mock_save_pnl):
+        mock_save_pnl.return_value = False
+        client = _make_client_with_mock_ib()
+
+        pnl_entry = MagicMock()
+        pnl_entry.account = "DU123456"
+        pnl_entry.dailyPnL = 100.0
+        pnl_entry.unrealizedPnL = 200.0
+        pnl_entry.realizedPnL = 50.0
+
+        client._on_pnl(pnl_entry)
+
+        client._fire_submit.assert_called_once()
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_on_pnl_single_stores_to_database(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+        client._conid_to_symbol = {208813719: "GOOGL"}
+
+        pnl_single = MagicMock()
+        pnl_single.account = "DU123456"
+        pnl_single.conId = 208813719
+        pnl_single.dailyPnL = 10.50
+        pnl_single.unrealizedPnL = 50.25
+        pnl_single.realizedPnL = 20.75
+        pnl_single.position = 1.0
+        pnl_single.value = 300.0
+
+        client._on_pnl_single(pnl_single)
+
+        client._fire_submit.assert_called_once()
+        mock_save_position.assert_called_once()
+        args = mock_save_position.call_args
+        assert args[1]["account"] == "DU123456"
+        assert args[1]["con_id"] == 208813719
+        assert args[1]["symbol"] == "GOOGL"
+        assert args[1]["daily_pnl"] == 10.50
+        assert args[1]["unrealized_pnl"] == 50.25
+        assert args[1]["realized_pnl"] == 20.75
+        assert args[1]["position"] == 1.0
+        assert args[1]["value"] == 300.0
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_on_pnl_single_uses_empty_symbol_if_not_in_map(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+        client._conid_to_symbol = {}
+
+        pnl_single = MagicMock()
+        pnl_single.account = "DU123456"
+        pnl_single.conId = 999999
+        pnl_single.dailyPnL = 10.0
+        pnl_single.unrealizedPnL = 50.0
+        pnl_single.realizedPnL = 20.0
+        pnl_single.position = 1.0
+        pnl_single.value = 300.0
+
+        client._on_pnl_single(pnl_single)
+
+        client._fire_submit.assert_called_once()
+        args = mock_save_position.call_args
+        assert args[1]["symbol"] == ""
+
+
+# ===========================================================================
+# Position Event Tests
+# ===========================================================================
+
+class TestPositionEventCallback:
+    """Verify position event callback stores data and subscribes to PnL."""
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_on_position_stores_and_subscribes_pnl_single(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+
+        position = MagicMock()
+        position.account = "DU123456"
+        position.contract.conId = 208813719
+        position.contract.symbol = "GOOGL"
+        position.position = 1.0
+        position.avgCost = 300.0
+
+        client._on_position(position)
+
+        client._fire_submit.assert_called()
+        assert client._fire_submit.call_count == 2
+
+        mock_save_position.assert_called_once()
+        args = mock_save_position.call_args
+        assert args[1]["account"] == "DU123456"
+        assert args[1]["con_id"] == 208813719
+        assert args[1]["symbol"] == "GOOGL"
+        assert args[1]["position"] == 1.0
+        assert args[1]["avg_cost"] == 300.0
+
+        client._ib.reqPnLSingle.assert_called_once_with("DU123456", "", 208813719)
+
+        assert client._conid_to_symbol[208813719] == "GOOGL"
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_on_position_updates_conid_to_symbol_map(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+        client._conid_to_symbol = {}
+
+        position = MagicMock()
+        position.account = "DU123456"
+        position.contract.conId = 123456
+        position.contract.symbol = "AAPL"
+        position.position = 100.0
+        position.avgCost = 150.0
+
+        client._on_position(position)
+
+        client._fire_submit.assert_called()
+        assert 123456 in client._conid_to_symbol
+        assert client._conid_to_symbol[123456] == "AAPL"
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_on_position_handles_db_error_gracefully(self, mock_save_position):
+        mock_save_position.return_value = False
+        client = _make_client_with_mock_ib()
+
+        position = MagicMock()
+        position.account = "DU123456"
+        position.contract.conId = 208813719
+        position.contract.symbol = "GOOGL"
+        position.position = 1.0
+        position.avgCost = 300.0
+
+        client._on_position(position)
+
+        client._fire_submit.assert_called()
+        assert client._fire_submit.call_count == 2
+        client._ib.reqPnLSingle.assert_called_once()
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_on_position_handles_reqpnl_single_error(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+        client._ib.reqPnLSingle.side_effect = Exception("reqPnLSingle failed")
+
+        position = MagicMock()
+        position.account = "DU123456"
+        position.contract.conId = 208813719
+        position.contract.symbol = "GOOGL"
+        position.position = 1.0
+        position.avgCost = 300.0
+
+        client._on_position(position)
+
+        client._fire_submit.assert_called()
+        assert client._fire_submit.call_count == 2
+        mock_save_position.assert_called_once()
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_on_position_skips_duplicate_subscription(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+        client._subscribed_conids = {208813719}
+
+        position = MagicMock()
+        position.account = "DU123456"
+        position.contract.conId = 208813719
+        position.contract.symbol = "GOOGL"
+        position.position = 1.0
+        position.avgCost = 300.0
+
+        client._on_position(position)
+
+        client._fire_submit.assert_called()
+        assert client._fire_submit.call_count == 1
+
+        client._ib.reqPnLSingle.assert_not_called()
+        assert 208813719 in client._subscribed_conids
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_on_position_calls_cancel_before_resubscribe(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+        client._ib.cancelPnLSingle = MagicMock()
+
+        position = MagicMock()
+        position.account = "DU123456"
+        position.contract.conId = 999888
+        position.contract.symbol = "TSLA"
+        position.position = 50.0
+        position.avgCost = 200.0
+
+        client._on_position(position)
+
+        client._fire_submit.assert_called()
+        assert client._fire_submit.call_count == 2
+
+        client._ib.cancelPnLSingle.assert_called_once_with("DU123456", "", 999888)
+        client._ib.reqPnLSingle.assert_called_once_with("DU123456", "", 999888)
+
+
+# ===========================================================================
+# get_pnl database read tests
+# ===========================================================================
+
+class TestGetPnlFromDatabase:
+    """Verify get_pnl reads from database correctly."""
+
+    @patch("app.services.live_trading.records.ibkr_get_pnl")
+    def test_get_pnl_reads_from_database(self, mock_get_pnl):
+        from datetime import datetime
+        mock_get_pnl.return_value = {
+            "daily_pnl": 100.50,
+            "unrealized_pnl": 500.25,
+            "realized_pnl": 200.75,
+            "updated_at": None,
+        }
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_pnl()
+
+        assert result is not None
+        assert result["success"] is True
+        assert result["dailyPnL"] == 100.50
+        assert result["unrealizedPnL"] == 500.25
+        assert result["realizedPnL"] == 200.75
+        mock_get_pnl.assert_called_once_with("DU123456")
+
+    @patch("app.services.live_trading.records.ibkr_get_pnl")
+    def test_get_pnl_returns_none_when_not_connected(self, mock_get_pnl):
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+        client._ib = None
+
+        result = client.get_pnl()
+
+        assert result is None
+        mock_get_pnl.assert_not_called()
+
+    @patch("app.services.live_trading.records.ibkr_get_pnl")
+    def test_get_pnl_returns_none_when_no_account(self, mock_get_pnl):
+        client = _make_client_with_mock_ib()
+        client._account = ""
+
+        result = client.get_pnl()
+
+        assert result is None
+        mock_get_pnl.assert_not_called()
+
+    @patch("app.services.live_trading.records.ibkr_get_pnl")
+    def test_get_pnl_returns_none_when_no_data(self, mock_get_pnl):
+        mock_get_pnl.return_value = None
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_pnl()
+
+        assert result is None
+
+    @patch("app.services.live_trading.records.ibkr_get_pnl")
+    def test_get_pnl_handles_db_error(self, mock_get_pnl):
+        mock_get_pnl.side_effect = Exception("DB connection failed")
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_pnl()
+
+        assert result is None
+
+
+# ===========================================================================
+# get_positions database read tests
+# ===========================================================================
+
+class TestGetPositionsFromDatabase:
+    """Verify get_positions reads from database correctly."""
+
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    def test_get_positions_reads_from_database(self, mock_get_positions):
+        from datetime import datetime
+        mock_get_positions.return_value = [
+            {
+                "account": "DU123456",
+                "con_id": 123456,
+                "symbol": "AAPL",
+                "position": 100.0,
+                "avg_cost": 150.0,
+                "updated_at": None,
+            },
+            {
+                "account": "DU123456",
+                "con_id": 789012,
+                "symbol": "GOOGL",
+                "position": 50.0,
+                "avg_cost": 2800.0,
+                "updated_at": None,
+            },
+        ]
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_positions()
+
+        assert len(result) == 2
+        assert result[0]["symbol"] == "AAPL"
+        assert result[0]["quantity"] == 100.0
+        assert result[0]["unrealizedPnL"] == 0.0
+        assert result[1]["symbol"] == "GOOGL"
+        mock_get_positions.assert_called_once_with("DU123456")
+
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    def test_get_positions_returns_empty_when_not_connected(self, mock_get_positions):
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+        client._ib = None
+
+        result = client.get_positions()
+
+        assert result == []
+        mock_get_positions.assert_not_called()
+
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    def test_get_positions_returns_empty_when_no_account(self, mock_get_positions):
+        client = _make_client_with_mock_ib()
+        client._account = ""
+
+        result = client.get_positions()
+
+        assert result == []
+        mock_get_positions.assert_not_called()
+
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    def test_get_positions_returns_empty_list_when_no_data(self, mock_get_positions):
+        mock_get_positions.return_value = []
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_positions()
+
+        assert result == []
+
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    def test_get_positions_handles_db_error(self, mock_get_positions):
+        mock_get_positions.side_effect = Exception("DB connection failed")
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_positions()
+
+        assert result == []
+
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    def test_get_positions_calculates_market_value_when_zero(self, mock_get_positions):
+        mock_get_positions.return_value = [
+            {
+                "account": "DU123456",
+                "con_id": 123456,
+                "symbol": "AAPL",
+                "position": 100.0,
+                "avg_cost": 150.0,
+                "updated_at": None,
+            },
+        ]
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_positions()
+
+        assert len(result) == 1
+        assert result[0]["marketValue"] == 15000.0
 
 
 # ===========================================================================
