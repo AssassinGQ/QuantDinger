@@ -1995,6 +1995,22 @@ const locale = {
 
 'trading-assistant.form.symbolHint': 'Hiện tại chỉ hỗ trợ các cặp giao dịch tiền điện tử',
 
+'trading-assistant.form.strategyType': 'Loại chiến lược',
+
+'trading-assistant.form.strategyTypeSingle': 'Chiến lược một mã',
+
+'trading-assistant.form.strategyTypeSingleRegime': 'Chiến lược Regime một mã',
+
+'trading-assistant.form.strategyTypeCrossSectional': 'Chiến lược cắt ngang',
+
+'trading-assistant.form.strategyTypeRegime': 'Chiến lược Regime (mặt cắt có trọng số)',
+
+'trading-assistant.form.strategyTypeHint': 'Một mã: giao dịch một mã; Regime một mã: một mã + điều chỉnh vốn động theo vĩ mô; Cắt ngang: quản lý danh mục nhiều mã; Regime: chuyển đổi động nhiều phong cách chỉ báo theo yếu tố vĩ mô',
+
+'trading-assistant.form.regimeStrategyType': 'Phong cách Regime',
+
+'trading-assistant.form.regimeStrategyTypeHint': 'Chọn mức chịu rủi ro theo bối cảnh vĩ mô: bảo thủ giảm vị thế, mạo hiểm tăng vị thế',
+
 'trading-assistant.form.initialCapital': 'Vốn ban đầu',
 
 'trading-assistant.form.marketType': 'Loại thị trường',

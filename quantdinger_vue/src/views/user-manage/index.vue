@@ -229,6 +229,7 @@
               <div>
                 <span class="symbol-text">{{ record.symbol || '-' }}</span>
                 <a-tag v-if="record.cs_strategy_type === 'cross_sectional'" color="purple" size="small" style="margin-left: 4px">CS</a-tag>
+                <a-tag v-if="record.cs_strategy_type === 'single_regime_weighted'" color="blue" size="small" style="margin-left: 4px">SRW</a-tag>
               </div>
               <div v-if="record.cs_strategy_type === 'cross_sectional' && record.symbol_list && record.symbol_list.length" class="symbol-count text-muted">
                 {{ record.symbol_list.length }} {{ $t('systemOverview.symbols') || 'symbols' }}

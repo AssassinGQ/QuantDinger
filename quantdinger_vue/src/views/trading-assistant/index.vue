@@ -135,7 +135,7 @@
                             <a-icon type="pause-circle" />
                             {{ $t('trading-assistant.stopStrategy') }}
                           </a-menu-item>
-                          <a-menu-item v-if="item.status === 'running' && item.trading_config && item.trading_config.strategy_type === 'cross_sectional_weighted'" key="rebalance">
+                          <a-menu-item v-if="item.status === 'running' && item.trading_config && (item.trading_config.strategy_type === 'cross_sectional_weighted' || item.trading_config.strategy_type === 'single_regime_weighted')" key="rebalance">
                             <a-icon type="reload" />
                             {{ $t('trading-assistant.rebalanceStrategy') }}
                           </a-menu-item>
@@ -214,7 +214,7 @@
                         <a-icon type="pause-circle" />
                         {{ $t('trading-assistant.stopStrategy') }}
                       </a-menu-item>
-                      <a-menu-item v-if="item.status === 'running' && item.trading_config && item.trading_config.strategy_type === 'cross_sectional_weighted'" key="rebalance">
+                      <a-menu-item v-if="item.status === 'running' && item.trading_config && (item.trading_config.strategy_type === 'cross_sectional_weighted' || item.trading_config.strategy_type === 'single_regime_weighted')" key="rebalance">
                         <a-icon type="reload" />
                         {{ $t('trading-assistant.rebalanceStrategy') }}
                       </a-menu-item>
@@ -316,9 +316,9 @@
                   </div>
                   <div
                     class="tag-item regime-tag"
-                    v-if="selectedStrategy.trading_config && selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted'">
+                    v-if="selectedStrategy.trading_config && (selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted' || selectedStrategy.trading_config.strategy_type === 'single_regime_weighted')">
                     <a-icon type="apartment" />
-                    <span>{{ $t('trading-assistant.form.strategyTypeRegime') }}</span>
+                    <span>{{ selectedStrategy.trading_config.strategy_type === 'single_regime_weighted' ? $t('trading-assistant.form.strategyTypeSingleRegime') : $t('trading-assistant.form.strategyTypeRegime') }}</span>
                   </div>
                   <div class="tag-item" v-if="selectedStrategy.trading_config">
                     <a-icon type="thunderbolt" />
@@ -364,7 +364,7 @@
           <!-- 策略详情标签页 -->
           <a-card :bordered="false" class="strategy-content-card">
             <a-tabs defaultActiveKey="positions">
-              <a-tab-pane key="regime" :tab="$t('trading-assistant.form.strategyTypeRegime')" v-if="selectedStrategy.trading_config && selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted'">
+              <a-tab-pane key="regime" :tab="$t('trading-assistant.form.strategyTypeRegime')" v-if="selectedStrategy.trading_config && (selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted' || selectedStrategy.trading_config.strategy_type === 'single_regime_weighted')">
                 <div style="padding: 16px;">
                   <div style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-weight: 600; font-size: 15px;">Regime 权重状态</span>
@@ -385,8 +385,12 @@
                       <strong>{{ item.label }}:</strong>
                       <span :style="item.key === selectedStrategy.status_info.primary_indicator ? 'font-weight:600;color:#1890ff' : ''">{{ item.value }}</span>
                     </div>
+                    <div v-if="selectedStrategy.trading_config.strategy_type === 'single_regime_weighted' && selectedStrategy.status_info.capital_ratio !== undefined">
+                      <strong>资金比例:</strong> {{ (selectedStrategy.status_info.capital_ratio * 100).toFixed(1) }}%
+                    </div>
                   </div>
                   <a-table
+                    v-if="selectedStrategy.trading_config.strategy_type === 'cross_sectional_weighted'"
                     :columns="regimeColumns"
                     :data-source="getRegimeIndicatorsData()"
                     :pagination="false"
@@ -445,6 +449,7 @@
                     v-decorator="['cs_strategy_type', { initialValue: 'single' }]"
                     @change="handleStrategyTypeChange">
                     <a-radio value="single">{{ $t('trading-assistant.form.strategyTypeSingle') }}</a-radio>
+                    <a-radio value="single_regime_weighted">{{ $t('trading-assistant.form.strategyTypeSingleRegime') }}</a-radio>
                     <a-radio value="cross_sectional">{{ $t('trading-assistant.form.strategyTypeCrossSectional') }}</a-radio>
                     <a-radio value="cross_sectional_weighted">{{ $t('trading-assistant.form.strategyTypeRegime') }}</a-radio>
                   </a-radio-group>
@@ -465,8 +470,8 @@
                     placeholder="ungrouped" />
                 </a-form-item>
 
-                <!-- Regime 策略的标的配置 (独立 v-decorator 避免与 single 模式冲突) -->
-                <template v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted'">
+                <!-- Regime/单标Regime 策略的标的配置 (独立 v-decorator 避免与 single 模式冲突) -->
+                <template v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted' || form.getFieldValue('cs_strategy_type') === 'single_regime_weighted'">
                   <a-form-item :label="$t('trading-assistant.form.symbol')">
                     <a-select
                       v-decorator="['symbol', { rules: [{ required: true, message: $t('trading-assistant.validation.symbolRequired') }] }]"
@@ -495,7 +500,7 @@
                   </a-form-item>
                 </template>
 
-                <template v-if="form.getFieldValue('cs_strategy_type') === 'single'">
+                <template v-if="form.getFieldValue('cs_strategy_type') === 'single' || form.getFieldValue('cs_strategy_type') === 'single_regime_weighted'">
                   <a-form-item :label="$t('trading-assistant.form.indicator')">
                     <a-select
                       v-decorator="['indicator_id', { rules: [{ required: true, message: $t('trading-assistant.validation.indicatorRequired') }] }]"
@@ -648,6 +653,53 @@
                   </a-form-item>
                 </template>
 
+                <!-- 单标 Regime 策略专属配置 -->
+                <template v-if="form.getFieldValue('cs_strategy_type') === 'single_regime_weighted'">
+                  <a-form-item :label="$t('trading-assistant.form.regimeStrategyType')">
+                    <a-select
+                      v-model="regimeStrategyType"
+                      style="width: 100%"
+                      :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                      <a-select-option value="conservative">{{ $t('trading-assistant.form.regimeStyleConservative') }}</a-select-option>
+                      <a-select-option value="balanced">{{ $t('trading-assistant.form.regimeStyleBalanced') }}</a-select-option>
+                      <a-select-option value="aggressive">{{ $t('trading-assistant.form.regimeStyleAggressive') }}</a-select-option>
+                    </a-select>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.regimeStrategyTypeHint') }}
+                    </div>
+                  </a-form-item>
+
+                  <a-form-item :label="$t('trading-assistant.form.macroIndicators')">
+                    <a-checkbox-group v-model="regimeMacroIndicators" style="width: 100%;">
+                      <a-row>
+                        <a-col :span="8"><a-checkbox value="vix">VIX (美股波动率)</a-checkbox></a-col>
+                        <a-col :span="8"><a-checkbox value="vhsi">VHSI (港股波动率)</a-checkbox></a-col>
+                        <a-col :span="8"><a-checkbox value="fear_greed">Fear & Greed (贪婪恐慌)</a-checkbox></a-col>
+                        <a-col :span="8"><a-checkbox value="civix">CIVIX (A股波动率)</a-checkbox></a-col>
+                        <a-col :span="8"><a-checkbox value="dxy">DXY (美元指数)</a-checkbox></a-col>
+                      </a-row>
+                    </a-checkbox-group>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.macroIndicatorsHint') }}
+                    </div>
+                  </a-form-item>
+
+                  <a-form-item :label="$t('trading-assistant.form.primaryMacroIndicator')">
+                    <a-select
+                      v-model="regimePrimaryIndicator"
+                      style="width: 100%"
+                      :placeholder="$t('trading-assistant.placeholders.selectPrimaryMacro')"
+                      :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                      <a-select-option v-for="mi in regimeMacroIndicators" :key="mi" :value="mi">
+                        {{ getMacroIndicatorLabel(mi) }}
+                      </a-select-option>
+                    </a-select>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.primaryMacroIndicatorHint') }}
+                    </div>
+                  </a-form-item>
+                </template>
+
                 <a-divider />
 
                 <!-- 截面策略配置 -->
@@ -721,7 +773,7 @@
 
                 <!-- Rebalance 周期：截面策略和 Regime 策略都需要 -->
                 <a-form-item
-                  v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional' || form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted'"
+                  v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional' || form.getFieldValue('cs_strategy_type') === 'cross_sectional_weighted' || form.getFieldValue('cs_strategy_type') === 'single_regime_weighted'"
                   :label="$t('trading-assistant.form.rebalanceFrequency')">
                   <a-select
                     v-decorator="['rebalance_frequency', { initialValue: 'daily' }]"
@@ -2082,6 +2134,7 @@ export default {
       regimeSymbolIndicators: [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }],
       regimeMacroIndicators: ['vix', 'fear_greed'],
       regimePrimaryIndicator: 'vix',
+      regimeStrategyType: 'balanced',
       // 策略组折叠状态
       collapsedGroups: {},
       // 分组模式: 'strategy' 或 'symbol'
@@ -2389,9 +2442,13 @@ export default {
     },
     handleStrategyTypeChange (e) {
       const strategyType = e.target.value
-      // 当切换到单标的策略时，清空截面策略的标的列表
       if (strategyType === 'single') {
         this.crossSectionalSymbols = []
+      } else if (strategyType === 'single_regime_weighted') {
+        this.crossSectionalSymbols = []
+        this.regimeMacroIndicators = ['vix', 'fear_greed']
+        this.regimePrimaryIndicator = 'vix'
+        this.regimeStrategyType = 'balanced'
       }
     },
     handleCrossSectionalSymbolChange (vals) {
@@ -2990,6 +3047,14 @@ export default {
           } else {
             this.regimeSymbolIndicators = [{ uid: Date.now(), indicator_id: undefined, regime_style: 'balanced' }]
           }
+        } else if (strategyType === 'single_regime_weighted') {
+          this.form.setFieldsValue({
+            cs_strategy_type: 'single_regime_weighted',
+            rebalance_frequency: tc.rebalance_frequency || 'daily'
+          })
+          this.regimeMacroIndicators = tc.macro_indicators || ['vix', 'fear_greed']
+          this.regimePrimaryIndicator = tc.primary_macro_indicator || 'vix'
+          this.regimeStrategyType = tc.regime_strategy_type || 'balanced'
         } else {
           this.form.setFieldsValue({
             cs_strategy_type: 'single'
@@ -3990,8 +4055,8 @@ export default {
           fieldsToValidate.push('indicator_id')
         }
 
-        // 编辑模式，或者 Regime 策略（无论创建还是编辑），都需要验证 symbol 字段
-        if ((this.isEditMode && strategyType === 'single') || strategyType === 'cross_sectional_weighted') {
+        // 编辑模式，或者 Regime/单标Regime 策略（无论创建还是编辑），都需要验证 symbol 字段
+        if ((this.isEditMode && strategyType === 'single') || strategyType === 'cross_sectional_weighted' || strategyType === 'single_regime_weighted') {
           fieldsToValidate.push('symbol')
         }
         this.form.validateFields(fieldsToValidate, (err, values) => {
@@ -4006,12 +4071,13 @@ export default {
                 return
               }
             } else if (strategyType === 'cross_sectional_weighted') {
-              // 加权截面策略（Regime策略）：由于现在使用 form.symbol 进行校验，这里不再需要额外校验 symbol
               const validPairs = this.regimeSymbolIndicators.filter(item => item.indicator_id)
               if (validPairs.length === 0) {
                 this.$message.warning(this.$t('trading-assistant.validation.indicatorRequired'))
                 return
               }
+            } else if (strategyType === 'single_regime_weighted') {
+              // symbol 和 indicator_id 已由 form.validateFields 校验，无需额外验证
             } else {
               // 单标的策略：验证多币种选择
               if (!this.selectedSymbols || this.selectedSymbols.length === 0) {
@@ -4219,7 +4285,7 @@ export default {
                 symbol_list: values.cs_strategy_type === 'cross_sectional' ? this.crossSectionalSymbols : undefined,
                 portfolio_size: values.cs_strategy_type === 'cross_sectional' ? (values.portfolio_size || 10) : undefined,
                 long_ratio: values.cs_strategy_type === 'cross_sectional' ? (values.long_ratio || 0.5) : undefined,
-                rebalance_frequency: (values.cs_strategy_type === 'cross_sectional' || values.cs_strategy_type === 'cross_sectional_weighted') ? (values.rebalance_frequency || 'daily') : undefined,
+                rebalance_frequency: (values.cs_strategy_type === 'cross_sectional' || values.cs_strategy_type === 'cross_sectional_weighted' || values.cs_strategy_type === 'single_regime_weighted') ? (values.rebalance_frequency || 'daily') : undefined,
                 symbol_indicators: values.cs_strategy_type === 'cross_sectional_weighted' ? this.regimeSymbolIndicators.reduce((acc, curr) => {
                   if (curr.indicator_id) {
                     const style = curr.regime_style || 'default'
@@ -4230,8 +4296,9 @@ export default {
                   }
                   return acc
                 }, {}) : undefined,
-                macro_indicators: values.cs_strategy_type === 'cross_sectional_weighted' ? this.regimeMacroIndicators : undefined,
-                primary_macro_indicator: values.cs_strategy_type === 'cross_sectional_weighted' ? this.regimePrimaryIndicator : undefined
+                macro_indicators: (values.cs_strategy_type === 'cross_sectional_weighted' || values.cs_strategy_type === 'single_regime_weighted') ? this.regimeMacroIndicators : undefined,
+                primary_macro_indicator: (values.cs_strategy_type === 'cross_sectional_weighted' || values.cs_strategy_type === 'single_regime_weighted') ? this.regimePrimaryIndicator : undefined,
+                regime_strategy_type: values.cs_strategy_type === 'single_regime_weighted' ? this.regimeStrategyType : undefined
               }
             }
 
@@ -4252,14 +4319,11 @@ export default {
               basePayload.strategy_type = 'IndicatorStrategy'
 
               // 如果是截面策略或加权截面策略，只创建一个策略（使用 createStrategy）
-              if (values.cs_strategy_type === 'cross_sectional' || values.cs_strategy_type === 'cross_sectional_weighted') {
-                // 截面策略：只创建一个策略，标的列表存储在 trading_config 中
-                basePayload.strategy_type = 'IndicatorStrategy' // 保持为 IndicatorStrategy，截面类型在 trading_config 中
+              if (values.cs_strategy_type === 'cross_sectional' || values.cs_strategy_type === 'cross_sectional_weighted' || values.cs_strategy_type === 'single_regime_weighted') {
+                basePayload.strategy_type = 'IndicatorStrategy'
                 if (values.cs_strategy_type === 'cross_sectional') {
-                  // 截面策略不需要设置 symbol，因为它是多标的的
                   basePayload.trading_config.symbol = null
                 } else {
-                  // Regime 策略：单标的，但具有多个风格指标
                   const sym = values.symbol
                   if (typeof sym === 'string' && sym.includes(':')) {
                     const idx = sym.indexOf(':')
@@ -4269,7 +4333,6 @@ export default {
                     basePayload.trading_config.symbol = sym
                   }
                 }
-                // 使用 createStrategy 创建单个策略
                 res = await createStrategy(basePayload)
               } else if (this.selectedSymbols.length === 1) {
                 // 单标的单策略：用 createStrategy，不设 strategy_group_id，避免在「按策略」下被错误分组
