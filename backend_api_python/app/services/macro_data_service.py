@@ -431,6 +431,11 @@ class MacroDataService:
         return snapshot if snapshot else None
 
     @classmethod
+    def get_realtime_snapshot(cls) -> Optional[dict]:
+        """获取实时宏观数据快照（带 5 分钟缓存）。"""
+        return cls._get_realtime_snapshot()
+
+    @classmethod
     def clear_cache(cls):
         with cls._mem_lock:
             cls._mem_cache.clear()

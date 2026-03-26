@@ -9,6 +9,7 @@ from app.strategies.base import IStrategyLoop
 from app.strategies.single_symbol import SingleSymbolStrategy
 from app.strategies.cross_sectional import CrossSectionalStrategy
 from app.strategies.cross_sectional_weighted import CrossSectionalWeightedStrategy
+from app.strategies.single_regime_weighted import SingleRegimeWeightedStrategy
 from app.strategies.strategy_config_loader import load_strategy
 
 
@@ -18,6 +19,7 @@ def create_strategy(cs_type: str) -> IStrategyLoop:
 
     Args:
         cs_type: 'single' | 'cross_sectional' | 'cross_sectional_weighted'
+                 | 'single_regime_weighted'
 
     Returns:
         IStrategyLoop 实例
@@ -26,6 +28,8 @@ def create_strategy(cs_type: str) -> IStrategyLoop:
         return CrossSectionalStrategy()
     if cs_type == "cross_sectional_weighted":
         return CrossSectionalWeightedStrategy()
+    if cs_type == "single_regime_weighted":
+        return SingleRegimeWeightedStrategy()
     return SingleSymbolStrategy()
 
 

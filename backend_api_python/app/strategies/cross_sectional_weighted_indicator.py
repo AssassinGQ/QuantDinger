@@ -1,7 +1,6 @@
 """
 执行 Regime 截面策略的指标代码
 """
-import math
 from typing import Any, Dict
 
 import numpy as np
@@ -10,7 +9,9 @@ import pandas as pd
 from app.strategies.base import RawIndicatorOutput
 from app.utils.logger import get_logger
 
-from app.strategies.regime_utils import compute_regime, load_regime_rules, load_regime_to_weights
+from app.strategies.regime_mixin import (
+    compute_regime, load_regime_rules, load_regime_to_weights, read_macro_values,
+)
 
 logger = get_logger(__name__)
 
@@ -27,49 +28,47 @@ def _execute_indicator_code(
     """
     local_env = {"df": df.copy()}
     try:
-        exec(code, global_env, local_env) # pylint: disable=exec-used
+        exec(code, global_env, local_env)  # pylint: disable=exec-used
         executed_df = local_env.get("df", df)
 
         if "buy" in executed_df.columns or "sell" in executed_df.columns:
-            last = executed_df.iloc[-1]
-            buy_val = int(last.get("buy", 0) or 0)
-            sell_val = int(last.get("sell", 0) or 0)
-            logger.debug(
-                "Indicator read df[buy]=%s, df[sell]=%s (last row)",
-                buy_val, sell_val
-            )
-            if buy_val:
-                return 1
-            if sell_val:
-                return -1
-            return 0
+            return _parse_buy_sell_columns(executed_df)
 
-        ind_signal = local_env.get("signal", 0)
-        logger.debug("Indicator fallback to signal variable: %s", ind_signal)
-        if str(ind_signal).lower() in ("1", "1.0", "long", "buy"):
-            return 1
-        if str(ind_signal).lower() in ("-1", "-1.0", "short", "sell"):
-            return -1
-        return 0
-    except Exception as e: # pylint: disable=broad-exception-caught
+        return _parse_signal_variable(local_env)
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error executing indicator code: %s", e)
         return 0
 
 
-def _read_macro_values(
-    df: pd.DataFrame,
-    macro_indicators: list,
-) -> Dict[str, float]:
-    """从 df 最后一行读取指定的宏观指标值，nan 回退到默认值。"""
-    defaults = {"vix": 18.0, "vhsi": 22.0, "civix": 18.0, "dxy": 100.0, "fear_greed": 50.0}
-    last_row = df.iloc[-1]
-    result = {}
-    for key in macro_indicators:
-        val = last_row.get(key, None)
-        if val is None or (isinstance(val, float) and math.isnan(val)):
-            val = defaults.get(key, 0.0)
-        result[key] = float(val)
-    return result
+def _parse_buy_sell_columns(executed_df: pd.DataFrame) -> int:
+    """从 df 的 buy/sell 列解析交易信号。"""
+    last = executed_df.iloc[-1]
+    buy_val = int(last.get("buy", 0) or 0)
+    sell_val = int(last.get("sell", 0) or 0)
+    logger.debug(
+        "Indicator read df[buy]=%s, df[sell]=%s (last row)",
+        buy_val, sell_val,
+    )
+    if buy_val:
+        return 1
+    if sell_val:
+        return -1
+    return 0
+
+
+def _parse_signal_variable(local_env: Dict[str, Any]) -> int:
+    """从 signal 变量解析交易信号（向后兼容）。"""
+    ind_signal = local_env.get("signal", 0)
+    logger.debug("Indicator fallback to signal variable: %s", ind_signal)
+    sig_str = str(ind_signal).lower()
+    if sig_str in ("1", "1.0", "long", "buy"):
+        return 1
+    if sig_str in ("-1", "-1.0", "short", "sell"):
+        return -1
+    return 0
+
+
+_read_macro_values = read_macro_values
 
 
 def _process_nested_config(

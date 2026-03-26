@@ -54,6 +54,7 @@ class InputContext(TypedDict, total=False):
     strategy_id: int
     indicator_code: str
     market_category: str
+    should_regime_rebalance: bool
 
 
 class RawIndicatorOutput(TypedDict, total=False):
