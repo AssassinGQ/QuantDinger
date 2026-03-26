@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS qd_ibkr_pnl_single (
     account VARCHAR(50) NOT NULL,
     con_id BIGINT NOT NULL,
     symbol VARCHAR(100) NOT NULL DEFAULT '',
+    avg_cost DECIMAL(20, 6) DEFAULT 0,
     daily_pnl DECIMAL(20, 4) DEFAULT 0,
     unrealized_pnl DECIMAL(20, 4) DEFAULT 0,
     realized_pnl DECIMAL(20, 4) DEFAULT 0,
@@ -30,6 +31,17 @@ CREATE TABLE IF NOT EXISTS qd_ibkr_pnl_single (
     updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(account, con_id)
 );
+
+-- 增量: 如果表已存在但缺少 avg_cost 列, 则添加
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_ibkr_pnl_single' AND column_name = 'avg_cost'
+    ) THEN
+        ALTER TABLE qd_ibkr_pnl_single ADD COLUMN avg_cost DECIMAL(20, 6) DEFAULT 0;
+    END IF;
+END $$;
 
 -- 按账户快速查询
 CREATE INDEX IF NOT EXISTS idx_ibkr_pnl_account ON qd_ibkr_pnl (account);
