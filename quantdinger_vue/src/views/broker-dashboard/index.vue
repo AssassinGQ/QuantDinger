@@ -365,6 +365,45 @@
         </template>
       </a-table>
     </div>
+
+    <!-- 策略盈亏 -->
+    <div class="chart-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <a-icon type="bar-chart" />
+          <span>{{ $t('broker.strategyPnl') }}</span>
+          <span class="source-tag">QuantDinger</span>
+        </div>
+        <div class="panel-badge">{{ strategyPnl.length }}</div>
+      </div>
+      <a-table
+        :columns="strategyPnlColumns"
+        :data-source="strategyPnl"
+        rowKey="strategy_id"
+        :pagination="{ pageSize: 10, size: 'small', showSizeChanger: true }"
+        size="small"
+        :scroll="{ x: 800 }"
+        class="pro-table"
+        :locale="{ emptyText: $t('broker.noStrategyPnl') }"
+      >
+        <template slot="total_value" slot-scope="text">
+          <span>{{ accountCurrency }} {{ formatNumber(text) }}</span>
+        </template>
+        <template slot="commission" slot-scope="text">
+          <span>{{ accountCurrency }} {{ formatNumber(text) }}</span>
+        </template>
+        <template slot="profit" slot-scope="text">
+          <span :class="text >= 0 ? 'positive' : 'negative'">
+            {{ text >= 0 ? '+' : '' }}{{ accountCurrency }} {{ formatNumber(text) }}
+          </span>
+        </template>
+        <template slot="win_rate" slot-scope="text">
+          <span :class="text >= 50 ? 'positive' : 'negative'">
+            {{ text }}%
+          </span>
+        </template>
+      </a-table>
+    </div>
   </div>
 </template>
 
