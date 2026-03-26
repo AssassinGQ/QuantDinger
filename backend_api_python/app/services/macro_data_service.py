@@ -131,7 +131,7 @@ class MacroDataService:
         if realtime:
             for col in cls.MACRO_COLUMNS:
                 if col in realtime and col in df.columns:
-                    df[col].iloc[-1] = realtime[col]
+                    df.loc[df.index[-1], col] = realtime[col]
 
         return df
 
