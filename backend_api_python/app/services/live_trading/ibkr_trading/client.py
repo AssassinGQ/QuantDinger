@@ -512,12 +512,39 @@ class IBKRClient(BaseStatefulClient):
         )
 
     def _on_update_portfolio(self, item):
+        unrealized_pnl = float(item.unrealizedPNL or 0)
+        realized_pnl = float(item.realizedPNL or 0)
+        value = float(item.marketValue or 0)
+
         logger.info(
             "[IBKR-Event] updatePortfolio: symbol=%s pos=%s mktPrice=%.2f mktValue=%.2f unrealPNL=%.2f realPNL=%.2f",
             item.contract.symbol, item.position,
-            float(item.marketPrice or 0), float(item.marketValue or 0),
-            float(item.unrealizedPNL or 0), float(item.realizedPNL or 0),
+            float(item.marketPrice or 0), value,
+            unrealized_pnl, realized_pnl,
         )
+
+        self._conid_to_symbol[item.contract.conId] = item.contract.symbol
+
+        def _save_to_db():
+            for attempt in range(3):
+                if records.ibkr_save_position(
+                    account=item.account,
+                    con_id=item.contract.conId,
+                    symbol=item.contract.symbol,
+                    position=float(item.position or 0),
+                    avg_cost=float(item.averageCost or 0),
+                    daily_pnl=0.0,
+                    unrealized_pnl=unrealized_pnl,
+                    realized_pnl=realized_pnl,
+                    value=value,
+                ):
+                    return
+                if attempt < 2:
+                    logger.warning("[IBKR-Event] Retry save updatePortfolio to DB (attempt %d/3)", attempt + 1)
+                    time.sleep(0.5 * (attempt + 1))
+            logger.error("[IBKR-Event] Failed to save updatePortfolio to DB after 3 attempts")
+
+        self._fire_submit(_save_to_db, is_blocking=True)
 
     def _on_position(self, position):
         symbol = position.contract.symbol or ""
