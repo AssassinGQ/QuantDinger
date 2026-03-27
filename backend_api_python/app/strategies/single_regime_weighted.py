@@ -27,14 +27,19 @@ class SingleRegimeWeightedStrategy(SingleSymbolStrategy, RegimeMixin):
         self,
         ctx: InputContext,
     ) -> Tuple[List[Dict[str, Any]], bool, Optional[bool], Optional[Dict[str, Any]]]:
-        signals, should_continue, update_rebalance, meta = super().get_signals(ctx)
+        signals, should_continue, _, meta = super().get_signals(ctx)
 
         if not ctx.get("should_regime_rebalance", False):
-            return signals, should_continue, update_rebalance, meta
+            return signals, should_continue, False, meta
 
         df = ctx.get("df")
         if df is None or len(df) == 0:
-            return signals, should_continue, update_rebalance, meta
+            logger.warning(
+                "Strategy %s: should_regime_rebalance=True but df is empty, "
+                "skip this rebalance cycle",
+                ctx.get("strategy_id", 0),
+            )
+            return signals, should_continue, False, meta
 
         regime, capital_ratio = self._compute_regime_ratio(ctx, df)
         self._apply_regime_to_signals(signals, capital_ratio, ctx)
@@ -44,7 +49,7 @@ class SingleRegimeWeightedStrategy(SingleSymbolStrategy, RegimeMixin):
         meta["current_regime"] = regime
         meta["capital_ratio"] = capital_ratio
 
-        return signals, should_continue, update_rebalance, meta
+        return signals, should_continue, True, meta
 
     def _compute_regime_ratio(
         self, ctx: InputContext, df,
