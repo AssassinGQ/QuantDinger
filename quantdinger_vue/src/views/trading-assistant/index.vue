@@ -3055,6 +3055,18 @@ export default {
           this.regimeMacroIndicators = tc.macro_indicators || ['vix', 'fear_greed']
           this.regimePrimaryIndicator = tc.primary_macro_indicator || 'vix'
           this.regimeStrategyType = tc.regime_strategy_type || 'balanced'
+
+          // Re-apply indicator_id after cs_strategy_type change to ensure the
+          // v-decorator field is populated (Ant Design Form may lose the value
+          // when the surrounding v-if re-evaluates).
+          await this.$nextTick()
+          if (strategy.indicator_config && strategy.indicator_config.indicator_id) {
+            const indId = String(strategy.indicator_config.indicator_id)
+            this.form.setFieldsValue({ indicator_id: indId })
+            if (!this.selectedIndicator || String(this.selectedIndicator.id) !== indId) {
+              await this.handleIndicatorChange(indId)
+            }
+          }
         } else {
           this.form.setFieldsValue({
             cs_strategy_type: 'single'
