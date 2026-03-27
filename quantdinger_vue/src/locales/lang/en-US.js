@@ -1280,6 +1280,7 @@ const locale = {
   'trading-assistant.startStrategy': 'Start Strategy',
   'trading-assistant.stopStrategy': 'Stop Strategy',
   'trading-assistant.rebalanceStrategy': 'Force Rebalance',
+  'trading-assistant.forceCloseAll': 'Force Close All',
   'trading-assistant.editStrategy': 'Edit Strategy',
   'trading-assistant.deleteStrategy': 'Delete Strategy',
   'trading-assistant.startAll': 'Start All',

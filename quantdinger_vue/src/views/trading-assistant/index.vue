@@ -139,6 +139,10 @@
                             <a-icon type="reload" />
                             {{ $t('trading-assistant.rebalanceStrategy') }}
                           </a-menu-item>
+                          <a-menu-item key="closeAll">
+                            <a-icon type="close-circle" />
+                            {{ $t('trading-assistant.forceCloseAll') }}
+                          </a-menu-item>
                           <a-menu-divider />
                           <a-menu-item key="edit">
                             <a-icon type="edit" />
@@ -217,6 +221,10 @@
                       <a-menu-item v-if="item.status === 'running' && item.trading_config && (item.trading_config.strategy_type === 'cross_sectional_weighted' || item.trading_config.strategy_type === 'single_regime_weighted')" key="rebalance">
                         <a-icon type="reload" />
                         {{ $t('trading-assistant.rebalanceStrategy') }}
+                      </a-menu-item>
+                      <a-menu-item key="closeAll">
+                        <a-icon type="close-circle" />
+                        {{ $t('trading-assistant.forceCloseAll') }}
                       </a-menu-item>
                       <a-menu-divider />
                       <a-menu-item key="edit">
@@ -356,6 +364,15 @@
                   @click="handleStopStrategy(selectedStrategy.id)">
                   <a-icon type="pause-circle" />
                   {{ $t('trading-assistant.stopStrategy') }}
+                </a-button>
+                <a-button
+                  type="default"
+                  size="large"
+                  class="action-btn close-btn"
+                  :loading="forceCloseAllLoading"
+                  @click="handleForceCloseAll(selectedStrategy.id)">
+                  <a-icon type="close-circle" />
+                  {{ $t('trading-assistant.forceCloseAll') }}
                 </a-button>
               </div>
             </div>
@@ -1658,7 +1675,7 @@
 </template>
 
 <script>
-import { getStrategyList, startStrategy, stopStrategy, deleteStrategy, updateStrategy, createStrategy, testExchangeConnection, getStrategyEquityCurve, batchCreateStrategies, batchStartStrategies, batchStopStrategies, batchDeleteStrategies, forceRebalanceStrategy } from '@/api/strategy'
+import { getStrategyList, startStrategy, stopStrategy, deleteStrategy, updateStrategy, createStrategy, testExchangeConnection, getStrategyEquityCurve, batchCreateStrategies, batchStartStrategies, batchStopStrategies, batchDeleteStrategies, forceRebalanceStrategy, forceCloseAllStrategy } from '@/api/strategy'
 import { getWatchlist, addWatchlist, searchSymbols, getHotSymbols } from '@/api/market'
 import { listExchangeCredentials, getExchangeCredential, createExchangeCredential } from '@/api/credentials'
 import { getNotificationSettings } from '@/api/user'
@@ -2075,6 +2092,7 @@ export default {
       loading: false,
       loadingRecords: false,
       forceRebalanceLoading: false,
+      forceCloseAllLoading: false,
       strategies: [],
       selectedStrategy: null,
       showFormModal: false,
@@ -3246,6 +3264,9 @@ export default {
         case 'rebalance':
           this.handleForceRebalance(strategy.id)
           break
+        case 'closeAll':
+          this.handleForceCloseAll(strategy.id)
+          break
         case 'edit':
           this.handleEditStrategy(strategy)
           break
@@ -3267,6 +3288,22 @@ export default {
         this.$message.error(error.message || 'Rebalance trigger error')
       } finally {
         this.forceRebalanceLoading = false
+      }
+    },
+    async handleForceCloseAll (strategyId) {
+      this.forceCloseAllLoading = true
+      try {
+        const res = await forceCloseAllStrategy(strategyId)
+        if (res.code === 1) {
+          this.$message.success(res.msg || 'Close signals sent successfully')
+          this.loadStrategies()
+        } else {
+          this.$message.error(res.msg || 'Close all failed')
+        }
+      } catch (error) {
+        this.$message.error(error.message || 'Close all error')
+      } finally {
+        this.forceCloseAllLoading = false
       }
     },
     toggleGroup (groupId) {

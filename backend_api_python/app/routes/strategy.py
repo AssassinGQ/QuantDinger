@@ -678,6 +678,122 @@ def force_rebalance_strategy():
         }), 500
 
 
+@strategy_bp.route('/strategies/force-close-all', methods=['POST'])
+@login_required
+def force_close_all():
+    """
+    Force close all positions for a strategy by generating close signals.
+
+    Params:
+        id: Strategy ID
+    """
+    try:
+        user_id = g.user_id
+        strategy_id = request.args.get('id', type=int)
+
+        if not strategy_id:
+            return jsonify({
+                'code': 0,
+                'msg': 'Missing strategy id parameter',
+                'data': None
+            }), 400
+
+        # Verify strategy belongs to user
+        st = get_strategy_service().get_strategy(strategy_id, user_id=user_id)
+        if not st:
+            return jsonify({'code': 0, 'msg': 'Strategy not found', 'data': None}), 404
+
+        # Get strategy trading config
+        trading_config = st.get('trading_config', {})
+        leverage = float(trading_config.get('leverage', 1.0))
+        market_type = trading_config.get('market_type', 'swap')
+
+        # Get all positions for this strategy
+        from app.services.data_handler import DataHandler
+        dh = DataHandler()
+        positions = dh.get_all_positions(strategy_id)
+
+        if not positions:
+            return jsonify({
+                'code': 1,
+                'msg': 'No positions to close',
+                'data': {'closed_count': 0}
+            })
+
+        # Import pending order enqueuer
+        from app.services.pending_order_enqueuer import PendingOrderEnqueuer
+        enqueuer = PendingOrderEnqueuer()
+
+        # Get price fetcher for current prices
+        from app.services.price_fetcher import get_price_fetcher
+        price_fetcher = get_price_fetcher()
+
+        closed_count = 0
+        closed_positions = []
+
+        for pos in positions:
+            symbol = pos.get('symbol')
+            side = pos.get('side')
+            size = pos.get('size', 0)
+
+            if not symbol or not side or size <= 0:
+                continue
+
+            # Determine signal type based on position side
+            signal_type = 'close_long' if side == 'long' else 'close_short'
+
+            # Get current price
+            try:
+                current_price = price_fetcher.get_price(symbol, market_type=market_type)
+                if not current_price or current_price <= 0:
+                    current_price = pos.get('entry_price', 0) or pos.get('current_price', 0) or 0
+            except Exception:
+                current_price = pos.get('entry_price', 0) or pos.get('current_price', 0) or 0
+
+            # Enqueue close signal
+            signal_ts = int(time.time())
+            pending_id = enqueuer.enqueue_pending_order(
+                strategy_id=strategy_id,
+                symbol=symbol,
+                signal_type=signal_type,
+                amount=float(size),
+                price=float(current_price),
+                signal_ts=signal_ts,
+                market_type=market_type,
+                leverage=leverage,
+                execution_mode='live',
+            )
+
+            if pending_id:
+                closed_count += 1
+                closed_positions.append({
+                    'symbol': symbol,
+                    'side': side,
+                    'size': size,
+                    'signal_type': signal_type,
+                    'pending_id': pending_id
+                })
+                logger.info(f"Force close enqueued: strategy={strategy_id} symbol={symbol} side={side} size={size}")
+
+        return jsonify({
+            'code': 1,
+            'msg': f'Close signals sent for {closed_count} position(s)',
+            'data': {
+                'closed_count': closed_count,
+                'positions': closed_positions
+            }
+        })
+
+    except Exception as e:
+        logger.error("Failed to force close all positions: %s", e)
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'code': 0,
+            'msg': f'Failed to force close: {str(e)}',
+            'data': None
+        }), 500
+
+
 @strategy_bp.route('/strategies/test-connection', methods=['POST'])
 @login_required
 def test_connection():

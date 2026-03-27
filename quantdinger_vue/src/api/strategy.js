@@ -18,7 +18,8 @@ const api = {
   positions: '/api/strategies/positions',
   equityCurve: '/api/strategies/equityCurve',
   notifications: '/api/strategies/notifications',
-  forceRebalance: '/api/strategies/force-rebalance'
+  forceRebalance: '/api/strategies/force-rebalance',
+  forceCloseAll: '/api/strategies/force-close-all'
 }
 
 /**
@@ -244,6 +245,18 @@ export function getStrategyNotifications (params = {}) {
 export function forceRebalanceStrategy (id) {
   return request({
     url: api.forceRebalance,
+    method: 'post',
+    params: { id }
+  })
+}
+
+/**
+ * 手动平仓（关闭策略所有持仓）
+ * @param {number} id - 策略ID
+ */
+export function forceCloseAllStrategy (id) {
+  return request({
+    url: api.forceCloseAll,
     method: 'post',
     params: { id }
   })

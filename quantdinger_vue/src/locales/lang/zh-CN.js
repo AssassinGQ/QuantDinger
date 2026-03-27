@@ -1188,6 +1188,7 @@ const locale = {
   'trading-assistant.startStrategy': '启动策略',
   'trading-assistant.stopStrategy': '停止策略',
   'trading-assistant.rebalanceStrategy': '重算权重',
+  'trading-assistant.forceCloseAll': '手动平仓',
   'trading-assistant.editStrategy': '编辑策略',
   'trading-assistant.deleteStrategy': '删除策略',
   'trading-assistant.startAll': '全部启动',
