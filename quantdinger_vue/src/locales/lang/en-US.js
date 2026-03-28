@@ -3107,6 +3107,7 @@ const locale = {
   'broker.col.winningTrades': 'Wins',
   'broker.col.losingTrades': 'Losses',
   'broker.col.winRate': 'Win Rate',
+  'broker.col.profitFactor': 'Profit Factor',
   'broker.viewError': 'View Error',
   'broker.signal.openLong': 'Open Long',
   'broker.signal.openShort': 'Open Short',
