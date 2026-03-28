@@ -2930,10 +2930,20 @@ export default {
             })
           }
         } else {
-          // 如果找不到，仍然设置值，但可能显示为ID
+          // 指标不在当前用户列表中（如跨用户迁移的策略），用 indicator_config 构造临时选项
+          const fallbackName = strategy.indicator_config.indicator_name || `Indicator #${targetId}`
+          const fallbackIndicator = {
+            id: targetId,
+            name: fallbackName,
+            code: strategy.indicator_config.indicator_code || '',
+            type: 'imported'
+          }
+          this.availableIndicators.push(fallbackIndicator)
+          const finalId = String(targetId)
           this.form.setFieldsValue({
-            indicator_id: String(targetId)
+            indicator_id: finalId
           })
+          await this.handleIndicatorChange(finalId)
         }
       }
 

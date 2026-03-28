@@ -799,6 +799,8 @@ class StrategyService:
         exchange_config = payload.get('exchange_config') if payload.get('exchange_config') is not None else (existing.get('exchange_config') or {})
         ai_model_config = payload.get('ai_model_config') if payload.get('ai_model_config') is not None else (existing.get('ai_model_config') or {})
 
+        display_group = (payload.get('display_group') or '').strip() or existing.get('display_group') or 'ungrouped'
+
         # Handle cross-sectional strategy config updates
         if payload.get('cs_strategy_type') is not None:
             trading_config['strategy_type'] = payload.get('cs_strategy_type')
@@ -839,6 +841,7 @@ class StrategyService:
                     indicator_config = ?,
                     trading_config = ?,
                     ai_model_config = ?,
+                    display_group = ?,
                     updated_at = NOW()
                 WHERE id = ?
                 """,
@@ -856,6 +859,7 @@ class StrategyService:
                     self._dump_json_or_encrypt(indicator_config, encrypt=False),
                     self._dump_json_or_encrypt(trading_config, encrypt=False),
                     self._dump_json_or_encrypt(ai_model_config, encrypt=False),
+                    display_group,
                     strategy_id
                 )
             )
