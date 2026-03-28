@@ -478,7 +478,7 @@ def ibkr_dashboard():
                     s.strategy_name,
                     s.initial_capital,
                     COUNT(*) as total_trades,
-                    SUM(t.value) as total_value,
+                    s.initial_capital as total_value,
                     SUM(t.commission) as total_commission,
                     SUM(t.profit) as total_profit,
                     SUM(CASE WHEN t.profit > 0 THEN 1 ELSE 0 END) as winning_trades,
