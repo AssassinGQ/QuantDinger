@@ -4,13 +4,25 @@
 
 set -e
 CONTAINER="${CONTAINER:-quantdinger-backend}"
+UBUNTU_CONTAINER="${UBUNTU_CONTAINER:-ubuntu-1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 echo "Container: $CONTAINER"
+echo "Ubuntu Container: $UBUNTU_CONTAINER"
 echo "Project root: $ROOT"
 
-# 检查容器在运行
+# 检查 ubuntu-1 容器在运行
+if ! docker ps --format '{{.Names}}' | grep -q "^${UBUNTU_CONTAINER}$"; then
+  echo "Error: container '$UBUNTU_CONTAINER' is not running."
+  exit 1
+fi
+
+# 在 ubuntu-1 容器中拉取最新代码
+echo "Pulling latest code in $UBUNTU_CONTAINER..."
+docker exec "$UBUNTU_CONTAINER" bash -c "cd /home/workspace/ws/QuantDinger/ && git pull --rebase"
+
+# 检查 backend 容器在运行
 if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
   echo "Error: container '$CONTAINER' is not running."
   exit 1
