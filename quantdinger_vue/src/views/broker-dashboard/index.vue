@@ -502,10 +502,10 @@ export default {
         { title: this.$t('broker.col.totalValue'), dataIndex: 'total_value', scopedSlots: { customRender: 'total_value' }, width: 130, align: 'right' },
         { title: this.$t('broker.col.totalCommission'), dataIndex: 'total_commission', scopedSlots: { customRender: 'commission' }, width: 110, align: 'right' },
         { title: this.$t('broker.col.profit'), dataIndex: 'total_profit', scopedSlots: { customRender: 'profit' }, width: 120, align: 'right' },
+        { title: this.$t('broker.col.profitRate'), dataIndex: 'profit_rate', width: 100, align: 'right' },
         { title: this.$t('broker.col.winningTrades'), dataIndex: 'winning_trades', width: 100, align: 'right' },
         { title: this.$t('broker.col.losingTrades'), dataIndex: 'losing_trades', width: 100, align: 'right' },
-        { title: this.$t('broker.col.winRate'), dataIndex: 'win_rate', scopedSlots: { customRender: 'win_rate' }, width: 100, align: 'right' },
-        { title: this.$t('broker.col.profitFactor'), dataIndex: 'profit_factor', width: 100, align: 'right' }
+        { title: this.$t('broker.col.winRate'), dataIndex: 'win_rate', scopedSlots: { customRender: 'win_rate' }, width: 100, align: 'right' }
       ]
     },
     filteredExecutions () {

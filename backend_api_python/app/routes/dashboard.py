@@ -253,7 +253,7 @@ def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[
             "strategy_name": sid_to_name.get(sid, f"Strategy_{sid}"),
             "total_trades": stats["total_trades"],
             "win_rate": stats["win_rate"],
-            "profit_factor": stats["profit_factor"],
+            "profit_rate": stats["profit_factor"],
             "total_pnl": round(total_pnl, 2),
             "roi": round(roi, 2),
             "max_drawdown": stats["max_drawdown"],

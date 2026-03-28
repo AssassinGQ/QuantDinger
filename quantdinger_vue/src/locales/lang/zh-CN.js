@@ -2915,7 +2915,7 @@ const locale = {
   'broker.col.winningTrades': '盈利次数',
   'broker.col.losingTrades': '亏损次数',
   'broker.col.winRate': '胜率',
-  'broker.col.profitFactor': '盈亏比',
+  'broker.col.profitRate': '盈亏率',
   'broker.viewError': '查看错误',
   'broker.signal.openLong': '开多',
   'broker.signal.openShort': '开空',
