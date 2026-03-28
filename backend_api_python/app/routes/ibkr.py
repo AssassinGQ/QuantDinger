@@ -476,6 +476,7 @@ def ibkr_dashboard():
                 SELECT 
                     t.strategy_id,
                     s.strategy_name,
+                    s.initial_capital,
                     COUNT(*) as total_trades,
                     SUM(t.value) as total_value,
                     SUM(t.commission) as total_commission,
@@ -486,7 +487,7 @@ def ibkr_dashboard():
                 LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
                 WHERE t.user_id = ?
                   AND s.market_category IN ('USStock', 'HShare')
-                GROUP BY t.strategy_id, s.strategy_name
+                GROUP BY t.strategy_id, s.strategy_name, s.initial_capital
                 ORDER BY total_profit DESC
                 """,
                 (user_id,),
@@ -534,13 +535,17 @@ def ibkr_dashboard():
         for row in strategy_rows:
             total_trades = row.get("total_trades") or 0
             winning_trades = row.get("winning_trades") or 0
+            total_profit = float(row.get("total_profit") or 0)
+            initial_capital = float(row.get("initial_capital") or 0)
+            profit_rate = round(total_profit / initial_capital * 100, 2) if initial_capital > 0 else 0
             strategy_pnl.append({
                 "strategy_id": row.get("strategy_id"),
                 "strategy_name": row.get("strategy_name") or f"Strategy_{row.get('strategy_id')}",
                 "total_trades": total_trades,
                 "total_value": round(float(row.get("total_value") or 0), 2),
                 "total_commission": round(float(row.get("total_commission") or 0), 2),
-                "total_profit": round(float(row.get("total_profit") or 0), 2),
+                "total_profit": round(total_profit, 2),
+                "profit_rate": profit_rate,
                 "winning_trades": winning_trades,
                 "losing_trades": row.get("losing_trades") or 0,
                 "win_rate": round(winning_trades / total_trades * 100, 2) if total_trades > 0 else 0,
