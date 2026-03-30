@@ -173,7 +173,7 @@ def get_runner(client):
 def _create_ibkr_client(exchange_config: Dict[str, Any]):
     """Create or retrieve IBKR client (BaseStatefulClient).
 
-    Uses the global singleton when no strategy-level host/port is specified.
+    根据 ibkr_mode 选择对应的全局单例。
     """
     try:
         from app.services.live_trading.ibkr_trading.client import IBKRClient, IBKRConfig, get_ibkr_client
@@ -182,7 +182,8 @@ def _create_ibkr_client(exchange_config: Dict[str, Any]):
 
     has_strategy_level_config = exchange_config.get("ibkr_host") or exchange_config.get("ibkr_port")
     if not has_strategy_level_config:
-        return get_ibkr_client()
+        mode = exchange_config.get("ibkr_mode", "paper")
+        return get_ibkr_client(mode=mode)
 
     config = IBKRConfig(
         host=str(exchange_config.get("ibkr_host") or "127.0.0.1").strip(),

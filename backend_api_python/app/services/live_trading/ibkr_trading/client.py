@@ -55,7 +55,15 @@ class IBKRConfig:
     timeout: float = 20.0
 
     @classmethod
-    def from_env(cls) -> "IBKRConfig":
+    def from_env(cls, mode: str = "paper") -> "IBKRConfig":
+        if mode == "live":
+            return cls(
+                host=os.environ.get("IBKR_LIVE_HOST", "127.0.0.1"),
+                port=int(os.environ.get("IBKR_LIVE_PORT", "4001")),
+                client_id=int(os.environ.get("IBKR_LIVE_CLIENT_ID", "1")),
+                account=os.environ.get("IBKR_LIVE_ACCOUNT", ""),
+                readonly=False,
+            )
         return cls(
             host=os.environ.get("IBKR_HOST", "127.0.0.1"),
             port=int(os.environ.get("IBKR_PORT", "7497")),
@@ -1238,20 +1246,31 @@ class IBKRClient(BaseStatefulClient):
 
 # ── Global singleton ──────────────────────────────────────────────
 
-_global_client: Optional[IBKRClient] = None
-_global_lock = threading.Lock()
+_global_paper_client: Optional[IBKRClient] = None
+_global_live_client: Optional[IBKRClient] = None
+_paper_lock = threading.Lock()
+_live_lock = threading.Lock()
 
 
-def get_ibkr_client(config: Optional[IBKRConfig] = None) -> IBKRClient:
-    global _global_client
+def get_ibkr_client(config: Optional[IBKRConfig] = None, mode: str = "paper") -> IBKRClient:
+    global _global_paper_client, _global_live_client
 
-    with _global_lock:
-        if _global_client is None:
-            cfg = config or IBKRConfig.from_env()
-            _global_client = IBKRClient(cfg)
-        if not _global_client.connected:
-            _global_client.connect()
-        return _global_client
+    if mode == "live":
+        with _live_lock:
+            if _global_live_client is None:
+                cfg = config or IBKRConfig.from_env("live")
+                _global_live_client = IBKRClient(cfg)
+            if not _global_live_client.connected:
+                _global_live_client.connect()
+            return _global_live_client
+    else:
+        with _paper_lock:
+            if _global_paper_client is None:
+                cfg = config or IBKRConfig.from_env("paper")
+                _global_paper_client = IBKRClient(cfg)
+            if not _global_paper_client.connected:
+                _global_paper_client.connect()
+            return _global_paper_client
 
 
 def reset_ibkr_client():
