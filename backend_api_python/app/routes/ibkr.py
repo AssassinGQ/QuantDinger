@@ -355,7 +355,12 @@ def ibkr_dashboard():
     recent trades and execution records.
 
     GET /api/ibkr/dashboard
+    Query params:
+        broker_id: 'ibkr-paper' or 'ibkr-live' (default: ibkr-paper)
     """
+    broker_id = request.args.get('broker_id', 'ibkr-paper')
+    mode = parse_ibkr_mode(broker_id)
+
     data: Dict[str, Any] = {
         "connected": False,
         "connection": {},
@@ -372,7 +377,7 @@ def ibkr_dashboard():
     client = None
     is_connected = False
     try:
-        client = get_ibkr_client()
+        client = get_ibkr_client(mode=mode)
         is_connected = client.connected
         data["connected"] = is_connected
         data["connection"] = client.get_connection_status()

@@ -3947,8 +3947,10 @@ export default {
         // IBKR uses backend-managed connection (env vars)
         if (this.isIBKRMarket) {
           try {
-            // Call IBKR connect API (no params - uses backend env config)
-            const res = await this.$http.post('/api/ibkr/connect', {})
+            // Call IBKR connect API with broker_id
+            const res = await this.$http.post('/api/ibkr/connect', {
+              broker_id: this.currentBrokerId || 'ibkr-paper'
+            })
 
             // Note: request.js interceptor returns response.data directly, so res is the JSON object
             if (res && res.success) {
