@@ -138,21 +138,6 @@ def mark_order_processing(order_id: int) -> bool:
         return False
 
 
-def update_order_gateway_mode(order_id: int, gateway_mode: str) -> None:
-    """Set gateway_mode on a pending_order so dashboard queries filter correctly."""
-    try:
-        with get_db_connection() as db:
-            cur = db.cursor()
-            cur.execute(
-                "UPDATE pending_orders SET gateway_mode = %s WHERE id = %s",
-                (str(gateway_mode), int(order_id)),
-            )
-            db.commit()
-            cur.close()
-    except Exception as e:
-        logger.warning("update_order_gateway_mode failed: id=%s, err=%s", order_id, e)
-
-
 def mark_order_sent(
     order_id: int,
     note: str = "",
@@ -325,7 +310,6 @@ def record_trade(
     commission_ccy: str = "",
     profit: Optional[float] = None,
     user_id: int = None,
-    gateway_mode: str = "paper",
 ) -> None:
     value = float(amount or 0.0) * float(price or 0.0)
     if user_id is None:
@@ -335,9 +319,9 @@ def record_trade(
         cur.execute(
             """
             INSERT INTO qd_strategy_trades
-            (user_id, strategy_id, symbol, type, price, amount, value, commission, commission_ccy, profit, gateway_mode, created_at)
+            (user_id, strategy_id, symbol, type, price, amount, value, commission, commission_ccy, profit, created_at)
             VALUES
-            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """,
             (
                 int(user_id),
@@ -350,7 +334,6 @@ def record_trade(
                 float(commission or 0.0),
                 str(commission_ccy or ""),
                 profit,
-                str(gateway_mode),
             ),
         )
         db.commit()

@@ -30,6 +30,17 @@ def parse_ibkr_mode(broker_id: str = None) -> str:
     return 'paper'
 
 
+def _broker_id_to_exchange_ids(broker_id: str) -> List[str]:
+    """Map broker_id to the set of exchange_ids that belong to it.
+
+    ibkr-paper matches both 'ibkr-paper' and legacy 'ibkr'.
+    ibkr-live matches only 'ibkr-live'.
+    """
+    if broker_id == 'ibkr-live':
+        return ['ibkr-live']
+    return ['ibkr-paper', 'ibkr']
+
+
 # ==================== Connection Management ====================
 
 @ibkr_bp.route('/status', methods=['GET'])
@@ -374,6 +385,7 @@ def ibkr_dashboard():
     """
     broker_id = request.args.get('broker_id', 'ibkr-paper')
     mode = parse_ibkr_mode(broker_id)
+    exchange_ids = _broker_id_to_exchange_ids(broker_id)
 
     data: Dict[str, Any] = {
         "connected": False,
@@ -475,26 +487,35 @@ def ibkr_dashboard():
         except Exception as e:
             logger.warning("IBKR open orders failed: %s", e)
 
-    # DB-sourced trade history
+    # DB-sourced trade history — filter by strategy exchange_id instead of gateway_mode
+    _eid_placeholders = ','.join(['%s'] * len(exchange_ids))
+    _strategy_filter_sql = f"""
+        SELECT id FROM qd_strategies_trading
+        WHERE user_id = %s
+          AND market_category IN ('USStock', 'HShare')
+          AND COALESCE(
+            CASE WHEN exchange_config IS NOT NULL AND exchange_config != ''
+                 THEN exchange_config::jsonb->>'exchange_id'
+                 ELSE NULL END,
+            'ibkr'
+          ) IN ({_eid_placeholders})
+    """
+    _strategy_filter_params = tuple([user_id] + exchange_ids)
+
     try:
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
-                """
+                f"""
                 SELECT t.*, s.strategy_name
                 FROM qd_strategy_trades t
                 LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
-                WHERE t.user_id = ?
-                  AND t.gateway_mode = ?
-                  AND s.id IN (
-                    SELECT id FROM qd_strategies_trading
-                    WHERE user_id = ?
-                      AND market_category IN ('USStock', 'HShare')
-                  )
+                WHERE t.user_id = %s
+                  AND t.strategy_id IN ({_strategy_filter_sql})
                 ORDER BY t.created_at DESC
                 LIMIT 200
                 """,
-                (user_id, mode, user_id),
+                (user_id,) + _strategy_filter_params,
             )
             trades_raw = cur.fetchall() or []
             cur.close()
@@ -512,26 +533,21 @@ def ibkr_dashboard():
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
-                """
+                f"""
                 SELECT o.*, s.strategy_name
                 FROM pending_orders o
                 LEFT JOIN qd_strategies_trading s ON s.id = o.strategy_id
-                WHERE o.user_id = ?
-                  AND o.gateway_mode = ?
-                  AND s.id IN (
-                    SELECT id FROM qd_strategies_trading
-                    WHERE user_id = ?
-                      AND market_category IN ('USStock', 'HShare')
-                  )
+                WHERE o.user_id = %s
+                  AND o.strategy_id IN ({_strategy_filter_sql})
                 ORDER BY o.id DESC
                 LIMIT 100
                 """,
-                (user_id, mode, user_id),
+                (user_id,) + _strategy_filter_params,
             )
             exec_rows = cur.fetchall() or []
 
             cur.execute(
-                """
+                f"""
                 SELECT 
                     t.strategy_id,
                     s.strategy_name,
@@ -544,13 +560,12 @@ def ibkr_dashboard():
                     SUM(CASE WHEN t.profit < 0 THEN 1 ELSE 0 END) as losing_trades
                 FROM qd_strategy_trades t
                 LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
-                WHERE t.user_id = ?
-                  AND t.gateway_mode = ?
-                  AND s.market_category IN ('USStock', 'HShare')
+                WHERE t.user_id = %s
+                  AND t.strategy_id IN ({_strategy_filter_sql})
                 GROUP BY t.strategy_id, s.strategy_name, s.initial_capital
                 ORDER BY total_profit DESC
                 """,
-                (user_id, mode),
+                (user_id,) + _strategy_filter_params,
             )
             strategy_rows = cur.fetchall() or []
             cur.close()

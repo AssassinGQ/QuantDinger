@@ -800,7 +800,6 @@ class IBKRClient(BaseStatefulClient):
                     commission=0.0,
                     commission_ccy="",
                     profit=profit,
-                    gateway_mode=self.mode,
                 )
             except Exception as e:
                 logger.warning("[IBKR-Fill] record_trade/position failed: %s", e)

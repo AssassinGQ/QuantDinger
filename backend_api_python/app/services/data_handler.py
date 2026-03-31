@@ -535,7 +535,6 @@ class DataHandler:
         attempts: int,
         max_attempts: int,
         payload_json: str,
-        gateway_mode: str = "paper",
     ) -> Optional[int]:
         """插入 pending_order，返回 id"""
         return self._execute_query(
@@ -543,8 +542,8 @@ class DataHandler:
             INSERT INTO pending_orders
             (user_id, strategy_id, symbol, signal_type, signal_ts, market_type, order_type, amount, price,
              execution_mode, status, priority, attempts, max_attempts, last_error, payload_json,
-             gateway_mode, created_at, updated_at, processed_at, sent_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NULL, NULL)
+             created_at, updated_at, processed_at, sent_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NULL, NULL)
             """,
             (
                 user_id,
@@ -563,7 +562,6 @@ class DataHandler:
                 max_attempts,
                 "",
                 payload_json,
-                str(gateway_mode),
             ),
         )
 
