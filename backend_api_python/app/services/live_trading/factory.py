@@ -134,12 +134,8 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
         )
 
     # Traditional brokers (IBKR for US/HK stocks only)
-    # Support ibkr-live / ibkr-paper as exchange_id (normalize to ibkr)
-    if exchange_id in ("ibkr", "ibkr-live", "ibkr-paper"):
-        normalized_config = dict(exchange_config)
-        if exchange_id != "ibkr":
-            normalized_config["ibkr_mode"] = "live" if exchange_id == "ibkr-live" else "paper"
-        return _create_ibkr_client(normalized_config)
+    if exchange_id in ("ibkr", "ibkr-paper", "ibkr-live"):
+        return _create_ibkr_client(exchange_config, exchange_id=exchange_id)
 
     # Forex brokers (MT5 for Forex only)
     if exchange_id == "mt5":
@@ -174,22 +170,32 @@ def get_runner(client):
 # ── BaseStatefulClient factories (lazy imports) ──────────────────
 
 
-def _create_ibkr_client(exchange_config: Dict[str, Any]):
+def _parse_ibkr_mode(exchange_id: str, exchange_config: Dict[str, Any]) -> str:
+    """Derive IBKR gateway mode from exchange_id, falling back to ibkr_mode config."""
+    if exchange_id == "ibkr-live":
+        return "live"
+    if exchange_id == "ibkr-paper":
+        return "paper"
+    return exchange_config.get("ibkr_mode", "paper")
+
+
+def _create_ibkr_client(exchange_config: Dict[str, Any], *, exchange_id: str = "ibkr"):
     """Create or retrieve IBKR client (BaseStatefulClient).
 
-    根据 ibkr_mode 选择对应的全局单例。
+    Uses exchange_id (ibkr-paper / ibkr-live) to select the global singleton.
+    Falls back to ibkr_mode config for legacy exchange_id="ibkr".
     """
     try:
         from app.services.live_trading.ibkr_trading.client import IBKRClient, IBKRConfig, get_ibkr_client
     except ImportError as exc:
         raise LiveTradingError("IBKR trading requires ib_insync. Run: pip install ib_insync") from exc
 
+    mode = _parse_ibkr_mode(exchange_id, exchange_config)
+
     has_strategy_level_config = exchange_config.get("ibkr_host") or exchange_config.get("ibkr_port")
     if not has_strategy_level_config:
-        mode = exchange_config.get("ibkr_mode", "paper")
         return get_ibkr_client(mode=mode)
 
-    mode = exchange_config.get("ibkr_mode", "paper")
     config = IBKRConfig(
         host=str(exchange_config.get("ibkr_host") or "127.0.0.1").strip(),
         port=int(exchange_config.get("ibkr_port") or 7497),

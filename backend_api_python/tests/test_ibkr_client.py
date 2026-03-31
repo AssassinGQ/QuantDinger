@@ -85,6 +85,7 @@ def _make_client_with_mock_ib():
     """
     client = IBKRClient.__new__(IBKRClient)
     client.config = IBKRConfig()
+    client.mode = "paper"
     client._ib = MagicMock()
     client._account = "DU123456"
     client._ib.isConnected.return_value = True

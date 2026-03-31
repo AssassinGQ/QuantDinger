@@ -28,6 +28,13 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _infer_gateway_mode(exchange_id: str) -> str:
+    """从 exchange_id 推断 gateway_mode（paper / live）。"""
+    if exchange_id.endswith("-live"):
+        return "live"
+    return "paper"
+
+
 class PendingOrderWorker:
     def __init__(self, poll_interval_sec: float = 1.0, batch_size: int = 50):
         self.poll_interval_sec = float(poll_interval_sec)
@@ -294,6 +301,9 @@ class PendingOrderWorker:
         market_category = str(cfg.get("market_category") or "Crypto").strip()
         live_ctx["market_category"] = market_category
         live_ctx["exchange_id"] = exchange_id
+
+        gateway_mode = _infer_gateway_mode(exchange_id)
+        records.update_order_gateway_mode(order_id, gateway_mode)
 
         if market_category in ("AShare", "Futures"):
             records.mark_order_failed(order_id=order_id, error=f"live_trading_not_supported_for_{market_category.lower()}")

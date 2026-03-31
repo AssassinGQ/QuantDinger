@@ -138,6 +138,21 @@ def mark_order_processing(order_id: int) -> bool:
         return False
 
 
+def update_order_gateway_mode(order_id: int, gateway_mode: str) -> None:
+    """Set gateway_mode on a pending_order so dashboard queries filter correctly."""
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "UPDATE pending_orders SET gateway_mode = %s WHERE id = %s",
+                (str(gateway_mode), int(order_id)),
+            )
+            db.commit()
+            cur.close()
+    except Exception as e:
+        logger.warning("update_order_gateway_mode failed: id=%s, err=%s", order_id, e)
+
+
 def mark_order_sent(
     order_id: int,
     note: str = "",

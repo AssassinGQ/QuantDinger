@@ -21,6 +21,7 @@ def _make_client():
     """Create a minimal IBKRClient for callback testing."""
     client = IBKRClient.__new__(IBKRClient)
     client.config = IBKRConfig()
+    client.mode = "paper"
     client._ib = MagicMock()
     client._account = "DU999"
     client._order_contexts = {}
