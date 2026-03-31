@@ -250,6 +250,7 @@ CREATE TABLE IF NOT EXISTS pending_orders (
     last_error TEXT DEFAULT '',
     payload_json TEXT DEFAULT '',
     dispatch_note TEXT DEFAULT '',
+    gateway_mode VARCHAR(20) DEFAULT 'paper',
     exchange_id VARCHAR(50) DEFAULT '',
     exchange_order_id VARCHAR(100) DEFAULT '',
     exchange_response_json TEXT DEFAULT '',
@@ -265,6 +266,7 @@ CREATE TABLE IF NOT EXISTS pending_orders (
 CREATE INDEX IF NOT EXISTS idx_pending_orders_user_id ON pending_orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_pending_orders_status ON pending_orders(status);
 CREATE INDEX IF NOT EXISTS idx_pending_orders_strategy_id ON pending_orders(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_pending_orders_gateway_mode ON pending_orders(gateway_mode);
 
 -- =============================================================================
 -- 6. Strategy Notifications

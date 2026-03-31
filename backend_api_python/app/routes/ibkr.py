@@ -503,6 +503,7 @@ def ibkr_dashboard():
                 FROM pending_orders o
                 LEFT JOIN qd_strategies_trading s ON s.id = o.strategy_id
                 WHERE o.user_id = ?
+                  AND o.gateway_mode = ?
                   AND s.id IN (
                     SELECT id FROM qd_strategies_trading
                     WHERE user_id = ?
@@ -511,7 +512,7 @@ def ibkr_dashboard():
                 ORDER BY o.id DESC
                 LIMIT 100
                 """,
-                (user_id, user_id),
+                (user_id, mode, user_id),
             )
             exec_rows = cur.fetchall() or []
 
