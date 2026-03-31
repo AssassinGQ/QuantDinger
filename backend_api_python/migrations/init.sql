@@ -218,12 +218,14 @@ CREATE TABLE IF NOT EXISTS qd_strategy_trades (
     commission DECIMAL(20,8) DEFAULT 0,
     commission_ccy VARCHAR(20) DEFAULT '',
     profit DECIMAL(20,8) DEFAULT 0,
+    gateway_mode VARCHAR(20) DEFAULT 'paper',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_trades_user_id ON qd_strategy_trades(user_id);
 CREATE INDEX IF NOT EXISTS idx_trades_strategy_id ON qd_strategy_trades(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_trades_created_at ON qd_strategy_trades(created_at);
+CREATE INDEX IF NOT EXISTS idx_trades_gateway_mode ON qd_strategy_trades(gateway_mode);
 
 -- =============================================================================
 -- 5. Pending Orders Queue
