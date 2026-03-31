@@ -526,6 +526,13 @@ def ibkr_save_pnl(
     realized_pnl: float,
 ) -> bool:
     _ensure_tables()
+    MAX_VALUE = 1e15
+    position = max(-MAX_VALUE, min(MAX_VALUE, float(position)))
+    avg_cost = max(0, min(MAX_VALUE, float(avg_cost)))
+    daily_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(daily_pnl)))
+    unrealized_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(unrealized_pnl)))
+    realized_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(realized_pnl)))
+    value = max(-MAX_VALUE, min(MAX_VALUE, float(value)))
     try:
         with get_db_connection() as db:
             cur = db.cursor()
@@ -580,8 +587,8 @@ def ibkr_save_position(
                     value = COALESCE(NULLIF(EXCLUDED.value, 0), qd_ibkr_pnl_single.value),
                     updated_at = NOW()
                 """,
-                (str(account), int(con_id), str(symbol), float(position), float(avg_cost),
-                 float(daily_pnl), float(unrealized_pnl), float(realized_pnl), float(value)),
+                (str(account), int(con_id), str(symbol), position, avg_cost,
+                 daily_pnl, unrealized_pnl, realized_pnl, value),
             )
             db.commit()
             cur.close()
