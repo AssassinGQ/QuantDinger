@@ -310,6 +310,7 @@ def record_trade(
     commission_ccy: str = "",
     profit: Optional[float] = None,
     user_id: int = None,
+    gateway_mode: str = "paper",
 ) -> None:
     value = float(amount or 0.0) * float(price or 0.0)
     if user_id is None:
@@ -319,9 +320,9 @@ def record_trade(
         cur.execute(
             """
             INSERT INTO qd_strategy_trades
-            (user_id, strategy_id, symbol, type, price, amount, value, commission, commission_ccy, profit, created_at)
+            (user_id, strategy_id, symbol, type, price, amount, value, commission, commission_ccy, profit, gateway_mode, created_at)
             VALUES
-            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """,
             (
                 int(user_id),
@@ -334,6 +335,7 @@ def record_trade(
                 float(commission or 0.0),
                 str(commission_ccy or ""),
                 profit,
+                str(gateway_mode),
             ),
         )
         db.commit()

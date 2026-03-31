@@ -135,8 +135,9 @@ class IBKRClient(BaseStatefulClient):
             return "DAY"
         return "IOC"
 
-    def __init__(self, config: Optional[IBKRConfig] = None):
+    def __init__(self, config: Optional[IBKRConfig] = None, mode: str = "paper"):
         self.config = config or IBKRConfig()
+        self.mode = mode
         self._ib = None
         self._account = ""
 
@@ -799,6 +800,7 @@ class IBKRClient(BaseStatefulClient):
                     commission=0.0,
                     commission_ccy="",
                     profit=profit,
+                    gateway_mode=self.mode,
                 )
             except Exception as e:
                 logger.warning("[IBKR-Fill] record_trade/position failed: %s", e)
@@ -1259,7 +1261,7 @@ def get_ibkr_client(config: Optional[IBKRConfig] = None, mode: str = "paper") ->
         with _live_lock:
             if _global_live_client is None:
                 cfg = config or IBKRConfig.from_env("live")
-                _global_live_client = IBKRClient(cfg)
+                _global_live_client = IBKRClient(cfg, mode="live")
             if not _global_live_client.connected:
                 _global_live_client.connect()
             return _global_live_client
@@ -1267,7 +1269,7 @@ def get_ibkr_client(config: Optional[IBKRConfig] = None, mode: str = "paper") ->
         with _paper_lock:
             if _global_paper_client is None:
                 cfg = config or IBKRConfig.from_env("paper")
-                _global_paper_client = IBKRClient(cfg)
+                _global_paper_client = IBKRClient(cfg, mode="paper")
             if not _global_paper_client.connected:
                 _global_paper_client.connect()
             return _global_paper_client

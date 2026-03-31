@@ -471,6 +471,7 @@ def ibkr_dashboard():
                 FROM qd_strategy_trades t
                 LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
                 WHERE t.user_id = ?
+                  AND t.gateway_mode = ?
                   AND s.id IN (
                     SELECT id FROM qd_strategies_trading
                     WHERE user_id = ?
@@ -479,7 +480,7 @@ def ibkr_dashboard():
                 ORDER BY t.created_at DESC
                 LIMIT 200
                 """,
-                (user_id, user_id),
+                (user_id, mode, user_id),
             )
             trades_raw = cur.fetchall() or []
             cur.close()
@@ -529,11 +530,12 @@ def ibkr_dashboard():
                 FROM qd_strategy_trades t
                 LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
                 WHERE t.user_id = ?
+                  AND t.gateway_mode = ?
                   AND s.market_category IN ('USStock', 'HShare')
                 GROUP BY t.strategy_id, s.strategy_name, s.initial_capital
                 ORDER BY total_profit DESC
                 """,
-                (user_id,),
+                (user_id, mode),
             )
             strategy_rows = cur.fetchall() or []
             cur.close()
