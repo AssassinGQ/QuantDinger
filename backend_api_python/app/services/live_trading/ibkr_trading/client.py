@@ -1273,11 +1273,30 @@ def get_ibkr_client(config: Optional[IBKRConfig] = None, mode: str = "paper") ->
             return _global_paper_client
 
 
-def reset_ibkr_client():
-    global _global_client
+def reset_ibkr_client(mode: str = None):
+    """重置指定的 Gateway 连接，或重置所有"""
+    global _global_paper_client, _global_live_client
 
-    with _global_lock:
-        if _global_client is not None:
-            _global_client.disconnect()
-            _global_client.shutdown()
-            _global_client = None
+    if mode == "live":
+        with _live_lock:
+            if _global_live_client is not None:
+                _global_live_client.disconnect()
+                _global_live_client.shutdown()
+                _global_live_client = None
+    elif mode == "paper":
+        with _paper_lock:
+            if _global_paper_client is not None:
+                _global_paper_client.disconnect()
+                _global_paper_client.shutdown()
+                _global_paper_client = None
+    else:
+        with _paper_lock:
+            if _global_paper_client is not None:
+                _global_paper_client.disconnect()
+                _global_paper_client.shutdown()
+                _global_paper_client = None
+        with _live_lock:
+            if _global_live_client is not None:
+                _global_live_client.disconnect()
+                _global_live_client.shutdown()
+                _global_live_client = None

@@ -1344,7 +1344,7 @@
                   <a-form-item :label="$t('trading-assistant.form.broker')">
                     <a-select
                       v-decorator="['broker_id', {
-                        initialValue: 'ibkr',
+                        initialValue: 'ibkr-paper',
                         rules: [{ required: true, message: $t('trading-assistant.validation.brokerRequired') }]
                       }]"
                       :placeholder="$t('trading-assistant.placeholders.selectBroker')"
@@ -1357,7 +1357,7 @@
                   </a-form-item>
 
                   <!-- IBKR specific configuration (connection managed by backend env) -->
-                  <template v-if="currentBrokerId === 'ibkr'">
+                  <template v-if="isIBKRBroker">
                     <a-alert
                       type="info"
                       show-icon
@@ -1707,7 +1707,8 @@ const EXCHANGE_OPTIONS = [
 
 // Traditional broker options (US/HK stocks) - extensible for future brokers
 const BROKER_OPTIONS = [
-  { value: 'ibkr', labelKey: 'ibkr', name: 'Interactive Brokers' }
+  { value: 'ibkr-paper', labelKey: 'ibkr-paper', name: 'IBKR Paper' },
+  { value: 'ibkr-live', labelKey: 'ibkr-live', name: 'IBKR Live' }
   // Future brokers can be added here:
   // { value: 'td', labelKey: 'td', name: 'TD Ameritrade' },
   // { value: 'schwab', labelKey: 'schwab', name: 'Charles Schwab' },
@@ -1741,6 +1742,10 @@ export default {
     // Check if current market uses IBKR (US Stock / HK Stock)
     isIBKRMarket () {
       return ['USStock', 'HShare'].includes(this.selectedMarketCategory)
+    },
+    // Check if current broker is IBKR (supports both ibkr-paper and ibkr-live)
+    isIBKRBroker () {
+      return this.currentBrokerId && this.currentBrokerId.startsWith('ibkr-')
     },
     // Check if current market uses MT5 (Forex)
     isMT5Market () {

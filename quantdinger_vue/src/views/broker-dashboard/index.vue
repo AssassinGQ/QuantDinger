@@ -4,11 +4,41 @@
     <!-- 连接状态横幅 -->
     <div class="connection-bar" :class="connected ? 'connected' : 'disconnected'">
       <div class="conn-left">
+        <!-- Gateway 选择 -->
+        <a-select
+          v-model="currentGateway"
+          size="small"
+          style="width: 120px; margin-right: 12px;"
+          @change="handleGatewayChange">
+          <a-select-option value="ibkr-paper">
+            <span>IBKR Paper</span>
+          </a-select-option>
+          <a-select-option value="ibkr-live">
+            <span>IBKR Live</span>
+          </a-select-option>
+        </a-select>
+
         <span class="conn-dot"></span>
         <span class="conn-label">
           {{ connected ? $t('broker.connected') : $t('broker.disconnected') }}
         </span>
         <span v-if="accountId" class="conn-account">{{ accountId }}</span>
+
+        <!-- 显示两个 Gateway 的连接状态 -->
+        <a-tag
+          v-if="gatewayStatus.paper && gatewayStatus.paper.connected"
+          color="green"
+          size="small"
+          style="margin-left: 8px;">
+          Paper ✓
+        </a-tag>
+        <a-tag
+          v-if="gatewayStatus.live && gatewayStatus.live.connected"
+          color="blue"
+          size="small"
+          style="margin-left: 4px;">
+          Live ✓
+        </a-tag>
       </div>
       <div class="conn-right">
         <a-button
@@ -413,7 +443,7 @@
 </template>
 
 <script>
-import { getIbkrDashboard, connectIbkr, disconnectIbkr } from '@/api/ibkr'
+import { getIbkrDashboard, getIbkrStatusAll, connectIbkr, disconnectIbkr } from '@/api/ibkr'
 import { mapState } from 'vuex'
 
 export default {
@@ -433,7 +463,12 @@ export default {
       executions: [],
       executionFilter: 'all',
       performance: {},
-      refreshTimer: null
+      refreshTimer: null,
+      currentGateway: 'ibkr-paper',
+      gatewayStatus: {
+        paper: { connected: false },
+        live: { connected: false }
+      }
     }
   },
   computed: {
@@ -542,7 +577,18 @@ export default {
     async fetchData () {
       this.loading = true
       try {
-        const res = await getIbkrDashboard()
+        // 先获取所有 Gateway 状态
+        try {
+          const statusRes = await getIbkrStatusAll()
+          if (statusRes.code === 1 && statusRes.data) {
+            this.gatewayStatus = statusRes.data
+          }
+        } catch (e) {
+          console.error('Failed to fetch gateway status:', e)
+        }
+
+        // 获取当前选中的 Gateway 数据
+        const res = await getIbkrDashboard(this.currentGateway)
         if (res.code === 1 && res.data) {
           const d = res.data
           const wasConnected = this.connected
@@ -574,7 +620,7 @@ export default {
     async handleConnect () {
       this.connecting = true
       try {
-        await connectIbkr({})
+        await connectIbkr({ broker_id: this.currentGateway })
         this.$message.success(this.$t('broker.connectSuccess'))
         await this.fetchData()
       } catch (e) {
@@ -585,15 +631,21 @@ export default {
     },
     async handleDisconnect () {
       try {
-        await disconnectIbkr()
+        const mode = this.currentGateway === 'ibkr-live' ? 'live' : 'paper'
+        await disconnectIbkr(mode)
         this.$message.info(this.$t('broker.disconnectSuccess'))
         this.connected = false
         this.positions = []
         this.openOrders = []
         this.accountItems = {}
+        await this.fetchData()
       } catch (e) {
         this.$message.error(this.$t('broker.disconnectFailed'))
       }
+    },
+    handleGatewayChange (gateway) {
+      this.currentGateway = gateway
+      this.fetchData()
     },
     getAccountValue (tag) {
       const item = this.accountItems[tag]

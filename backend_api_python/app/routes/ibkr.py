@@ -19,13 +19,26 @@ logger = get_logger(__name__)
 ibkr_bp = Blueprint('ibkr', __name__)
 
 
+def parse_ibkr_mode(broker_id: str = None) -> str:
+    """从 broker_id 解析 IBKR Gateway 模式"""
+    if not broker_id:
+        return 'paper'
+    if broker_id.endswith('-live'):
+        return 'live'
+    if broker_id.endswith('-paper'):
+        return 'paper'
+    return 'paper'
+
+
 # ==================== Connection Management ====================
 
 @ibkr_bp.route('/status', methods=['GET'])
 def get_status():
-    """GET /api/ibkr/status"""
+    """GET /api/ibkr/status?broker_id=ibkr-paper|ibkr-live"""
     try:
-        client = get_ibkr_client()
+        broker_id = request.args.get('broker_id')
+        mode = parse_ibkr_mode(broker_id)
+        client = get_ibkr_client(mode=mode)
         return jsonify({
             "success": True,
             "data": client.get_connection_status()
@@ -35,15 +48,36 @@ def get_status():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@ibkr_bp.route('/status-all', methods=['GET'])
+def get_status_all():
+    """GET /api/ibkr/status-all - 返回所有 Gateway 的状态"""
+    try:
+        paper_client = get_ibkr_client(mode='paper')
+        live_client = get_ibkr_client(mode='live')
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "paper": paper_client.get_connection_status(),
+                "live": live_client.get_connection_status()
+            }
+        })
+    except Exception as e:
+        logger.error(f"Get all status failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @ibkr_bp.route('/connect', methods=['POST'])
 def connect():
     """POST /api/ibkr/connect"""
     try:
         data = request.get_json() or {}
+        broker_id = data.get('broker_id', 'ibkr-paper')
+        mode = parse_ibkr_mode(broker_id)
 
         has_custom = data.get('host') or data.get('port')
         if has_custom:
-            reset_ibkr_client()
+            reset_ibkr_client(mode=mode)
             config = IBKRConfig(
                 host=data.get('host', '127.0.0.1'),
                 port=int(data.get('port', 7497)),
@@ -51,9 +85,9 @@ def connect():
                 account=data.get('account', ''),
                 readonly=data.get('readonly', False),
             )
-            client = get_ibkr_client(config)
+            client = get_ibkr_client(config, mode=mode)
         else:
-            client = get_ibkr_client()
+            client = get_ibkr_client(mode=mode)
 
         if not client.connected:
             success = client.connect()
@@ -63,7 +97,7 @@ def connect():
         if success:
             return jsonify({
                 "success": True,
-                "message": "Connected successfully",
+                "message": f"Connected to {mode} Gateway successfully",
                 "data": client.get_connection_status()
             })
         else:
@@ -86,7 +120,11 @@ def connect():
 def disconnect():
     """POST /api/ibkr/disconnect"""
     try:
-        reset_ibkr_client()
+        data = request.get_json() or {}
+        mode = data.get('mode')
+        if not mode and data.get('broker_id'):
+            mode = parse_ibkr_mode(data.get('broker_id'))
+        reset_ibkr_client(mode=mode)
         return jsonify({"success": True, "message": "Disconnected"})
     except Exception as e:
         logger.error(f"Disconnect failed: {e}")
