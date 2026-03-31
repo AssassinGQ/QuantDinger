@@ -134,8 +134,12 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
         )
 
     # Traditional brokers (IBKR for US/HK stocks only)
-    if exchange_id == "ibkr":
-        return _create_ibkr_client(exchange_config)
+    # Support ibkr-live / ibkr-paper as exchange_id (normalize to ibkr)
+    if exchange_id in ("ibkr", "ibkr-live", "ibkr-paper"):
+        normalized_config = dict(exchange_config)
+        if exchange_id != "ibkr":
+            normalized_config["ibkr_mode"] = "live" if exchange_id == "ibkr-live" else "paper"
+        return _create_ibkr_client(normalized_config)
 
     # Forex brokers (MT5 for Forex only)
     if exchange_id == "mt5":
