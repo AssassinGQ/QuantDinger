@@ -135,11 +135,13 @@ def disconnect():
 
 @ibkr_bp.route('/account', methods=['GET'])
 def get_account():
-    """GET /api/ibkr/account"""
+    """GET /api/ibkr/account?broker_id=ibkr-paper|ibkr-live"""
     try:
-        client = get_ibkr_client()
+        broker_id = request.args.get('broker_id', 'ibkr-paper')
+        mode = parse_ibkr_mode(broker_id)
+        client = get_ibkr_client(mode=mode)
         if not client.connected:
-            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+            return jsonify({"success": False, "error": f"Not connected to {mode} Gateway"}), 400
 
         return jsonify({"success": True, "data": client.get_account_summary()})
     except Exception as e:
@@ -149,11 +151,13 @@ def get_account():
 
 @ibkr_bp.route('/positions', methods=['GET'])
 def get_positions():
-    """GET /api/ibkr/positions"""
+    """GET /api/ibkr/positions?broker_id=ibkr-paper|ibkr-live"""
     try:
-        client = get_ibkr_client()
+        broker_id = request.args.get('broker_id', 'ibkr-paper')
+        mode = parse_ibkr_mode(broker_id)
+        client = get_ibkr_client(mode=mode)
         if not client.connected:
-            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+            return jsonify({"success": False, "error": f"Not connected to {mode} Gateway"}), 400
 
         return jsonify({"success": True, "data": client.get_positions()})
     except Exception as e:
@@ -163,11 +167,13 @@ def get_positions():
 
 @ibkr_bp.route('/orders', methods=['GET'])
 def get_orders():
-    """GET /api/ibkr/orders"""
+    """GET /api/ibkr/orders?broker_id=ibkr-paper|ibkr-live"""
     try:
-        client = get_ibkr_client()
+        broker_id = request.args.get('broker_id', 'ibkr-paper')
+        mode = parse_ibkr_mode(broker_id)
+        client = get_ibkr_client(mode=mode)
         if not client.connected:
-            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+            return jsonify({"success": False, "error": f"Not connected to {mode} Gateway"}), 400
 
         return jsonify({"success": True, "data": client.get_open_orders()})
     except Exception as e:
@@ -181,11 +187,13 @@ def get_orders():
 def place_order():
     """POST /api/ibkr/order"""
     try:
-        client = get_ibkr_client()
-        if not client.connected:
-            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
-
         data = request.get_json() or {}
+        broker_id = data.get('broker_id', 'ibkr-paper')
+        mode = parse_ibkr_mode(broker_id)
+
+        client = get_ibkr_client(mode=mode)
+        if not client.connected:
+            return jsonify({"success": False, "error": f"Not connected to {mode} Gateway"}), 400
 
         symbol = data.get('symbol')
         side = data.get('side')
@@ -245,9 +253,13 @@ def place_order():
 def cancel_order(order_id: int):
     """DELETE /api/ibkr/order/<order_id>"""
     try:
-        client = get_ibkr_client()
+        data = request.get_json() or {}
+        broker_id = data.get('broker_id', 'ibkr-paper')
+        mode = parse_ibkr_mode(broker_id)
+
+        client = get_ibkr_client(mode=mode)
         if not client.connected:
-            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+            return jsonify({"success": False, "error": f"Not connected to {mode} Gateway"}), 400
 
         success = client.cancel_order(order_id)
 
@@ -265,11 +277,13 @@ def cancel_order(order_id: int):
 
 @ibkr_bp.route('/quote', methods=['GET'])
 def get_quote():
-    """GET /api/ibkr/quote?symbol=AAPL&marketType=USStock"""
+    """GET /api/ibkr/quote?symbol=AAPL&marketType=USStock&broker_id=ibkr-paper|ibkr-live"""
     try:
-        client = get_ibkr_client()
+        broker_id = request.args.get('broker_id', 'ibkr-paper')
+        mode = parse_ibkr_mode(broker_id)
+        client = get_ibkr_client(mode=mode)
         if not client.connected:
-            return jsonify({"success": False, "error": "Not connected to IBKR"}), 400
+            return jsonify({"success": False, "error": f"Not connected to {mode} Gateway"}), 400
 
         symbol = request.args.get('symbol')
         market_type = request.args.get('marketType', 'USStock')

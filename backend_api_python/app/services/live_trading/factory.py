@@ -185,6 +185,7 @@ def _create_ibkr_client(exchange_config: Dict[str, Any]):
         mode = exchange_config.get("ibkr_mode", "paper")
         return get_ibkr_client(mode=mode)
 
+    mode = exchange_config.get("ibkr_mode", "paper")
     config = IBKRConfig(
         host=str(exchange_config.get("ibkr_host") or "127.0.0.1").strip(),
         port=int(exchange_config.get("ibkr_port") or 7497),
@@ -193,7 +194,7 @@ def _create_ibkr_client(exchange_config: Dict[str, Any]):
         readonly=False,
     )
 
-    client = IBKRClient(config)
+    client = IBKRClient(config, mode=mode)
     if not client.connect():
         raise LiveTradingError("Failed to connect to IBKR TWS/Gateway. Please check if it's running.")
     return client
