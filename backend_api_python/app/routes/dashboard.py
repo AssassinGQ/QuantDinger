@@ -116,12 +116,9 @@ def _calc_pnl_percent(entry_price: float, size: float, pnl: float, leverage: flo
 def _compute_performance_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Compute performance statistics from trade history.
-    Returns: {
-        total_trades, winning_trades, losing_trades, win_rate,
-        total_profit, total_loss, profit_factor,
-        avg_win, avg_loss, avg_trade,
-        max_win, max_loss, max_drawdown, max_drawdown_pct
-    }
+    Win rate is calculated using only closed trades (close_*/reduce_* or
+    trades with non-null, non-zero profit) to avoid dilution by open/add
+    entries whose profit is NULL/0.
     """
     total_trades = len(trades)
     if total_trades == 0:
@@ -145,12 +142,20 @@ def _compute_performance_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
         }
 
     profits = [_safe_float(t.get("profit"), 0.0) for t in trades]
-    wins = [p for p in profits if p > 0]
-    losses = [p for p in profits if p < 0]
+
+    closed_trades = [
+        t for t in trades
+        if (t.get("type") or "").startswith(("close_", "reduce_"))
+        or (t.get("profit") is not None and _safe_float(t.get("profit"), 0.0) != 0.0)
+    ]
+    closed_profits = [_safe_float(t.get("profit"), 0.0) for t in closed_trades]
+    wins = [p for p in closed_profits if p > 0]
+    losses = [p for p in closed_profits if p < 0]
 
     winning_trades = len(wins)
     losing_trades = len(losses)
-    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+    closed_count = len(closed_trades)
+    win_rate = (winning_trades / closed_count * 100) if closed_count > 0 else 0.0
 
     total_profit = sum(wins) if wins else 0.0
     total_loss = abs(sum(losses)) if losses else 0.0

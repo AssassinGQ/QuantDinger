@@ -345,12 +345,20 @@ def _compute_ibkr_trade_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
         }
 
     profits = [_safe_float(t.get("profit"), 0.0) for t in trades]
-    wins = [p for p in profits if p > 0]
-    losses = [p for p in profits if p < 0]
+
+    closed_trades = [
+        t for t in trades
+        if (t.get("type") or "").startswith(("close_", "reduce_"))
+        or (t.get("profit") is not None and _safe_float(t.get("profit"), 0.0) != 0.0)
+    ]
+    closed_profits = [_safe_float(t.get("profit"), 0.0) for t in closed_trades]
+    wins = [p for p in closed_profits if p > 0]
+    losses = [p for p in closed_profits if p < 0]
 
     winning = len(wins)
     losing = len(losses)
-    win_rate = (winning / total * 100) if total > 0 else 0.0
+    closed_count = len(closed_trades)
+    win_rate = (winning / closed_count * 100) if closed_count > 0 else 0.0
     total_profit = sum(wins)
     total_loss = abs(sum(losses))
     total_realized_pnl = sum(profits)
@@ -557,7 +565,10 @@ def ibkr_dashboard():
                     SUM(t.commission) as total_commission,
                     SUM(t.profit) as total_profit,
                     SUM(CASE WHEN t.profit > 0 THEN 1 ELSE 0 END) as winning_trades,
-                    SUM(CASE WHEN t.profit < 0 THEN 1 ELSE 0 END) as losing_trades
+                    SUM(CASE WHEN t.profit < 0 THEN 1 ELSE 0 END) as losing_trades,
+                    SUM(CASE WHEN t.type LIKE 'close_%%' OR t.type LIKE 'reduce_%%'
+                             OR (t.profit IS NOT NULL AND t.profit != 0)
+                        THEN 1 ELSE 0 END) as closed_trades
                 FROM qd_strategy_trades t
                 LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
                 WHERE t.user_id = %s
@@ -610,6 +621,7 @@ def ibkr_dashboard():
         for row in strategy_rows:
             total_trades = row.get("total_trades") or 0
             winning_trades = row.get("winning_trades") or 0
+            closed_trades = row.get("closed_trades") or 0
             total_profit = float(row.get("total_profit") or 0)
             initial_capital = float(row.get("initial_capital") or 0)
             profit_rate = round(total_profit / initial_capital * 100, 2) if initial_capital > 0 else 0
@@ -623,7 +635,7 @@ def ibkr_dashboard():
                 "profit_rate": profit_rate,
                 "winning_trades": winning_trades,
                 "losing_trades": row.get("losing_trades") or 0,
-                "win_rate": round(winning_trades / total_trades * 100, 2) if total_trades > 0 else 0,
+                "win_rate": round(winning_trades / closed_trades * 100, 2) if closed_trades > 0 else 0,
             })
         data["strategy_pnl"] = strategy_pnl
 
