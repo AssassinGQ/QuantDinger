@@ -313,12 +313,20 @@ class TestQuantityGuard:
         assert result.success is True
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_hshare_unknown_symbol_accepts_any_integer(self):
+    def test_hshare_unknown_symbol_rejects_non_default_lot(self):
+        client = _make_client_with_mock_ib()
+        result = client.place_market_order("00388", "buy", 7, "HShare")
+        assert result.success is False
+        assert "100" in result.message
+        client._ib.placeOrder.assert_not_called()
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_hshare_unknown_symbol_accepts_default_lot(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=104)
         client._ib.placeOrder.return_value = trade_mock
 
-        result = client.place_market_order("00388", "buy", 7, "HShare")
+        result = client.place_market_order("00388", "buy", 100, "HShare")
         assert result.success is True
 
 
@@ -550,8 +558,8 @@ class TestEventCallbacks:
         assert 45 in client._order_contexts
         assert len(fire_calls) == 0
 
-    def test_on_order_status_cancelled_zero_fills_waits(self):
-        """Cancelled with 0 fills is NOT a rejection — IBKR can recover."""
+    def test_on_order_status_cancelled_zero_fills_rejects(self):
+        """Cancelled with 0 fills is treated as a rejection (e.g. lot-size error)."""
         client = _make_client_with_mock_ib()
         fire_calls = []
         client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
@@ -562,8 +570,8 @@ class TestEventCallbacks:
         trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0, order_id=46)
         client._on_order_status(trade)
 
-        assert 46 in client._order_contexts
-        assert len(fire_calls) == 0
+        assert 46 not in client._order_contexts
+        assert len(fire_calls) == 1
 
 
 # ===========================================================================
@@ -1395,8 +1403,8 @@ class TestOrderContextLifecycle:
         assert 501 not in client._order_contexts
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_context_survives_cancelled_zero_fills(self):
-        """Cancelled with 0 fills doesn't clean up — IBKR may recover."""
+    def test_context_removed_on_cancelled_zero_fills(self):
+        """Cancelled with 0 fills is treated as rejection — context is removed."""
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=502)
         client._ib.placeOrder.return_value = trade_mock
@@ -1406,7 +1414,7 @@ class TestOrderContextLifecycle:
 
         cancel_trade = _make_trade_mock(status="Cancelled", filled=0, avg_price=0, order_id=502)
         client._on_order_status(cancel_trade)
-        assert 502 in client._order_contexts  # still tracked
+        assert 502 not in client._order_contexts
 
 
 # ===========================================================================

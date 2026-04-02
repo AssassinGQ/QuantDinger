@@ -391,6 +391,10 @@ class IBKRClient(BaseStatefulClient):
         elif status == "Cancelled" and filled > 0:
             self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
             self._schedule_context_cleanup(order_id)
+        elif status == "Cancelled" and filled <= 0:
+            error_msgs = [e.message for e in (trade.log or []) if e.message]
+            self._fire_submit(lambda: self._handle_reject(ctx, status, error_msgs), is_blocking=True)
+            self._order_contexts.pop(order_id, None)
         elif status in HARD_TERMINAL:
             error_msgs = [e.message for e in (trade.log or []) if e.message]
             self._fire_submit(lambda: self._handle_reject(ctx, status, error_msgs), is_blocking=True)
@@ -765,6 +769,37 @@ class IBKRClient(BaseStatefulClient):
             logger.warning("Contract qualification failed: %s", e)
             return False
 
+    _lot_size_cache: Dict[int, float] = {}
+
+    async def _align_qty_to_contract(self, contract, quantity: float, symbol: str) -> float:
+        """Query IBKR ContractDetails for sizeIncrement and floor-align quantity."""
+        con_id = getattr(contract, "conId", 0) or 0
+        increment = self._lot_size_cache.get(con_id)
+        if increment is None:
+            try:
+                details_list = await self._ib.reqContractDetailsAsync(contract)
+                if details_list:
+                    d = details_list[0]
+                    increment = float(getattr(d, "sizeIncrement", 0) or 0)
+                    if increment <= 0:
+                        increment = float(getattr(d, "minSize", 0) or 0)
+                    if increment > 0 and con_id:
+                        self._lot_size_cache[con_id] = increment
+            except Exception as e:
+                logger.warning("[IBKR] reqContractDetails failed for %s: %s", symbol, e)
+                increment = None
+
+        if not increment or increment <= 0:
+            return quantity
+
+        aligned = math.floor(quantity / increment) * increment
+        if aligned != quantity:
+            logger.info(
+                "[IBKR] Quantity aligned to contract sizeIncrement: %.2f -> %.0f (increment=%s, symbol=%s)",
+                quantity, aligned, increment, symbol,
+            )
+        return aligned
+
     # ── fire-and-forget order handlers ──────────────────────────────
 
     def _handle_fill(self, ctx: IBKROrderContext, filled: float, avg_price: float):
@@ -970,9 +1005,18 @@ class IBKRClient(BaseStatefulClient):
             if not await self._qualify_contract_async(contract):
                 return LiveOrderResult(success=False, message=f"Invalid contract: {symbol}",
                                    exchange_id=self.engine_id)
+
+            qty = await self._align_qty_to_contract(contract, quantity, symbol)
+            if qty <= 0:
+                return LiveOrderResult(
+                    success=False,
+                    message=f"Quantity {quantity} rounds to 0 after lot-size alignment for {symbol}",
+                    exchange_id=self.engine_id,
+                )
+
             order = ib_insync.MarketOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
-                totalQuantity=quantity, account=self._account,
+                totalQuantity=qty, account=self._account,
                 tif=tif,
             )
             trade = self._ib.placeOrder(contract, order)
@@ -984,7 +1028,7 @@ class IBKRClient(BaseStatefulClient):
                 strategy_id=int(kwargs.get("strategy_id") or 0),
                 symbol=symbol,
                 signal_type=str(kwargs.get("signal_type") or ""),
-                amount=quantity,
+                amount=qty,
                 market_type=market_type,
                 payload=kwargs.get("payload") or {},
                 order_row=kwargs.get("order_row") or {},
@@ -1026,9 +1070,18 @@ class IBKRClient(BaseStatefulClient):
             if not await self._qualify_contract_async(contract):
                 return LiveOrderResult(success=False, message=f"Invalid contract: {symbol}",
                                    exchange_id=self.engine_id)
+
+            qty = await self._align_qty_to_contract(contract, quantity, symbol)
+            if qty <= 0:
+                return LiveOrderResult(
+                    success=False,
+                    message=f"Quantity {quantity} rounds to 0 after lot-size alignment for {symbol}",
+                    exchange_id=self.engine_id,
+                )
+
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
-                totalQuantity=quantity, lmtPrice=price, account=self._account,
+                totalQuantity=qty, lmtPrice=price, account=self._account,
                 tif=tif,
             )
             trade = self._ib.placeOrder(contract, order)
@@ -1040,7 +1093,7 @@ class IBKRClient(BaseStatefulClient):
                 strategy_id=int(kwargs.get("strategy_id") or 0),
                 symbol=symbol,
                 signal_type=str(kwargs.get("signal_type") or ""),
-                amount=quantity,
+                amount=qty,
                 market_type=market_type,
                 payload=kwargs.get("payload") or {},
                 order_row=kwargs.get("order_row") or {},

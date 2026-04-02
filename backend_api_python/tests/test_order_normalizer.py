@@ -89,13 +89,13 @@ class TestHShareNormalizer:
         assert self.norm.normalize(50.0, "09618") == 50
 
     def test_normalize_byd(self):
-        assert self.norm.normalize(350.7, "01211") == 300
+        assert self.norm.normalize(1050.7, "01211") == 1000
 
     def test_normalize_byd_hk_suffix(self):
-        assert self.norm.normalize(250.0, "1211.HK") == 200
+        assert self.norm.normalize(750.0, "1211.HK") == 500
 
-    def test_normalize_unknown_floors_to_int(self):
-        assert self.norm.normalize(7.8, "00388") == 7
+    def test_normalize_unknown_uses_default_lot(self):
+        assert self.norm.normalize(250.0, "06666") == 200
 
     # check
     def test_check_hsbc_valid(self):
@@ -121,13 +121,13 @@ class TestHShareNormalizer:
         assert "50" in reason
 
     def test_check_byd_valid(self):
-        ok, _ = self.norm.check(100, "01211")
+        ok, _ = self.norm.check(500, "01211")
         assert ok is True
 
     def test_check_byd_invalid(self):
-        ok, reason = self.norm.check(75, "01211")
+        ok, reason = self.norm.check(200, "01211")
         assert ok is False
-        assert "100" in reason
+        assert "500" in reason
 
     def test_check_zero(self):
         ok, _ = self.norm.check(0, "00005")
@@ -138,8 +138,13 @@ class TestHShareNormalizer:
         assert ok is False
         assert "whole number" in reason.lower()
 
-    def test_check_unknown_any_int(self):
-        ok, _ = self.norm.check(7, "00388")
+    def test_check_unknown_uses_default_lot(self):
+        ok, reason = self.norm.check(50, "06666")
+        assert ok is False
+        assert "100" in reason
+
+    def test_check_unknown_default_lot_valid(self):
+        ok, _ = self.norm.check(100, "06666")
         assert ok is True
 
 

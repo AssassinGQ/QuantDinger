@@ -193,8 +193,8 @@ class TestCallbackDispatchRouting:
         assert 8 in client._order_contexts
         assert len(fire_calls) == 0
 
-    def test_cancelled_zero_fills_does_not_dispatch(self):
-        """Cancelled(filled=0) is not in HARD_TERMINAL — IBKR may recover."""
+    def test_cancelled_zero_fills_dispatches_reject(self):
+        """Cancelled(filled=0) is treated as a rejection (e.g. lot-size error)."""
         client = _make_client()
         fire_calls = []
         client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
@@ -204,8 +204,8 @@ class TestCallbackDispatchRouting:
 
         client._on_order_status(_make_trade(9, "Cancelled", 0, 0))
 
-        assert 9 in client._order_contexts
-        assert len(fire_calls) == 0
+        assert 9 not in client._order_contexts
+        assert len(fire_calls) == 1
 
     def test_untracked_order_ignored(self):
         client = _make_client()
