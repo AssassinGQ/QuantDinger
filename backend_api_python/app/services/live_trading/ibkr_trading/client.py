@@ -369,6 +369,8 @@ class IBKRClient(BaseStatefulClient):
 
     # ── event callbacks: business logic ───────────────────────────
 
+    _CONTEXT_LINGER_SEC = 30
+
     def _on_order_status(self, trade):
         order_id = trade.order.orderId
         status = trade.orderStatus.status
@@ -385,14 +387,24 @@ class IBKRClient(BaseStatefulClient):
 
         if status == "Filled" and filled > 0:
             self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
-            self._order_contexts.pop(order_id, None)
+            self._schedule_context_cleanup(order_id)
         elif status == "Cancelled" and filled > 0:
             self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
-            self._order_contexts.pop(order_id, None)
+            self._schedule_context_cleanup(order_id)
         elif status in HARD_TERMINAL:
             error_msgs = [e.message for e in (trade.log or []) if e.message]
             self._fire_submit(lambda: self._handle_reject(ctx, status, error_msgs), is_blocking=True)
             self._order_contexts.pop(order_id, None)
+
+    def _schedule_context_cleanup(self, order_id: int):
+        """Delay context removal so commissionReportEvent can still access it."""
+        def _cleanup():
+            time.sleep(self._CONTEXT_LINGER_SEC)
+            removed = self._order_contexts.pop(order_id, None)
+            if removed:
+                logger.debug("[IBKR] Cleaned up lingering context for orderId=%s", order_id)
+        t = threading.Thread(target=_cleanup, daemon=True, name=f"ctx-cleanup-{order_id}")
+        t.start()
 
     def _on_exec_details(self, trade, fill):
         order_id = trade.order.orderId

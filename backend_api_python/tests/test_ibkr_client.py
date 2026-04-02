@@ -493,7 +493,7 @@ class TestEventCallbacks:
         trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0, order_id=42)
         client._on_order_status(trade)
 
-        assert 42 not in client._order_contexts
+        assert 42 in client._order_contexts  # context lingers for commissionReport
         assert len(fire_calls) == 1
 
     def test_on_order_status_cancelled_with_fill_triggers_handle_fill(self):
@@ -507,7 +507,7 @@ class TestEventCallbacks:
         trade = _make_trade_mock(status="Cancelled", filled=5.0, avg_price=300.0, order_id=43)
         client._on_order_status(trade)
 
-        assert 43 not in client._order_contexts
+        assert 43 in client._order_contexts  # context lingers for commissionReport
         assert len(fire_calls) == 1
 
     def test_on_order_status_hard_terminal_triggers_handle_reject(self):
@@ -1369,7 +1369,7 @@ class TestOrderContextLifecycle:
     """Verify order contexts are properly registered and cleaned up."""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_context_registered_and_cleaned_on_fill(self):
+    def test_context_registered_and_lingers_on_fill(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=500)
         client._ib.placeOrder.return_value = trade_mock
@@ -1379,7 +1379,7 @@ class TestOrderContextLifecycle:
 
         fill_trade = _make_trade_mock(status="Filled", filled=10.0, avg_price=155.0, order_id=500)
         client._on_order_status(fill_trade)
-        assert 500 not in client._order_contexts
+        assert 500 in client._order_contexts  # context lingers for commissionReport
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_context_cleaned_on_reject(self):

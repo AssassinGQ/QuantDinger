@@ -353,8 +353,13 @@ def update_trade_commission(
             """
             UPDATE qd_strategy_trades
             SET commission = %s, commission_ccy = %s
-            WHERE strategy_id = %s AND symbol = %s AND type = %s
-              AND commission = 0
+            WHERE id = (
+                SELECT id FROM qd_strategy_trades
+                WHERE strategy_id = %s AND symbol = %s AND type = %s
+                  AND commission = 0
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
             """,
             (float(commission), str(commission_ccy), int(strategy_id), str(symbol), str(trade_type)),
         )

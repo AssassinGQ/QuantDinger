@@ -98,7 +98,7 @@ class TestCallbackDispatchRouting:
 
         client._on_order_status(_make_trade(1, "Filled", 10.0, 155.0))
 
-        assert 1 not in client._order_contexts
+        assert 1 in client._order_contexts  # context lingers for commissionReport
         assert len(fire_calls) == 1
         assert callable(fire_calls[0])
 
@@ -112,7 +112,7 @@ class TestCallbackDispatchRouting:
 
         client._on_order_status(_make_trade(2, "Cancelled", 5.0, 300.0))
 
-        assert 2 not in client._order_contexts
+        assert 2 in client._order_contexts  # context lingers for commissionReport
         assert len(fire_calls) == 1
 
     def test_inactive_dispatches_handle_reject(self):
@@ -375,5 +375,5 @@ class TestFullOrderLifecycle:
         fill_trade.log = []
         client._on_order_status(fill_trade)
 
-        assert 777 not in client._order_contexts
+        assert 777 in client._order_contexts  # context lingers for commissionReport
         assert len(fire_calls) == 1
