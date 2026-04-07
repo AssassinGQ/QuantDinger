@@ -491,7 +491,7 @@ def ibkr_dashboard():
         except Exception as e:
             logger.warning("IBKR open orders failed: %s", e)
 
-    # DB-sourced trade history — filter by strategy exchange_id instead of gateway_mode
+    # DB-sourced trade history — filter by strategy exchange_id
     _eid_placeholders = ','.join(['%s'] * len(exchange_ids))
     _strategy_filter_sql = f"""
         SELECT id FROM qd_strategies_trading
@@ -501,7 +501,7 @@ def ibkr_dashboard():
             CASE WHEN exchange_config IS NOT NULL AND exchange_config != ''
                  THEN exchange_config::jsonb->>'exchange_id'
                  ELSE NULL END,
-            'ibkr'
+            'ibkr-paper'
           ) IN ({_eid_placeholders})
     """
     _strategy_filter_params = tuple([user_id] + exchange_ids)
