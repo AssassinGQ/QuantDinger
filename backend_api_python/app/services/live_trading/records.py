@@ -299,6 +299,24 @@ def _get_user_id_from_strategy(strategy_id: int) -> int:
         return 1
 
 
+def has_trade_for_pending_order(pending_order_id: int) -> bool:
+    """Check if a trade record already exists for the given pending_order_id."""
+    if not pending_order_id:
+        return False
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT 1 FROM qd_strategy_trades WHERE pending_order_id = %s LIMIT 1",
+                (int(pending_order_id),),
+            )
+            row = cur.fetchone()
+            cur.close()
+        return row is not None
+    except Exception:
+        return False
+
+
 def record_trade(
     *,
     strategy_id: int,
@@ -310,6 +328,7 @@ def record_trade(
     commission_ccy: str = "",
     profit: Optional[float] = None,
     user_id: int = None,
+    pending_order_id: int = 0,
 ) -> None:
     value = float(amount or 0.0) * float(price or 0.0)
     if user_id is None:
@@ -319,9 +338,9 @@ def record_trade(
         cur.execute(
             """
             INSERT INTO qd_strategy_trades
-            (user_id, strategy_id, symbol, type, price, amount, value, commission, commission_ccy, profit, created_at)
+            (user_id, strategy_id, symbol, type, price, amount, value, commission, commission_ccy, profit, pending_order_id, created_at)
             VALUES
-            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """,
             (
                 int(user_id),
@@ -334,6 +353,7 @@ def record_trade(
                 float(commission or 0.0),
                 str(commission_ccy or ""),
                 profit,
+                int(pending_order_id) if pending_order_id else None,
             ),
         )
         db.commit()

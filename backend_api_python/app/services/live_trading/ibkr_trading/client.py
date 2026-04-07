@@ -147,6 +147,7 @@ class IBKRClient(BaseStatefulClient):
         # Fire-and-forget order context: orderId → IBKROrderContext
         self._order_contexts: Dict[int, IBKROrderContext] = {}
         self._events_registered = False
+        self._event_map: List[tuple] = []
 
         self._reconnect_thread: Optional[threading.Thread] = None
         self._reconnect_stop = threading.Event()
@@ -302,54 +303,69 @@ class IBKRClient(BaseStatefulClient):
 
     # ── event registration (all 25 IB events) ─────────────────────
 
+    def _build_event_map(self):
+        """Build (event_name, handler) pairs once; reused by register/unregister."""
+        if self._event_map:
+            return
+        self._event_map = [
+            ("orderStatusEvent",      self._on_order_status),
+            ("execDetailsEvent",      self._on_exec_details),
+            ("commissionReportEvent", self._on_commission_report),
+            ("errorEvent",            self._on_error),
+            ("connectedEvent",        self._on_connected),
+            ("disconnectedEvent",     self._on_disconnected),
+            ("newOrderEvent",         self._on_new_order),
+            ("orderModifyEvent",      self._on_order_modify),
+            ("cancelOrderEvent",      self._on_cancel_order),
+            ("openOrderEvent",        self._on_open_order),
+            ("updatePortfolioEvent",  self._on_update_portfolio),
+            ("positionEvent",         self._on_position),
+            ("tickNewsEvent",         self._on_tick_news),
+            ("newsBulletinEvent",     self._on_news_bulletin),
+            ("wshMetaEvent",          self._on_wsh_meta),
+            ("wshEvent",              self._on_wsh),
+            ("timeoutEvent",          self._on_timeout),
+            ("pnlEvent",              self._on_pnl),
+            ("pnlSingleEvent",        self._on_pnl_single),
+            ("accountValueEvent",     self._on_account_value),
+            ("accountSummaryEvent",   self._on_account_summary),
+            ("pendingTickersEvent",   self._on_pending_tickers),
+            ("barUpdateEvent",        self._on_bar_update),
+            ("scannerDataEvent",      self._on_scanner_data),
+            ("updateEvent",           self._on_update),
+        ]
+
+    def _unregister_events(self):
+        """Remove all previously registered handlers to prevent accumulation."""
+        if self._ib is None:
+            return
+        ib = self._ib
+        self._build_event_map()
+        for event_name, handler in self._event_map:
+            event = getattr(ib, event_name, None)
+            if event is None:
+                continue
+            try:
+                while handler in event:
+                    event -= handler
+            except Exception:
+                pass
+
     def _register_events(self):
         if self._events_registered or self._ib is None:
             return
         ib = self._ib
+        self._build_event_map()
 
-        # Business logic (6)
-        ib.orderStatusEvent      += self._on_order_status
-        ib.execDetailsEvent      += self._on_exec_details
-        ib.commissionReportEvent += self._on_commission_report
-        ib.errorEvent            += self._on_error
-        ib.connectedEvent        += self._on_connected
-        ib.disconnectedEvent     += self._on_disconnected
+        self._unregister_events()
 
-        # Order observation (4)
-        ib.newOrderEvent         += self._on_new_order
-        ib.orderModifyEvent      += self._on_order_modify
-        ib.cancelOrderEvent      += self._on_cancel_order
-        ib.openOrderEvent        += self._on_open_order
-
-        # Position / portfolio (2)
-        ib.updatePortfolioEvent  += self._on_update_portfolio
-        ib.positionEvent         += self._on_position
-
-        # News / WSH (4)
-        ib.tickNewsEvent         += self._on_tick_news
-        ib.newsBulletinEvent     += self._on_news_bulletin
-        ib.wshMetaEvent          += self._on_wsh_meta
-        ib.wshEvent              += self._on_wsh
-
-        # Timeout (1)
-        ib.timeoutEvent          += self._on_timeout
-
-        # High-frequency DEBUG (6)
-        ib.pnlEvent              += self._on_pnl
-        ib.pnlSingleEvent        += self._on_pnl_single
-        ib.accountValueEvent     += self._on_account_value
-        ib.accountSummaryEvent   += self._on_account_summary
-        ib.pendingTickersEvent   += self._on_pending_tickers
-        ib.barUpdateEvent        += self._on_bar_update
-
-        # Scanner (1)
-        ib.scannerDataEvent      += self._on_scanner_data
-
-        # Ultra-high-frequency (1)
-        ib.updateEvent           += self._on_update
+        for event_name, handler in self._event_map:
+            event = getattr(ib, event_name, None)
+            if event is not None:
+                event += handler
 
         self._events_registered = True
-        logger.info("[IBKR-Event] All 25 IB events registered")
+        logger.info("[IBKR-Event] All %d IB events registered (clean)", len(self._event_map))
 
     async def _activate_pnl_subscriptions(self):
         """Activate PnL subscriptions after connection."""
@@ -369,8 +385,6 @@ class IBKRClient(BaseStatefulClient):
 
     # ── event callbacks: business logic ───────────────────────────
 
-    _CONTEXT_LINGER_SEC = 30
-
     def _on_order_status(self, trade):
         order_id = trade.order.orderId
         status = trade.orderStatus.status
@@ -381,34 +395,22 @@ class IBKRClient(BaseStatefulClient):
             order_id, status, filled, avg_price,
         )
 
-        ctx = self._order_contexts.get(order_id)
+        ctx = self._order_contexts.pop(order_id, None)
         if ctx is None:
             return
 
         if status == "Filled" and filled > 0:
             self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
-            self._schedule_context_cleanup(order_id)
         elif status == "Cancelled" and filled > 0:
             self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
-            self._schedule_context_cleanup(order_id)
         elif status == "Cancelled" and filled <= 0:
             error_msgs = [e.message for e in (trade.log or []) if e.message]
             self._fire_submit(lambda: self._handle_reject(ctx, status, error_msgs), is_blocking=True)
-            self._order_contexts.pop(order_id, None)
         elif status in HARD_TERMINAL:
             error_msgs = [e.message for e in (trade.log or []) if e.message]
             self._fire_submit(lambda: self._handle_reject(ctx, status, error_msgs), is_blocking=True)
-            self._order_contexts.pop(order_id, None)
-
-    def _schedule_context_cleanup(self, order_id: int):
-        """Delay context removal so commissionReportEvent can still access it."""
-        def _cleanup():
-            time.sleep(self._CONTEXT_LINGER_SEC)
-            removed = self._order_contexts.pop(order_id, None)
-            if removed:
-                logger.debug("[IBKR] Cleaned up lingering context for orderId=%s", order_id)
-        t = threading.Thread(target=_cleanup, daemon=True, name=f"ctx-cleanup-{order_id}")
-        t.start()
+        else:
+            self._order_contexts[order_id] = ctx
 
     def _on_exec_details(self, trade, fill):
         order_id = trade.order.orderId
@@ -812,6 +814,13 @@ class IBKRClient(BaseStatefulClient):
         )
 
         if ctx.pending_order_id:
+            if records.has_trade_for_pending_order(ctx.pending_order_id):
+                logger.warning(
+                    "[IBKR-Fill] DUPLICATE skipped: trade already exists for pending_order_id=%s",
+                    ctx.pending_order_id,
+                )
+                return
+
             try:
                 records.mark_order_sent(
                     order_id=ctx.pending_order_id,
@@ -847,6 +856,7 @@ class IBKRClient(BaseStatefulClient):
                     commission=0.0,
                     commission_ccy="",
                     profit=profit,
+                    pending_order_id=ctx.pending_order_id,
                 )
             except Exception as e:
                 logger.warning("[IBKR-Fill] record_trade/position failed: %s", e)
