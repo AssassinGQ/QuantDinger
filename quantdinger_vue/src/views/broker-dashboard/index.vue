@@ -485,7 +485,6 @@ export default {
       return this.getAccountValue('UnrealizedPnL')
     },
     realizedPnl () {
-      if (this.performance.account_pnl != null) return this.performance.account_pnl
       const live = this.getAccountValue('RealizedPnL')
       if (live !== 0) return live
       return this.performance.total_realized_pnl || 0

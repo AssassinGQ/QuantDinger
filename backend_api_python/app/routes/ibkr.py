@@ -4,7 +4,6 @@ Interactive Brokers API Routes
 Standalone API endpoints for US and Hong Kong stock trading.
 """
 
-import os
 from typing import Any, Dict, List
 
 from flask import Blueprint, request, jsonify, g
@@ -532,18 +531,7 @@ def ibkr_dashboard():
                 trade["created_at"] = int(trade["created_at"].timestamp())
             trades.append(trade)
 
-        perf = _compute_ibkr_trade_stats(trades)
-
-        net_liq = _safe_float((data.get("account", {}).get("items", {}).get("NetLiquidation") or {}).get("value"))
-        if net_liq > 0:
-            perf["net_liquidation"] = round(net_liq, 2)
-            deposit_env = "IBKR_LIVE_DEPOSIT" if mode == "live" else "IBKR_PAPER_DEPOSIT"
-            deposit = _safe_float(os.environ.get(deposit_env, "0"))
-            if deposit > 0:
-                perf["account_pnl"] = round(net_liq - deposit, 2)
-                perf["total_deposit"] = round(deposit, 2)
-
-        data["performance"] = perf
+        data["performance"] = _compute_ibkr_trade_stats(trades)
         data["recent_trades"] = trades[:50]
 
         with get_db_connection() as db:
