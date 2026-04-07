@@ -146,6 +146,7 @@ class IBKRClient(BaseStatefulClient):
 
         # Fire-and-forget order context: orderId → IBKROrderContext
         self._order_contexts: Dict[int, IBKROrderContext] = {}
+        self._commission_contexts: Dict[int, IBKROrderContext] = {}
         self._events_registered = False
         self._event_map: List[tuple] = []
 
@@ -385,6 +386,8 @@ class IBKRClient(BaseStatefulClient):
 
     # ── event callbacks: business logic ───────────────────────────
 
+    _COMMISSION_LINGER_SEC = 30
+
     def _on_order_status(self, trade):
         order_id = trade.order.orderId
         status = trade.orderStatus.status
@@ -401,8 +404,10 @@ class IBKRClient(BaseStatefulClient):
 
         if status == "Filled" and filled > 0:
             self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
+            self._keep_for_commission(order_id, ctx)
         elif status == "Cancelled" and filled > 0:
             self._fire_submit(lambda: self._handle_fill(ctx, filled, avg_price), is_blocking=True)
+            self._keep_for_commission(order_id, ctx)
         elif status == "Cancelled" and filled <= 0:
             error_msgs = [e.message for e in (trade.log or []) if e.message]
             self._fire_submit(lambda: self._handle_reject(ctx, status, error_msgs), is_blocking=True)
@@ -411,6 +416,19 @@ class IBKRClient(BaseStatefulClient):
             self._fire_submit(lambda: self._handle_reject(ctx, status, error_msgs), is_blocking=True)
         else:
             self._order_contexts[order_id] = ctx
+
+    def _keep_for_commission(self, order_id: int, ctx: IBKROrderContext):
+        """Retain context for commissionReportEvent, then clean up after delay."""
+        self._commission_contexts[order_id] = ctx
+
+        def _cleanup():
+            time.sleep(self._COMMISSION_LINGER_SEC)
+            removed = self._commission_contexts.pop(order_id, None)
+            if removed:
+                logger.debug("[IBKR] Cleaned up commission context for orderId=%s", order_id)
+
+        t = threading.Thread(target=_cleanup, daemon=True, name=f"comm-ctx-{order_id}")
+        t.start()
 
     def _on_exec_details(self, trade, fill):
         order_id = trade.order.orderId
@@ -434,7 +452,7 @@ class IBKRClient(BaseStatefulClient):
             commission, currency, realized_pnl,
         )
 
-        ctx = self._order_contexts.get(order_id)
+        ctx = self._commission_contexts.get(order_id)
         if ctx and ctx.strategy_id and commission > 0:
             strategy_id = ctx.strategy_id
             symbol = ctx.symbol

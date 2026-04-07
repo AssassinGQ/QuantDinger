@@ -31,14 +31,10 @@ def parse_ibkr_mode(broker_id: str = None) -> str:
 
 
 def _broker_id_to_exchange_ids(broker_id: str) -> List[str]:
-    """Map broker_id to the set of exchange_ids that belong to it.
-
-    ibkr-paper matches both 'ibkr-paper' and legacy 'ibkr'.
-    ibkr-live matches only 'ibkr-live'.
-    """
+    """Map broker_id to the set of exchange_ids that belong to it."""
     if broker_id == 'ibkr-live':
         return ['ibkr-live']
-    return ['ibkr-paper', 'ibkr']
+    return ['ibkr-paper']
 
 
 # ==================== Connection Management ====================

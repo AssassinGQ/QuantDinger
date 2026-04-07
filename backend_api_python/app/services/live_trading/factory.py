@@ -134,7 +134,7 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
         )
 
     # Traditional brokers (IBKR for US/HK stocks only)
-    if exchange_id in ("ibkr", "ibkr-paper", "ibkr-live"):
+    if exchange_id in ("ibkr-paper", "ibkr-live"):
         return _create_ibkr_client(exchange_config, exchange_id=exchange_id)
 
     # Forex brokers (MT5 for Forex only)
@@ -170,27 +170,17 @@ def get_runner(client):
 # ── BaseStatefulClient factories (lazy imports) ──────────────────
 
 
-def _parse_ibkr_mode(exchange_id: str, exchange_config: Dict[str, Any]) -> str:
-    """Derive IBKR gateway mode from exchange_id, falling back to ibkr_mode config."""
-    if exchange_id == "ibkr-live":
-        return "live"
-    if exchange_id == "ibkr-paper":
-        return "paper"
-    return exchange_config.get("ibkr_mode", "paper")
-
-
-def _create_ibkr_client(exchange_config: Dict[str, Any], *, exchange_id: str = "ibkr"):
+def _create_ibkr_client(exchange_config: Dict[str, Any], *, exchange_id: str = "ibkr-paper"):
     """Create or retrieve IBKR client (BaseStatefulClient).
 
     Uses exchange_id (ibkr-paper / ibkr-live) to select the global singleton.
-    Falls back to ibkr_mode config for legacy exchange_id="ibkr".
     """
     try:
         from app.services.live_trading.ibkr_trading.client import IBKRClient, IBKRConfig, get_ibkr_client
     except ImportError as exc:
         raise LiveTradingError("IBKR trading requires ib_insync. Run: pip install ib_insync") from exc
 
-    mode = _parse_ibkr_mode(exchange_id, exchange_config)
+    mode = "live" if exchange_id == "ibkr-live" else "paper"
 
     has_strategy_level_config = exchange_config.get("ibkr_host") or exchange_config.get("ibkr_port")
     if not has_strategy_level_config:
