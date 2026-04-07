@@ -128,7 +128,7 @@ class TestComputeTradeStats:
         assert stats["total_trades"] == 5
         assert stats["winning_trades"] == 2
         assert stats["losing_trades"] == 2
-        assert stats["win_rate"] == 40.0  # 2/5 = 40%
+        assert stats["win_rate"] == 50.0  # 2 wins / 4 closed (excl. breakeven) = 50%
         assert stats["total_profit"] == 300.0
         assert stats["total_loss"] == 75.0
         assert stats["profit_factor"] == 4.0  # 300/75

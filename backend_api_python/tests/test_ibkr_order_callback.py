@@ -25,7 +25,9 @@ def _make_client():
     client._ib = MagicMock()
     client._account = "DU999"
     client._order_contexts = {}
+    client._commission_contexts = {}
     client._events_registered = False
+    client._event_map = []
     client._reconnect_thread = None
     client._reconnect_stop = threading.Event()
     client._tq = MagicMock()
@@ -98,7 +100,8 @@ class TestCallbackDispatchRouting:
 
         client._on_order_status(_make_trade(1, "Filled", 10.0, 155.0))
 
-        assert 1 in client._order_contexts  # context lingers for commissionReport
+        assert 1 not in client._order_contexts  # popped for fill idempotency
+        assert 1 in client._commission_contexts  # lingers for commissionReport
         assert len(fire_calls) == 1
         assert callable(fire_calls[0])
 
@@ -112,7 +115,8 @@ class TestCallbackDispatchRouting:
 
         client._on_order_status(_make_trade(2, "Cancelled", 5.0, 300.0))
 
-        assert 2 in client._order_contexts  # context lingers for commissionReport
+        assert 2 not in client._order_contexts  # popped for fill idempotency
+        assert 2 in client._commission_contexts  # lingers for commissionReport
         assert len(fire_calls) == 1
 
     def test_inactive_dispatches_handle_reject(self):
@@ -375,5 +379,6 @@ class TestFullOrderLifecycle:
         fill_trade.log = []
         client._on_order_status(fill_trade)
 
-        assert 777 in client._order_contexts  # context lingers for commissionReport
+        assert 777 not in client._order_contexts  # popped for fill idempotency
+        assert 777 in client._commission_contexts  # lingers for commissionReport
         assert len(fire_calls) == 1
