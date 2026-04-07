@@ -115,10 +115,14 @@ def position_state(positions: List[Dict[str, Any]]) -> str:
     try:
         if not positions:
             return "flat"
-        side = (positions[0].get("side") or "").strip().lower()
+        pos = positions[0]
+        size = float(pos.get("size") or 0)
+        if size <= 0:
+            return "flat"
+        side = (pos.get("side") or "").strip().lower()
         if side in ("long", "short"):
             return side
-    except (KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError, ValueError):
         pass
     return "flat"
 
