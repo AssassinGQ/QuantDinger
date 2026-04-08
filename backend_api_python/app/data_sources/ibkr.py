@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from ibkr_datafetcher.config import GatewayConfig
 from ibkr_datafetcher.ibkr_client import IBKRClient
-from ibkr_datafetcher.types import KlineBar, SymbolConfig, Timeframe
+from ibkr_datafetcher.types import KlineBar, SymbolConfig, Timeframe, resolve_timeframe
 
 from app.data_sources.base import BaseDataSource
 
@@ -141,7 +141,10 @@ class IBKRDataSource(BaseDataSource):
             )
 
             # 转换时间周期
-            tf = Timeframe.from_str(timeframe)
+            tf = resolve_timeframe(timeframe)
+            if tf is None:
+                logger.error(f"Invalid timeframe: {timeframe}")
+                return []
 
             # 获取历史数据
             contract = self._client.make_contract(symbol_config)
