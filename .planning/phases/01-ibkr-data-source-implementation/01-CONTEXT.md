@@ -57,6 +57,11 @@
 ### 回测场景
 - **D-24:** 回测保持原数据源，不使用 IBKRDataSource（无论原数据源是什么）
 
+### 架构一致性确认
+- **D-25:** 不改变 QuantDinger 现有架构，保持同步调用模式与现有数据源一致
+- **D-26:** IBKR 内部的异步/线程封装对 DataSourceFactory 和 trading_executor 透明
+- **D-27:** 不使用 WebSocket 或后台轮询，保持简洁的请求-响应模式
+
 ### Claude's Discretion
 - 数据重试和错误处理的具体实现细节
 - K线数据格式的微调

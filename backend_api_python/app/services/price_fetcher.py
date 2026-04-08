@@ -29,6 +29,7 @@ class PriceFetcher:
         symbol: str,
         market_type: Optional[str] = None,
         market_category: str = "Crypto",
+        exchange_id: Optional[str] = None,
     ) -> Optional[float]:
         """获取当前价格 (根据 market_category 选择正确的数据源)
 
@@ -37,6 +38,7 @@ class PriceFetcher:
             symbol: 交易对/代码
             market_type: 交易类型 (swap/spot)
             market_category: 市场类型 (Crypto, USStock, Forex, Futures, AShare, HShare)
+            exchange_id: 交易所ID (例如: 'ibkr-live'), 优先级高于 market_category
         """
         # Local in-memory cache first
         cache_key = f"{market_category}:{(symbol or '').strip().upper()}"
@@ -56,7 +58,7 @@ class PriceFetcher:
 
         try:
             # 根据 market_category 选择正确的数据源
-            ticker = DataSourceFactory.get_ticker(market_category, symbol)
+            ticker = DataSourceFactory.get_ticker(market_category, symbol, exchange_id=exchange_id)
             if ticker:
                 price = float(ticker.get("last") or ticker.get("close") or 0)
                 if price > 0:

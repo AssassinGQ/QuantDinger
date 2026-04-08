@@ -9,7 +9,7 @@
 
 - [x] **IBKR-01**: 创建 IBKRDataSource 类，继承 BaseDataSource
 - [x] **IBKR-02**: 实现 get_kline() 方法获取历史K线数据
-- [ ] **IBKR-03**: 实现 get_ticker() 方法获取实时报价
+- [x] **IBKR-03**: 实现 get_ticker() 方法获取实时报价
 - [x] **IBKR-04**: 连接 IBKR Gateway 并处理连接/断开
 
 ### Integration
@@ -40,7 +40,7 @@
 |-------------|-------|--------|
 | IBKR-01 | Phase 1 | Complete |
 | IBKR-02 | Phase 1 | Complete |
-| IBKR-03 | Phase 1 | Pending |
+| IBKR-03 | Phase 1 | Complete |
 | IBKR-04 | Phase 1 | Complete |
 | INT-01 | Phase 1 | Pending |
 | INT-02 | Phase 1 | Pending |

@@ -85,23 +85,25 @@ class DataSourceFactory:
         symbol: str,
         timeframe: str,
         limit: int,
-        before_time: Optional[int] = None
+        before_time: Optional[int] = None,
+        exchange_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         获取K线数据的便捷方法
-        
+
         Args:
             market: 市场类型
             symbol: 交易对/股票代码
             timeframe: 时间周期
             limit: 数据条数
             before_time: 获取此时间之前的数据
-            
+            exchange_id: 交易所ID (例如: 'ibkr-live'), 优先级高于 market
+
         Returns:
             K线数据列表
         """
         try:
-            source = cls.get_source(market)
+            source = cls.get_source(market, exchange_id)
             klines = source.get_kline(symbol, timeframe, limit, before_time)
             
             # 确保数据按时间排序
@@ -115,14 +117,15 @@ class DataSourceFactory:
             return []
     
     @classmethod
-    def get_ticker(cls, market: str, symbol: str) -> Dict[str, Any]:
+    def get_ticker(cls, market: str, symbol: str, exchange_id: Optional[str] = None) -> Dict[str, Any]:
         """
         获取实时报价的便捷方法
-        
+
         Args:
             market: 市场类型
             symbol: 交易对/股票代码
-            
+            exchange_id: 交易所ID (例如: 'ibkr-live'), 优先级高于 market
+
         Returns:
             实时报价数据: {
                 'last': 最新价,
@@ -132,7 +135,7 @@ class DataSourceFactory:
             }
         """
         try:
-            source = cls.get_source(market)
+            source = cls.get_source(market, exchange_id)
             return source.get_ticker(symbol)
         except RateLimitError:
             raise
