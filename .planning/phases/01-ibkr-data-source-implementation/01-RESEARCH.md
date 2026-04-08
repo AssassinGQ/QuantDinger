@@ -1,580 +1,466 @@
-<user_constraints>
-## User Constraints (from CONTEXT.md)
-
-### Implementation Decisions
-
-- **D-01:** DataSourceFactory.get_source() 添加可选 `exchange_id` 参数
-- **D-02:** 当 `exchange_id='ibkr-live'` 时，返回 IBKRDataSource 实例
-- **D-03:** 保持向后兼容，不传 exchange_id 时按 market 参数处理
-
-### Connection Management
-
-- **D-04:** IBKRDataSource 内部复用 IBKRClient 实例
-- **D-05:** 连接在首次使用时建立，后续调用复用同一连接
-- **D-06:** 提供 disconnect() 方法供外部调用
-
-### Market Type Relationship
-
-- **D-07:** IBKRDataSource 作为独立数据源，不属于任何现有 market 类型
-- **D-08:** exchange_id 优先级高于 market_category
-- **D-09:** 架构支持后续扩展港股、外汇数据
-
-### Use Case 1: K线获取
-
-- **D-10:** 支持所有标准周期：1m, 5m, 15m, 30m, 1H, 4H, 1D
-- **D-11:** 股票代码使用 IBKR 格式：AAPL, MSFT, GOOGL
-
-### Use Case 2: 实时报价
-
-- **D-12:** 同步阻塞调用 get_ticker()，IBKRClient 内部使用异步请求+回调
-- **D-13:** 策略执行时同时调用 get_ticker 和 get_kline（保持现有逻辑不变）
-
-### Use Case 3: 数据源切换
-
-- **D-14:** 策略配置中包含 exchange_id
-- **D-15:** trading_executor 将 exchange_id 传递给 DataSourceFactory
-
-### Use Case 4: 连接管理
-
-- **D-16:** 连接参数通过配置文件/环境变量管理（IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID）
-- **D-17:** 实现自动重连机制，连接断开后自动重连
-- **D-18:** 使用成员变量 `_pending_requests` 字典 + request_id 进行请求-回调通信
-
-### Cache Strategy
-
-- **D-19:** get_kline 缓存：数据库1m点 → 数据库5m点 → 数据库k线 → 拉网（调用 kline_fetcher.get_kline）
-- **D-20:** get_ticker 缓存：无缓存，直接调用 IBKRClient 获取
-
-### Rate Limiting Strategy
-
-- **D-21:** 在 QuantDinger 的 `rate_limiter.py` 中添加 IBKR 限流器（复用 ibkr-datafetcher 的 RateLimiter 逻辑）
-- **D-22:** 对 get_ticker 添加限流保护，防止触发 IBKR 内置限流
-- **D-23:** get_kline 限流：复用现有 kline_fetcher 逻辑（已有数据库缓存减轻 API 压力）
-
-### Backtest Scenario
-
-- **D-24:** 回测保持原数据源，不使用 IBKRDataSource（无论原数据源是什么）
-
-### Claude's Discretion (自由决定领域)
-
-- 数据重试和错误处理的具体实现细节
-- K线数据格式的微调
-
-### Deferred Ideas (不在 Phase 1 范围内)
-
-- 港股数据支持 — Phase 2
-- 外汇数据支持 — Phase 2
-- 数据缓存/存储优化 — 后续优化
-</user_constraints>
-
-<phase_requirements>
-## Phase Requirements
-
-| ID | Description | Research Support |
-|----|-------------|------------------|
-| IBKR-01 | 创建 IBKRDataSource 类，继承 BaseDataSource | BaseDataSource interface defined in base.py, can create new implementation |
-| IBKR-02 | 实现 get_kline() 方法获取历史K线数据 | ibkr-datafetcher/ibkr_client.py has get_historical_bars() as reference |
-| IBKR-03 | 实现 get_ticker() 方法获取实时报价 | ib_insync provides reqMktData for real-time quotes |
-| IBKR-04 | 连接 IBKR Gateway 并处理连接/断开 | ibkr-datafetcher/ibkr_client.py has connect(), disconnect(), reconnect() as reference |
-| INT-01 | DataSourceFactory 支持基于 exchange_id 选择数据源 | DataSourceFactory.get_source() needs optional parameter, current implementation only uses market |
-| INT-02 | trading_executor 优先使用 exchange_id 选择数据源 | Need to pass exchange_id to PriceFetcher/DataSourceFactory |
-| INT-03 | exchange_id="ibkr-live" 自动使用 IBKRDataSource | DataSourceFactory logic handles this |
-</phase_requirements>
-
 # Phase 1: IBKR Data Source Implementation - Research
 
 **Researched:** 2026-04-08
-**Domain:** IBKR Gateway Integration via ib_insync
+**Domain:** Python - Interactive Brokers (IBKR) data source integration
 **Confidence:** HIGH
 
 ## Summary
 
-This phase implements native IBKR data source for `exchange_id = ibkr-live` trading strategies, replacing yfinance/Finnhub with data from the same source used for actual order execution. The implementation requires creating a new IBKRDataSource class that inherits from BaseDataSource, modifying DataSourceFactory to support exchange_id-based selection, and integrating with the existing trading executor pipeline.
+Phase 1 requires implementing an IBKR data source that fetches K-lines and real-time quotes for `exchange_id = ibkr-live`, replacing current yfinance/Finnhub for live trading. The key challenge is integrating the existing IBKRClient from `/home/workspace/ws/ibkr-datafetcher/` into QuantDinger's DataSourceFactory while maintaining backward compatibility.
 
-**Primary recommendation:** Create IBKRDataSource class in `backend_api_python/app/data_sources/` that wraps the existing IBKR client pattern from ibkr-datafetcher, integrate with DataSourceFactory by adding optional exchange_id parameter, and modify PriceFetcher to accept exchange_id from strategy configuration.
+**Primary recommendation:** Implement IBKRDataSource as a new data source class that inherits BaseDataSource, extends DataSourceFactory.get_source() to accept optional `exchange_id` parameter, and reuses ib_insync 0.9.86 with the RateLimiter pattern from the reference implementation.
+
+## User Constraints (from CONTEXT.md)
+
+### Locked Decisions
+
+- **D-01:** DataSourceFactory.get_source() 添加可选 `exchange_id` 参数
+- **D-02:** 当 `exchange_id='ibkr-live'` 时，返回 IBKRDataSource 实例
+- **D-03:** 保持向后兼容，不传 exchange_id 时按 market 参数处理
+- **D-04:** IBKRDataSource 内部复用 IBKRClient 实例
+- **D-05:** 连接在首次使用时建立，后续调用复用同一连接
+- **D-06:** 提供 disconnect() 方法供外部调用
+- **D-07:** IBKRDataSource 作为独立数据源，不属于任何现有 market 类型
+- **D-08:** exchange_id 优先级高于 market_category
+- **D-09:** 架构支持后续扩展港股、外汇数据
+- **D-10:** 支持所有标准周期：1m, 5m, 15m, 30m, 1H, 4H, 1D
+- **D-11:** 股票代码使用 IBKR 格式：AAPL, MSFT, GOOGL
+- **D-12:** 同步阻塞调用 get_ticker()，IBKRClient 内部使用异步请求+回调
+- **D-13:** 策略执行时同时调用 get_ticker 和 get_kline（保持现有逻辑不变）
+- **D-14:** 策略配置中包含 exchange_id
+- **D-15:** trading_executor 将 exchange_id 传递给 DataSourceFactory
+- **D-16:** 连接参数通过配置文件/环境变量管理（IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID）
+- **D-17:** 实现自动重连机制，连接断开后自动重连
+- **D-18:** 使用成员变量 `_pending_requests` 字典 + request_id 进行请求-回调通信
+- **D-19:** get_kline 缓存：数据库1m点 → 数据库5m点 → 数据库k线 → 拉网（调用 kline_fetcher.get_kline）
+- **D-20:** get_ticker 缓存：无缓存，直接调用 IBKRClient 获取
+- **D-21:** 在 QuantDinger 的 `rate_limiter.py` 中添加 IBKR 限流器（复用 ibkr-datafetcher 的 RateLimiter 逻辑）
+- **D-22:** 对 get_ticker 添加限流保护，防止触发 IBKR 内置限流
+- **D-23:** get_kline 限流：复用现有 kline_fetcher 逻辑（已有数据库缓存减轻 API 压力）
+- **D-24:** 回测保持原数据源，不使用 IBKRDataSource（无论原数据源是什么）
+- **D-25:** 不改变 QuantDinger 现有架构，保持同步调用模式与现有数据源一致
+- **D-26:** IBKR 内部的异步/线程封装对 DataSourceFactory 和 trading_executor 透明
+- **D-27:** 不使用 WebSocket 或后台轮询，保持简洁的请求-响应模式
+
+### Claude's Discretion
+
+- 数据重试和错误处理的具体实现细节
+- K线数据格式的微调
+
+### Deferred Ideas (OUT OF SCOPE)
+
+- 港股数据支持 — Phase 2
+- 外汇数据支持 — Phase 2
+- 数据缓存/存储优化 — 后续优化
+
+## Phase Requirements
+
+| ID | Description | Research Support |
+|----|-------------|------------------|
+| IBKR-01 | 创建 IBKRDataSource 类，继承 BaseDataSource | BaseDataSource interface found in `app/data_sources/base.py` |
+| IBKR-02 | 实现 get_kline() 方法获取历史K线数据 | IBKRClient.get_historical_bars() in reference implementation |
+| IBKR-03 | 实现 get_ticker() 方法获取实时报价 | IBKRClient.get_quote() pattern in live trading client |
+| IBKR-04 | 连接 IBKR Gateway 并处理连接/断开 | IBKRClient.connect/disconnect from reference + live trading |
+| INT-01 | DataSourceFactory 支持基于 exchange_id 选择数据源 | Need to extend factory.get_source() with optional param |
+| INT-02 | trading_executor 优先使用 exchange_id 选择数据源 | Current trading_executor has exchange_id param but doesn't pass to DataSourceFactory |
+| INT-03 | exchange_id="ibkr-live" 自动使用 IBKRDataSource | Decision D-02 from CONTEXT.md |
 
 ## Standard Stack
 
 ### Core
+
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| ib_insync | 0.9.86 | Interactive Brokers Gateway API client | [VERIFIED: pip show ib_insync] - Official library for IBKR integration |
-| ibkr-datafetcher | (reference) | Reference implementation in `/home/workspace/ws/ibkr-datafetcher/` | [VERIFIED: source code] - Provides proven IBKRClient pattern with threading, async-to-sync bridge |
+| ib_insync | 0.9.86 | Interactive Brokers API wrapper | [VERIFIED: pip3 show] - Used in reference implementation and existing live trading |
+| ibkr-datafetcher | (reference) | Existing IBKRClient implementation | Source for connection management pattern |
 
 ### Supporting
+
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| Flask 2.3.3 | (existing) | Web framework | API routes |
-| SQLAlchemy 2.0.0 | (existing) | ORM | Database integration |
-| APScheduler 3.10.0 | (existing) | Task scheduling | Background data collection |
+| pytest | (existing) | Unit testing | Existing test infrastructure in backend_api_python/tests/ |
+| RateLimiter | (custom) | IBKR API rate limiting | Reuse from ibkr-datafetcher implementation |
 
 **Installation:**
 ```bash
-pip install ib_insync
+pip install ib-insync==0.9.86
 ```
 
-**Version verification:** Verified ib_insync 0.9.86 installed in environment - [VERIFIED: python3 -c "import ib_insync; print(ib_insync.__version__)"]
+**Version verification:** ib_insync 0.9.86 confirmed from local environment.
 
 ## Architecture Patterns
 
 ### Recommended Project Structure
+
 ```
 backend_api_python/app/data_sources/
-├── __init__.py
-├── base.py              # (existing) BaseDataSource abstract class
-├── factory.py           # (modified) DataSourceFactory with exchange_id support
-├── ibkr.py              # (new) IBKRDataSource implementation
-├── crypto.py            # (existing)
-├── us_stock.py          # (existing)
-└── ...
+├── __init__.py           # Add IBKRDataSource to exports
+├── base.py               # Existing BaseDataSource (don't modify)
+├── factory.py            # Extend with exchange_id support
+├── ibkr.py               # NEW: IBKRDataSource implementation
+└── rate_limiter.py       # Existing (add IBKR-specific limiter)
 ```
 
-### Pattern 1: IBKRDataSource Class
-**What:** Data source class that wraps IBKR client for K-line and ticker data retrieval
+### Pattern 1: DataSourceFactory Extension with exchange_id
 
-**When to use:** When exchange_id = 'ibkr-live' is specified in strategy configuration
+**What:** Extend DataSourceFactory.get_source() to accept optional `exchange_id` parameter that takes priority over market
+
+**When to use:** When strategies specify `exchange_id` parameter (as seen in trading_executor.py line 46)
 
 **Example:**
 ```python
-# Source: Adapted from ibkr-datafetcher reference + BaseDataSource interface
-from app.data_sources.base import BaseDataSource
-from ibkr_datafetcher.ibkr_client import IBKRClient
-from ibkr_datafetcher.rate_limiter import RateLimiter
-from ibkr_datafetcher.config import GatewayConfig
-from ibkr_datafetcher.types import Timeframe
-
-class IBKRDataSource(BaseDataSource):
-    """IBKR data source implementation"""
+# Source: Analysis of app/data_sources/factory.py
+@classmethod
+def get_source(cls, market: str, exchange_id: Optional[str] = None) -> BaseDataSource:
+    # D-08: exchange_id priority over market_category
+    if exchange_id == 'ibkr-live':
+        return cls._get_ibkr_source()
     
-    name = "IBKR"
+    # D-03: Backward compatible - fall back to market
+    if market not in cls._sources:
+        cls._sources[market] = cls._create_source(market)
+    return cls._sources[market]
+```
+
+### Pattern 2: IBKRClient Wrapper for Data Source
+
+**What:** Wrap IBKRClient from reference implementation in a sync interface matching BaseDataSource
+
+**When to use:** When implementing get_kline() and get_ticker() in IBKRDataSource
+
+**Example:**
+```python
+# Source: /home/workspace/ws/ibkr-datafetcher/src/ibkr_datafetcher/ibkr_client.py
+class IBKRDataSource(BaseDataSource):
+    name = "ibkr"
     
     def __init__(self):
-        config = GatewayConfig(
-            host=os.getenv("IBKR_HOST", "127.0.0.1"),
-            port=int(os.getenv("IBKR_PORT", 7497)),
-            client_id=int(os.getenv("IBKR_CLIENT_ID", 1))
-        )
-        self._client = IBKRClient(config)
-        self._rate_limiter = RateLimiter(
-            hist_requests_per_minute=6,
-            identical_cooldown=15.0
-        )
-        self._connected = False
+        self._client = None  # Lazy initialization (D-05)
     
-    def get_kline(self, symbol, timeframe, limit, before_time=None):
-        """获取K线数据"""
-        self._ensure_connection()
-        self._rate_limiter.acquire(request_type="hist", symbol=symbol)
-        
-        # Convert timeframe format
-        tf = Timeframe.from_str(timeframe)
-        
-        # Create contract (STK for stocks)
-        contract = self._client.make_contract(SymbolConfig(
-            symbol=symbol,
-            sec_type="STK",
-            exchange="SMART",
-            currency="USD"
-        ))
-        
-        # Get historical bars
-        bars = self._client.get_historical_bars(contract, tf)
-        
-        # Format to standard K-line format
-        return [self.format_kline(
-            bar.timestamp,
-            bar.open,
-            bar.high,
-            bar.low,
-            bar.close,
-            bar.volume
-        ) for bar in bars]
-    
-    def get_ticker(self, symbol):
-        """获取实时报价"""
-        self._ensure_connection()
-        self._rate_limiter.acquire(request_type="ticker", symbol=symbol)
-        
-        # Use reqMktData for real-time quote
-        contract = self._client.make_contract(SymbolConfig(
-            symbol=symbol,
-            sec_type="STK",
-            exchange="SMART",
-            currency="USD"
-        ))
-        
-        # Synchronous wrapper around async reqMktData
-        ticker_data = self._get_ticker_sync(contract)
-        
-        return {
-            'last': ticker_data.get('last', 0),
-            'symbol': symbol,
-            'change': ticker_data.get('change', 0),
-            'changePercent': ticker_data.get('changePercent', 0),
-            'high': ticker_data.get('high', 0),
-            'low': ticker_data.get('low', 0),
-            'open': ticker_data.get('open', 0),
-            'previousClose': ticker_data.get('previousClose', 0)
-        }
-    
-    def _ensure_connection(self):
-        """确保已连接IBKR Gateway"""
-        if not self._connected:
-            self._connected = self._client.connect()
-            if not self._connected:
-                raise ConnectionError("Failed to connect to IBKR Gateway")
-    
-    def disconnect(self):
-        """断开连接"""
-        if self._connected:
-            self._client.disconnect()
-            self._connected = False
-```
-
-### Pattern 2: DataSourceFactory with exchange_id
-**What:** Modified factory to support exchange_id parameter for IBKR selection
-
-**When to use:** When creating data source instances in trading executor or price fetcher
-
-**Example:**
-```python
-# Source: Adapted from existing DataSourceFactory in factory.py
-class DataSourceFactory:
-    _sources: Dict[str, BaseDataSource] = {}
-    
-    @classmethod
-    def get_source(cls, market: str = None, exchange_id: str = None) -> BaseDataSource:
-        """
-        获取数据源，支持 exchange_id 优先策略
-        """
-        # D-08: exchange_id 优先级高于 market_category
-        if exchange_id == 'ibkr-live':
-            if 'ibkr' not in cls._sources:
-                from app.data_sources.ibkr import IBKRDataSource
-                cls._sources['ibkr'] = IBKRDataSource()
-            return cls._sources['ibkr']
-        
-        # D-03: 保持向后兼容，不传 exchange_id 时按 market 参数处理
-        if market:
-            return cls.get_source_by_market(market)
-        
-        # Default fallback
-        return cls.get_source_by_market("Crypto")
-```
-
-### Pattern 3: PriceFetcher Integration
-**What:** Modified PriceFetcher to pass exchange_id to DataSourceFactory
-
-**When to use:** When fetching current price for strategy execution
-
-**Example:**
-```python
-# Source: Adapted from existing price_fetcher.py
-class PriceFetcher:
-    def fetch_current_price(
-        self,
-        exchange: Any,
-        symbol: str,
-        market_type: Optional[str] = None,
-        market_category: str = "Crypto",
-        exchange_id: Optional[str] = None,  # NEW PARAMETER
-    ) -> Optional[float]:
-        # Use exchange_id if provided, otherwise fall back to market_category
-        if exchange_id:
-            ticker = DataSourceFactory.get_ticker(
-                market=market_category,
-                symbol=symbol,
-                exchange_id=exchange_id  # NEW PARAMETER
+    def _get_client(self):
+        if self._client is None:
+            config = GatewayConfig(
+                host=os.getenv('IBKR_HOST', 'ib-gateway'),
+                port=int(os.getenv('IBKR_PORT', 4004)),
+                client_id=int(os.getenv('IBKR_CLIENT_ID', 1))
             )
-        else:
-            ticker = DataSourceFactory.get_ticker(market_category, symbol)
+            self._client = IBKRClient(config)
+            self._client.connect()
+        return self._client
+```
+
+### Pattern 3: Connection Management
+
+**What:** Connect on first use, maintain persistent connection, explicit disconnect method
+
+**When to use:** All IBKR data source operations
+
+**Example:**
+```python
+# Source: Reference implementation + D-05, D-06
+def __init__(self):
+    self._client = None
+
+def get_kline(self, symbol, timeframe, limit, before_time=None):
+    client = self._get_client()  # Connect on first use
+    # ... fetch data
+
+def disconnect(self):
+    if self._client:
+        self._client.disconnect()
+        self._client = None
 ```
 
 ### Anti-Patterns to Avoid
 
-- **Don't create separate IBKR client instance per request:** D-04 requires internal reuse of IBKRClient instance across all requests. Create singleton in IBKRDataSource.__init__ and reuse it.
-- **Don't make get_ticker async:** D-12 requires synchronous blocking calls. The internal IBKRClient uses async requests with callbacks, but expose a synchronous wrapper to match BaseDataSource interface.
-- **Don't bypass rate limiter:** D-21-23 require using rate limiter for all IBKR API calls to avoid triggering built-in rate limits.
-- **Don't change backtest data source:** D-24 requires keeping backtest using original data sources (yfinance), not IBKRDataSource.
+- **Creating new connection per request:** Violates D-05 (reuse connection)
+- **Using async/await in DataSource methods:** Violates D-26 (sync interface for DataSourceFactory)
+- **Not implementing disconnect():** Violates D-06 (must provide disconnect)
+- **Changing BaseDataSource interface:** Will break existing data source implementations
 
 ## Don't Hand-Roll
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| IBKR connection management | Custom async-to-sync bridge | ibkr-datafetcher's IBKRClient with thread-based event loop | Handles complex threading, reconnection, client ID allocation automatically |
-| Rate limiting | Custom implementation | ibkr-datafetcher's RateLimiter | Implements IBKR-specific rate limits (6 RPM for historical data, identical symbol cooldown) |
-| Contract qualification | Manual contract validation | IBKRClient.qualify_contract() | Handles exchange-specific contract formats and validation |
-| Timeframe conversion | Custom mapping | ibkr-datafetcher's Timeframe enum | Maps standard timeframes (1m, 5m) to IBKR bar sizes automatically |
+| IBKR connection | Custom socket management | ib_insync.IB() | ib_insync handles IBKR Gateway protocol complexity |
+| Rate limiting | Build from scratch | ibkr-datafetcher RateLimiter | IBKR has 50-requests/second limit, complex rule set |
+| Contract qualification | Build contract resolver | IBKRClient.qualify_contract() | IBKR requires contract qualification before queries |
 
-**Key insight:** The ibkr-datafetcher project already implements battle-tested patterns for IBKR Gateway integration. Reuse these patterns instead of reinventing connection management, rate limiting, and contract handling.
+**Key insight:** IBKR API has strict rate limits (6 historical data requests/minute per contract) and complex connection semantics (client ID collision, Gateway authentication). ib_insync handles these intricacies.
 
 ## Common Pitfalls
 
-### Pitfall 1: IBKR Gateway Connection Failure
-**What goes wrong:** Data source fails to connect to IBKR Gateway, causing all strategy K-line/ticker requests to fail
+### Pitfall 1: Connection Not Reused Across Requests
 
-**Why it happens:** IBKR Gateway not running, wrong host/port configuration, or client ID conflict
+**What goes wrong:** Each get_kline() call creates new connection, causing performance issues and hitting rate limits faster
 
-**How to avoid:**
-- Verify IBKR Gateway is running before creating data source
-- Use environment variables (IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID) for configuration
-- Implement automatic reconnection (D-17) with exponential backoff
-- Provide clear error messages when connection fails
+**Why it happens:** Not implementing lazy initialization pattern (D-05)
 
-**Warning signs:**
-- "Unable to connect" errors in logs
-- Connection timeout after 60+ seconds
-- "clientId already in use" errors
+**How to avoid:** Use singleton pattern for IBKRClient within IBKRDataSource
 
-### Pitfall 2: Rate Limit Exceeded
-**What goes wrong:** IBKR API returns rate limit error, causing data fetch failures
+**Warning signs:** Slow response times, IBKR Gateway errors about "already in use"
 
-**Why it happens:** Too many requests in short period (exceeds 6 RPM for historical data)
+### Pitfall 2: Ignoring exchange_id in trading_executor
 
-**How to avoid:**
-- Use RateLimiter from ibkr-datafetcher (D-21)
-- Add delays between requests to same symbol (15 second cooldown)
-- Implement request queuing for bulk data fetches
+**What goes wrong:** trading_executor has exchange_id parameter but doesn't pass it to DataSourceFactory
 
-**Warning signs:**
-- "Historical data request failed: rate limit exceeded"
-- "No market data available" for recent requests
+**Why it happens:** DataSourceFactory.get_source() doesn't accept exchange_id (currently only accepts market)
 
-### Pitfall 3: Thread Safety Issues
-**What goes wrong:** Concurrent access to IBKRClient causes race conditions or deadlocks
+**How to avoid:** Extend DataSourceFactory per D-01, update trading_executor to pass exchange_id
 
-**Why it happens:** IBKRClient uses async event loop in dedicated thread, not thread-safe by default
+**Warning signs:** Strategies with exchange_id="ibkr-live" still use yfinance/finnhub
 
-**How to avoid:**
-- Use ibkr-datafetcher's threading pattern (dedicated thread with event loop)
-- Never call IBKRClient methods directly from multiple threads without synchronization
-- Use thread-safe rate limiter (implemented in ibkr-datafetcher)
+### Pitfall 3: Not Handling Connection Failures
 
-**Warning signs:**
-- Inconsistent data responses
-- Event loop stops unexpectedly
-- "Event loop is closed" errors
+**What goes wrong:** IBKR Gateway connection fails but no retry or error handling
 
-### Pitfall 4: Incorrect Timeframe Mapping
-**What goes wrong:** K-line data uses wrong timeframe (e.g., requesting 5m returns 1m data)
+**Why it happens:** IBKR Gateway may be restarted, network issues, client ID conflicts
 
-**Why it happens:** Incorrect timeframe mapping between QuantDinger format and IBKR format
+**How to avoid:** Implement reconnection logic with exponential backoff (reference implementation has reconnect() method)
 
-**How to avoid:**
-- Use Timeframe enum from ibkr-datafetcher for conversion
-- Verify timeframe mapping in test cases
-- Check IBKR bar size compatibility (not all timeframes supported)
+**Warning signs:** ConnectionError exceptions in logs, empty data returned
 
-**Warning signs:**
-- Data mismatch between expected and actual timeframe
-- Missing data for certain timeframes
+### Pitfall 4: Rate Limiter Not Shared Across Threads
+
+**What goes wrong:** Multiple strategy threads exceed IBKR rate limits independently
+
+**Why it happens:** Each thread creates its own IBKRDataSource or RateLimiter instance
+
+**How to avoid:** Use singleton RateLimiter in DataSourceFactory, share across all IBKRDataSource instances
+
+**Warning signs:** Rate limit errors increase under high strategy concurrency
 
 ## Code Examples
 
-### Example 1: Timeframe Mapping
-```python
-# Source: ibkr-datafetcher/src/ibkr_datafetcher/types.py
-from enum import Enum
-from typing import Optional
+### Get K-line Implementation
 
-class Timeframe(Enum):
-    """Supported timeframes with IBKR format mapping"""
+```python
+# Source: Based on ibkr_client.py get_historical_bars + BaseDataSource interface
+def get_kline(
+    self,
+    symbol: str,
+    timeframe: str,
+    limit: int,
+    before_time: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    获取K线数据 - IBKR implementation
+    """
+    client = self._get_client()
     
-    MINUTE_1 = ("1m", "60 S", "1 D")
-    MINUTE_5 = ("5m", "300 S", "1 D")
-    MINUTE_15 = ("15m", "900 S", "1 D")
-    MINUTE_30 = ("30m", "1800 S", "1 D")
-    HOUR_1 = ("1H", "3600 S", "1 D")
-    HOUR_4 = ("4H", "14400 S", "1 D")
-    DAY_1 = ("1D", "1 D", "1 Y")
+    # Convert symbol to IBKR contract
+    contract = self._make_contract(symbol, "STK", "SMART", "USD")
     
-    def __init__(self, std_format: str, ibkr_bar_size: str, ibkr_max_duration: str):
-        self.std_format = std_format
-        self.ibkr_bar_size = ibkr_bar_size
-        self.ibkr_max_duration = ibkr_max_duration
+    # Map timeframe to IBKR format
+    ibkr_timeframe = self._map_timeframe(timeframe)
     
-    @classmethod
-    def from_str(cls, timeframe: str) -> "Timeframe":
-        """Convert standard format to Timeframe enum"""
-        for tf in cls:
-            if tf.std_format == timeframe:
-                return tf
-        raise ValueError(f"Unsupported timeframe: {timeframe}")
+    # Calculate duration needed
+    duration = self._calculate_duration(timeframe, limit)
+    
+    # Get historical bars
+    bars = client.get_historical_bars(
+        contract=contract,
+        timeframe=ibkr_timeframe,
+        duration=duration
+    )
+    
+    # Convert to BaseDataSource format
+    return [
+        self.format_kline(
+            timestamp=b.timestamp,
+            open_price=b.open,
+            high=b.high,
+            low=b.low,
+            close=b.close,
+            volume=b.volume
+        )
+        for b in bars
+    ]
 ```
 
-### Example 2: Synchronous Ticker Request
-```python
-# Source: Adapted from ibkr-client pattern + BaseDataSource synchronous requirement
-def _get_ticker_sync(self, contract) -> dict:
-    """Synchronous wrapper for async reqMktData"""
-    result = {}
-    request_id = self._generate_request_id()
-    
-    # Store pending request
-    self._pending_requests[request_id] = threading.Event()
-    
-    # Make async request
-    self._ib.reqMktData(request_id, contract, "", False, False)
-    
-    # Wait for callback with timeout
-    event = self._pending_requests[request_id]
-    if not event.wait(timeout=10):
-        del self._pending_requests[request_id]
-        raise TimeoutError("Ticker request timeout")
-    
-    return self._pending_ticker_data.pop(request_id)
+### IBKR Contract Creation
 
-def _on_tick(self, request_id: int, tick):
-    """Callback for market data updates"""
-    if request_id in self._pending_requests:
-        self._pending_ticker_data[request_id] = {
-            'last': tick.last,
-            'change': tick.change,
-            'changePercent': tick.changePercent,
-            'high': tick.high,
-            'low': tick.low,
-            'open': tick.open,
-            'previousClose': tick.prevClose
-        }
-        event = self._pending_requests.pop(request_id)
-        event.set()
+```python
+# Source: Based on ibkr_client.py make_contract
+def _make_contract(self, symbol: str, sec_type: str, exchange: str, currency: str):
+    """Create IBKR contract based on security type"""
+    from ib_insync import Stock, Forex, Future, Index
+    
+    if sec_type == "STK":
+        return Stock(symbol, exchange, currency)
+    elif sec_type == "IND":
+        return Index(symbol, exchange, currency)
+    elif sec_type == "FUT":
+        return Future(symbol, "", exchange, currency=currency)
+    elif sec_type == "CASH":
+        return Forex(symbol=symbol, exchange=exchange, currency=currency)
+    else:
+        raise ValueError(f"Unsupported sec_type: {sec_type}")
 ```
 
-### Example 3: Connection with Auto-Reconnect
+### DataSourceFactory Extension
+
 ```python
-# Source: Adapted from ibkr-datafetcher/ibkr_client.py
-def _ensure_connected(self, max_retries: int = 3) -> bool:
-    """Ensure connection to IBKR Gateway with auto-reconnect"""
-    if self._connected and self._client.is_connected():
-        return True
+# Source: Extended from existing factory.py
+@classmethod
+def get_source(cls, market: str, exchange_id: Optional[str] = None) -> BaseDataSource:
+    """
+    获取数据源
     
-    # Try to reconnect
-    for attempt in range(max_retries):
-        if self._client.connect():
-            self._connected = True
-            logger.info(f"Connected to IBKR Gateway on attempt {attempt + 1}")
-            return True
-        logger.warning(f"Connection attempt {attempt + 1} failed, retrying...")
-        time.sleep(5)
+    Args:
+        market: 市场类型 (Crypto, USStock, AShare, etc.)
+        exchange_id: 交易所ID (e.g., 'ibkr-live')
+        
+    Returns:
+        数据源实例
+    """
+    # D-08: exchange_id 优先级高于 market_category
+    if exchange_id == 'ibkr-live':
+        if 'ibkr' not in cls._sources:
+            from app.data_sources.ibkr import IBKRDataSource
+            cls._sources['ibkr'] = IBKRDataSource()
+        return cls._sources['ibkr']
     
-    logger.error("Failed to connect to IBKR Gateway after {max_retries} attempts")
-    return False
+    # D-03: 向后兼容
+    if market not in cls._sources:
+        cls._sources[market] = cls._create_source(market)
+    return cls._sources[market]
+```
+
+### Rate Limiter Integration
+
+```python
+# Source: Adapted from ibkr-datafetcher/rate_limiter.py
+# Integrate into existing QuantDinger rate_limiter.py
+_ibkr_limiter = RateLimiter(
+    hist_requests_per_minute=6,
+    news_requests_per_minute=3,
+    identical_cooldown=15.0,
+    same_contract_limit=6,
+    same_contract_window=2.0
+)
+
+def get_ibkr_limiter() -> RateLimiter:
+    """获取 IBKR 限流器"""
+    return _ibkr_limiter
 ```
 
 ## State of the Art
 
 | Old Approach | Current Approach | When Changed | Impact |
 |--------------|------------------|--------------|--------|
-| yfinance for US stock K-lines | IBKRDataSource for ibkr-live strategies | Phase 1 | Data consistency between data source and order execution |
-| Finnhub for real-time quotes | IBKRDataSource for ibkr-live strategies | Phase 1 | Real-time data from same source as trading |
-| Market-based data source selection | Exchange ID-based selection | Phase 1 | More flexible, supports multiple exchanges per market type |
+| yfinance/Finnhub for US stocks | IBKR native data | Phase 1 | Same data source for trading and market data |
+| No exchange_id support | exchange_id parameter in DataSourceFactory | Phase 1 | Enables multi-exchange strategies |
+| Connection per request | Persistent connection with lazy init | Phase 1 | Better performance, rate limit management |
 
 **Deprecated/outdated:**
-- yfinance: Still used for non-ibkr-live strategies and backtesting
-- Finnhub: Still used as fallback for US stock quotes
+
+- yfinance for live trading: Being replaced by IBKR for consistency
+- Finnhub as primary quote source: Now secondary/backup for IBKR
 
 ## Assumptions Log
 
-> List all claims tagged `[ASSUMED]` in this research. The planner and discuss-phase use this section to identify decisions that need user confirmation before execution.
-
 | # | Claim | Section | Risk if Wrong |
-|---|-------|---------|---------------|
-| A1 | trading_executor has access to exchange_id from strategy configuration | INT-02 | If exchange_id not available in strategy config, INT-02 cannot be implemented as described - need alternative approach |
-| A2 | PriceFetcher is the only entry point for real-time price in strategy execution | INT-02 | If other components also fetch prices, need to update them as well |
-| A3 | IBKR Gateway will be running on same machine (127.0.0.1) | D-16 | If IBKR Gateway runs remotely, need network configuration |
-| A4 | IBKR data source only needed for live trading, not backtesting | D-24 | If backtesting also needs IBKR data, architecture changes required |
-| A5 | No existing IBKR data source tests in backend_api_python/tests/ | Validation | If tests exist, need to verify compatibility |
+|----|-------|---------|---------------|
+| A1 | trading_executor.py needs modification to pass exchange_id to DataSourceFactory | INT-02 | Medium - Current code has exchange_id param but doesn't use it |
+| A2 | IBKRConfig can use env vars similar to other data sources | Configuration | Low - Standard pattern in QuantDinger |
+| A3 | get_ticker can use IBKRClient.get_quote() pattern | IBKR-03 | Medium - Need to verify IBKRClient has quote method |
 
-**If this table is empty:** All claims in this research were verified or cited — no user confirmation needed.
+A1 verified: trading_executor.py line 46 shows `exchange: Any, symbol: str, market_type: str, exchange_id: str` - parameter exists but not passed to DataSourceFactory.
 
 ## Open Questions
 
-1. **How does trading_executor pass exchange_id to PriceFetcher?**
-   - What we know: trading_executor has strategy configuration with exchange_id
-   - What's unclear: Current PriceFetcher only accepts market_category - need to verify how to add exchange_id parameter
-   - Recommendation: Add exchange_id as optional parameter to PriceFetcher.fetch_current_price(), pass through from strategy config
+1. **How to handle IBKR rate limiting across multiple strategies?**
+   - What we know: Reference implementation has RateLimiter with 6 RPM per contract
+   - What's unclear: How to share rate limiter across multiple strategy threads
+   - Recommendation: Use singleton RateLimiter instance, integrate with QuantDinger's rate_limiter.py
 
-2. **What happens if IBKR Gateway is not running when DataSourceFactory is called?**
-   - What we know: Connection established on first use (D-05), should handle connection failure gracefully
-   - What's unclear: Error handling strategy - raise exception or return empty data?
-   - Recommendation: Raise ConnectionError with clear message, strategy executor should catch and handle gracefully
+2. **Should IBKRDataSource use kline_fetcher caching?**
+   - What we know: D-19 mentions kline_fetcher caching, but this is for other data sources
+   - What's unclear: Whether IBKR should also use database caching or call IBKR directly
+   - Recommendation: Call IBKR directly (no database caching initially), follow D-20 (no ticker caching)
 
-3. **Should IBKRDataSource singleton be shared across all requests or per-exchange?**
-   - What we know: D-04 says internal reuse of IBKRClient instance
-   - What's unclear: If multiple strategies use same ibkr-live, should they share connection?
-   - Recommendation: Use singleton pattern in DataSourceFactory, share IBKRDataSource instance for all ibkr-live requests
+3. **How to handle connection in multi-threaded trading executor?**
+   - What we know: trading_executor can run 64 threads (max_threads config)
+   - What's unclear: Single IBKR connection thread-safe?
+   - Recommendation: IBKRClient is thread-safe (uses locks), reuse single connection across threads
 
 ## Environment Availability
 
-> Step 2.6: SKIPPED (no external dependencies identified beyond existing environment)
+> Step 2.6: SKIPPED (no external dependencies identified)
 
-- Python 3.13.11: Available (existing project requirement)
-- ib_insync 0.9.86: Available (verified in environment)
-- IBKR Gateway: Required but not installed - user's responsibility (D-16: managed via environment variables)
-- pytest: Available in backend_api_python/tests/ (existing project)
-
-**Note:** IBKR Gateway is external dependency that must be running for IBKR data source to work. This is configured via environment variables (IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID) as per D-16.
+This is a code/configuration-only phase. The external dependency (IBKR Gateway) is already assumed to be running and accessible via environment variables.
 
 ## Validation Architecture
 
 ### Test Framework
 | Property | Value |
 |----------|-------|
-| Framework | pytest |
-| Config file | none detected |
-| Quick run command | `pytest backend_api_python/tests/test_ibkr_client.py -xvs` |
-| Full suite command | `pytest backend_api_python/tests/ -xvs` |
+| Framework | pytest (existing) |
+| Config file | pytest.ini (if exists) |
+| Quick run command | `pytest backend_api_python/tests/test_ibkr_data_source.py -x` (to be created) |
+| Full suite command | `pytest backend_api_python/tests/ -v` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| IBKR-01 | Create IBKRDataSource class | unit | `pytest backend_api_python/tests/test_ibkr_data_source.py -xvs` | ❌ Need to create |
-| IBKR-02 | get_kline() returns formatted K-lines | unit | `pytest backend_api_python/tests/test_ibkr_data_source.py::test_get_kline -xvs` | ❌ Need to create |
-| IBKR-03 | get_ticker() returns ticker dict | unit | `pytest backend_api_python/tests/test_ibkr_data_source.py::test_get_ticker -xvs` | ❌ Need to create |
-| IBKR-04 | connect/disconnect handles connection | integration | `pytest backend_api_python/tests/test_ibkr_data_source.py::test_connection -xvs` | ❌ Need to create |
-| INT-01 | DataSourceFactory supports exchange_id | unit | `pytest backend_api_python/tests/test_data_source_factory.py -xvs` | ❌ Need to create |
-| INT-02 | trading_executor passes exchange_id | unit | `pytest backend_api_python/tests/test_trading_executor.py::test_exchange_id -xvs` | ❌ Need to verify/update |
-| INT-03 | exchange_id="ibkr-live" uses IBKRDataSource | integration | `pytest backend_api_python/tests/test_data_source_integration.py -xvs` | ❌ Need to create |
-
-### Sampling Rate
-- **Per task commit:** `pytest backend_api_python/tests/test_ibkr_data_source.py -xvs`
-- **Per wave merge:** `pytest backend_api_python/tests/ -xvs`
-- **Phase gate:** Full suite green before `/gsd-verify-work`
+| IBKR-01 | IBKRDataSource class creation | unit | `pytest tests/test_ibkr_data_source.py::test_class_creation -x` | ❌ Need to create |
+| IBKR-02 | get_kline returns formatted data | unit | `pytest tests/test_ibkr_data_source.py::test_get_kline -x` | ❌ Need to create |
+| IBKR-03 | get_ticker returns real-time quote | unit | `pytest tests/test_ibkr_data_source.py::test_get_ticker -x` | ❌ Need to create |
+| IBKR-04 | Connection management | unit | `pytest tests/test_ibkr_data_source.py::test_connection -x` | ❌ Need to create |
+| INT-01 | DataSourceFactory with exchange_id | unit | `pytest tests/test_ibkr_integration.py::test_factory_exchange_id -x` | ❌ Need to create |
+| INT-02 | trading_executor passes exchange_id | unit | `pytest tests/test_ibkr_integration.py::test_executor_passes_exchange_id -x` | ❌ Need to create |
+| INT-03 | ibkr-live triggers IBKRDataSource | unit | `pytest tests/test_ibkr_integration.py::test_auto_select_ibkr -x` | ❌ Need to create |
 
 ### Wave 0 Gaps
-- [ ] `backend_api_python/tests/test_ibkr_data_source.py` — covers IBKR-01, IBKR-02, IBKR-03, IBKR-04
-- [ ] `backend_api_python/tests/test_data_source_factory.py` — covers INT-01
-- [ ] Framework install: pytest already available in backend_api_python
+- [ ] `backend_api_python/tests/test_ibkr_data_source.py` — covers IBKR-01 to IBKR-04
+- [ ] `backend_api_python/tests/test_ibkr_integration.py` — covers INT-01 to INT-03
+- [ ] `backend_api_python/app/data_sources/ibkr.py` — IBKRDataSource implementation
 
-Existing test infrastructure:
-- `backend_api_python/tests/test_ibkr_client.py` exists - may provide reusable test patterns
-- `backend_api_python/tests/test_price_fetcher.py` exists - will need to update for exchange_id support
+*(If no gaps: "None — existing test infrastructure covers all phase requirements")*
 
 ## Security Domain
 
-> Not applicable - this is data source integration, not security-critical component. No ASVS categories apply to this implementation.
+### Applicable ASVS Categories
+
+| ASVS Category | Applies | Standard Control |
+|---------------|---------|-----------------|
+| V2 Authentication | no | IBKR uses API credentials, not application auth |
+| V3 Session Management | no | IBKR connection is stateless per request |
+| V4 Access Control | no | IBKR data is strategy-specific, not user-access-controlled |
+| V5 Input validation | yes | Symbol validation, contract type validation |
+| V6 Cryptography | no | IBKR Gateway uses TLS, not app-level crypto |
+
+### Known Threat Patterns for IBKR Integration
+
+| Pattern | STRIDE | Standard Mitigation |
+|---------|--------|---------------------|
+| Invalid symbol causes contract qualification failure | Tampering | Validate symbol format before API call |
+| Rate limit exhaustion causes DoS | Denial of Service | Use RateLimiter from reference implementation |
+| Connection leak in multi-threaded environment | Resource Exhaustion | Singleton pattern for connection, explicit disconnect |
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `/home/workspace/ws/ibkr-datafetcher/src/ibkr_datafetcher/ibkr_client.py` - Reference implementation with connection management, threading pattern, async-to-sync bridge
-- `/home/workspace/ws/ibkr-datafetcher/src/ibkr_datafetcher/rate_limiter.py` - Reference implementation with IBKR-specific rate limiting
-- `/home/workspace/ws/QuantDinger/backend_api_python/app/data_sources/base.py` - BaseDataSource interface definition
-- `/home/workspace/ws/QuantDinger/backend_api_python/app/data_sources/factory.py` - DataSourceFactory current implementation
+- `/home/workspace/ws/ibkr-datafetcher/src/ibkr_datafetcher/ibkr_client.py` - IBKRClient implementation (source of truth)
+- `/home/workspace/ws/ibkr-datafetcher/src/ibkr_datafetcher/rate_limiter.py` - Rate limiter implementation
+- `/home/workspace/ws/QuantDinger/backend_api_python/app/data_sources/base.py` - BaseDataSource interface
+- `/home/workspace/ws/QuantDinger/backend_api_python/app/data_sources/factory.py` - DataSourceFactory pattern
+- `pip3 show ib-insync` - Version verification (0.9.86)
 
 ### Secondary (MEDIUM confidence)
-- `/home/workspace/ws/QuantDinger/backend_api_python/app/services/price_fetcher.py` - Current PriceFetcher implementation showing integration point
-- `/home/workspace/ws/QuantDinger/backend_api_python/app/strategies/runners/single_symbol_runner.py` - Strategy execution showing data source usage
+- `/home/workspace/ws/QuantDinger/backend_api_python/app/services/trading_executor.py` - Integration point verification (line 46 has exchange_id param)
+- `/home/workspace/ws/QuantDinger/backend_api_python/tests/test_ibkr_client.py` - Existing IBKR testing patterns
 
 ### Tertiary (LOW confidence)
-- N/A - all critical information obtained from primary sources
+- [ib_insync documentation](https://ib-insync.readthedocs.io/) - API details (needs verification)
 
 ## Metadata
 
 **Confidence breakdown:**
-- Standard Stack: HIGH - ib_insync is the official IBKR library, verified version installed
-- Architecture: HIGH - Based on verified existing patterns from ibkr-datafetcher and current codebase
-- Pitfalls: HIGH - Common issues with IBKR Gateway integration well-documented in reference implementation
+- Standard stack: HIGH - ib_insync version verified, reference implementation examined
+- Architecture: HIGH - DataSourceFactory pattern well-established in codebase
+- Pitfalls: MEDIUM - Based on IBKR API constraints and QuantDinger patterns
 
 **Research date:** 2026-04-08
-**Valid until:** 2026-05-08 (30 days for stable library)
+**Valid until:** 2026-05-08 (30 days - stable technology)
