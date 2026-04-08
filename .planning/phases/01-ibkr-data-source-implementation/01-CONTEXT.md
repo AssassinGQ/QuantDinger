@@ -28,10 +28,26 @@
 - **D-08:** exchange_id 优先级高于 market_category
 - **D-09:** 架构支持后续扩展港股、外汇数据
 
+### Use Case 1: K线获取
+- **D-10:** 支持所有标准周期：1m, 5m, 15m, 30m, 1H, 4H, 1D
+- **D-11:** 股票代码使用 IBKR 格式：AAPL, MSFT, GOOGL
+
+### Use Case 2: 实时报价
+- **D-12:** 使用 WebSocket 推送模式获取实时报价
+- **D-13:** 支持价格变化实时推送
+
+### Use Case 3: 数据源切换
+- **D-14:** 策略配置中包含 exchange_id
+- **D-15:** trading_executor 将 exchange_id 传递给 DataSourceFactory
+
+### Use Case 4: 连接管理
+- **D-16:** 连接参数通过配置文件/环境变量管理（IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID）
+- **D-17:** 实现自动重连机制，连接断开后自动重连
+
 ### Claude's Discretion
-- IBKR Gateway 连接参数的具体配置方式
 - 数据重试和错误处理的具体实现细节
 - K线数据格式的微调
+- WebSocket 连接的具体实现细节
 
 </decisions>
 
