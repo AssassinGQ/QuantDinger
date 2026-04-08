@@ -46,7 +46,8 @@
 - **D-18:** 使用成员变量 `_pending_requests` 字典 + request_id 进行请求-回调通信
 
 ### 缓存策略
-- **D-19:** 缓存按现有系统方式，不增强（get_kline 已有数据库缓存，get_ticker 无缓存）
+- **D-19:** get_kline 缓存：数据库1m点 → 数据库5m点 → 数据库k线 → 拉网（调用 kline_fetcher.get_kline）
+- **D-20:** get_ticker 缓存：无缓存，直接调用 IBKRClient 获取
 
 ### Claude's Discretion
 - 数据重试和错误处理的具体实现细节
