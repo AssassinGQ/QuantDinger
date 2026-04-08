@@ -104,3 +104,144 @@ class TestDisconnect:
         assert ds._client is None
         # Should not raise
         ds.disconnect()
+
+
+class TestGetKline:
+    """Test get_kline method."""
+
+    def test_get_kline_returns_list_of_dicts(self):
+        """get_kline returns list of kline dicts."""
+        from unittest.mock import MagicMock, patch
+        from ibkr_datafetcher.types import KlineBar, Timeframe, resolve_timeframe, SymbolConfig
+        from datetime import datetime, timezone
+
+        ds = IBKRDataSource()
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_client.make_contract.return_value = MagicMock()
+
+        # Use correct Timeframe enum value (M1 = 1 min)
+        tf = resolve_timeframe("1m")
+        mock_client.get_historical_bars.return_value = [
+            KlineBar(
+                symbol="AAPL",
+                timeframe=tf,
+                timestamp=1700000000,
+                open=150.0,
+                high=151.0,
+                low=149.0,
+                close=150.5,
+                volume=1000000,
+                bar_count=100,
+                bar_time=datetime(2023, 11, 15, 0, 0, tzinfo=timezone.utc),
+            )
+        ]
+        ds._client = mock_client
+
+        result = ds.get_kline(symbol="AAPL", timeframe="1m", limit=100)
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert "time" in result[0]
+        assert "open" in result[0]
+        assert "high" in result[0]
+        assert "low" in result[0]
+        assert "close" in result[0]
+        assert "volume" in result[0]
+
+    def test_get_kline_returns_empty_on_error(self):
+        """get_kline returns empty list on error instead of raising."""
+        from unittest.mock import MagicMock, patch
+
+        ds = IBKRDataSource()
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_client.make_contract.side_effect = Exception("Invalid contract")
+        ds._client = mock_client
+
+        result = ds.get_kline(symbol="INVALID", timeframe="1m", limit=100)
+
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_get_kline_returns_empty_when_not_connected_and_connect_fails(self):
+        """get_kline returns empty list when connection fails."""
+        from unittest.mock import MagicMock, patch
+
+        ds = IBKRDataSource()
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = False
+        mock_client.connect.return_value = False
+        ds._client = mock_client
+
+        result = ds.get_kline(symbol="AAPL", timeframe="1m", limit=100)
+
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+
+class TestGetKlineCache:
+    """Test get_kline cache integration per D-19."""
+
+    def test_get_kline_uses_kline_fetcher_cache(self):
+        """get_kline should check kline_fetcher cache before network call."""
+        from unittest.mock import MagicMock, patch
+        from ibkr_datafetcher.types import KlineBar, resolve_timeframe
+        from datetime import datetime, timezone
+
+        ds = IBKRDataSource()
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_client.make_contract.return_value = MagicMock()
+
+        # Mock kline_fetcher.get_kline to return cached data (>= limit to pass cache check)
+        cached_klines = [
+            {'time': 1700000000 + i*60, 'open': 150.0, 'high': 151.0, 'low': 149.0, 'close': 150.5, 'volume': 1000000}
+            for i in range(100)  # 100 items = limit
+        ]
+
+        with patch('app.data_sources.ibkr.kline_fetcher') as mock_fetcher:
+            mock_fetcher.get_kline.return_value = cached_klines
+            result = ds.get_kline(symbol="AAPL", timeframe="1m", limit=100)
+
+            # kline_fetcher should be called with market="USStock"
+            mock_fetcher.get_kline.assert_called_once()
+            # Should return cached data (limit=100 satisfied)
+            assert len(result) == 100
+
+    def test_get_kline_network_call_on_cache_miss(self):
+        """get_kline falls back to network when cache is empty."""
+        from unittest.mock import MagicMock, patch
+        from ibkr_datafetcher.types import KlineBar, resolve_timeframe
+        from datetime import datetime, timezone
+
+        ds = IBKRDataSource()
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_client.make_contract.return_value = MagicMock()
+
+        tf = resolve_timeframe("1m")
+        mock_client.get_historical_bars.return_value = [
+            KlineBar(
+                symbol="AAPL",
+                timeframe=tf,
+                timestamp=1700000000,
+                open=150.0,
+                high=151.0,
+                low=149.0,
+                close=150.5,
+                volume=1000000,
+                bar_count=100,
+                bar_time=datetime(2023, 11, 15, 0, 0, tzinfo=timezone.utc),
+            )
+        ]
+        ds._client = mock_client
+
+        # Simulate cache miss (empty cache)
+        with patch('app.data_sources.ibkr.kline_fetcher') as mock_fetcher:
+            mock_fetcher.get_kline.return_value = []
+            result = ds.get_kline(symbol="AAPL", timeframe="1m", limit=100)
+
+            # Network call should be made since cache was empty
+            assert len(result) > 0
+            mock_client.get_historical_bars.assert_called_once()

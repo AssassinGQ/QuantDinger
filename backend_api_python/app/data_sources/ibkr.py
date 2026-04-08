@@ -11,6 +11,7 @@ from ibkr_datafetcher.ibkr_client import IBKRClient
 from ibkr_datafetcher.types import KlineBar, SymbolConfig, Timeframe, resolve_timeframe
 
 from app.data_sources.base import BaseDataSource
+from app.services import kline_fetcher
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,23 @@ class IBKRDataSource(BaseDataSource):
         Returns:
             K线数据列表
         """
+        # Per D-19: Check cache first (database 1m -> database 5m -> database kline -> network)
+        # IBKR data source uses USStock market for caching
+        try:
+            cached_klines = kline_fetcher.get_kline(
+                market="USStock",
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=limit,
+                before_time=before_time
+            )
+            if cached_klines and len(cached_klines) >= limit:
+                logger.debug(f"Using cached klines for {symbol} {timeframe}")
+                return cached_klines
+        except Exception as e:
+            logger.debug(f"Cache check failed for {symbol}: {e}")
+
+        # Proceed to network call if cache miss
         if not self.is_connected():
             if not self.connect():
                 logger.error("Failed to connect to IBKR Gateway")
@@ -135,6 +153,7 @@ class IBKRDataSource(BaseDataSource):
             # 创建合约配置
             symbol_config = SymbolConfig(
                 symbol=symbol,
+                name=symbol,  # For US stocks, name is same as symbol
                 sec_type="STK",
                 exchange="SMART",
                 currency="USD",
@@ -199,6 +218,7 @@ class IBKRDataSource(BaseDataSource):
             # 创建合约配置
             symbol_config = SymbolConfig(
                 symbol=symbol,
+                name=symbol,  # For US stocks, name is same as symbol
                 sec_type="STK",
                 exchange="SMART",
                 currency="USD",
