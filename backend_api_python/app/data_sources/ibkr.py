@@ -11,6 +11,7 @@ from ibkr_datafetcher.ibkr_client import IBKRClient
 from ibkr_datafetcher.types import KlineBar, SymbolConfig, Timeframe, resolve_timeframe
 
 from app.data_sources.base import BaseDataSource
+from app.data_sources.rate_limiter import get_ibkr_limiter
 from app.services import kline_fetcher
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class IBKRDataSource(BaseDataSource):
         )
         self._client: Optional[IBKRClient] = None
         self._pending_requests: Dict[int, Any] = {}
+        self._rate_limiter = get_ibkr_limiter()
 
     @property
     def client(self) -> IBKRClient:
@@ -140,6 +142,9 @@ class IBKRDataSource(BaseDataSource):
             logger.debug(f"Cache check failed for {symbol}: {e}")
 
         # Proceed to network call if cache miss
+        # Per D-23: Acquire rate limiter before API call
+        self._rate_limiter.acquire(request_type="hist", symbol=symbol)
+
         if not self.is_connected():
             if not self.connect():
                 logger.error("Failed to connect to IBKR Gateway")
@@ -208,6 +213,9 @@ class IBKRDataSource(BaseDataSource):
         Returns:
             报价数据字典，包含 'last' 键
         """
+        # Per D-22: Acquire rate limiter before API call
+        self._rate_limiter.acquire(request_type="hist", symbol=symbol)
+
         if not self.is_connected():
             if not self.connect():
                 logger.error("Failed to connect to IBKR Gateway")
