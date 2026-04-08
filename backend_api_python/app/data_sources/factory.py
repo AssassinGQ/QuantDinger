@@ -16,16 +16,24 @@ class DataSourceFactory:
     _sources: Dict[str, BaseDataSource] = {}
     
     @classmethod
-    def get_source(cls, market: str) -> BaseDataSource:
+    def get_source(cls, market: str, exchange_id: Optional[str] = None) -> BaseDataSource:
         """
         获取指定市场的数据源
-        
+
         Args:
             market: 市场类型 (Crypto, USStock, AShare, HShare)
-            
+            exchange_id: 交易所ID (例如: 'ibkr-live'), 优先级高于 market
+
         Returns:
             数据源实例
         """
+        # Per D-08: exchange_id takes priority over market
+        if exchange_id == 'ibkr-live':
+            if 'ibkr-live' not in cls._sources:
+                from app.data_sources.ibkr import IBKRDataSource
+                cls._sources['ibkr-live'] = IBKRDataSource()
+            return cls._sources['ibkr-live']
+
         if market not in cls._sources:
             cls._sources[market] = cls._create_source(market)
         return cls._sources[market]
