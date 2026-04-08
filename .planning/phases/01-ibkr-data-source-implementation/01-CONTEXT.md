@@ -49,6 +49,14 @@
 - **D-19:** get_kline 缓存：数据库1m点 → 数据库5m点 → 数据库k线 → 拉网（调用 kline_fetcher.get_kline）
 - **D-20:** get_ticker 缓存：无缓存，直接调用 IBKRClient 获取
 
+### 限流策略
+- **D-21:** 在现有 RateLimiter 中添加 IBKR 限流器
+- **D-22:** 对 get_ticker 添加限流保护，防止触发 IBKR 内置限流
+- **D-23:** get_kline 限流：复用现有 kline_fetcher 逻辑（已有数据库缓存减轻 API 压力）
+
+### 回测场景
+- **D-24:** 回测保持原数据源，不使用 IBKRDataSource（无论原数据源是什么）
+
 ### Claude's Discretion
 - 数据重试和错误处理的具体实现细节
 - K线数据格式的微调
