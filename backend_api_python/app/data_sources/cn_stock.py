@@ -14,12 +14,13 @@ Priority (HShare): Tencent > Eastmoney > yfinance > akshare
 import json
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 import requests
 
 import yfinance as yf
 
 from app.data_sources.base import BaseDataSource
-from app.data_sources.us_stock import USStockDataSource
+from app.data_sources.us_stock import USStockDataSource, _yf_executor, _YF_TIMEOUT_SEC
 from app.data_sources.data_manager import get_ashare_data_manager, AShareDataManager
 from app.data_sources.circuit_breaker import get_ashare_circuit_breaker, get_realtime_circuit_breaker
 from app.data_sources.rate_limiter import get_request_headers, get_tencent_limiter, get_eastmoney_limiter
@@ -835,43 +836,16 @@ class HShareDataSource(BaseDataSource, TencentDataMixin):
         except Exception as e:
             logger.debug(f"Eastmoney ticker failed for {symbol}: {e}")
         
-        # 第三备选: yfinance
+        # 第三备选: yfinance（通过线程池限时执行，防止代理卡死）
         try:
-            import yfinance as yf
-            # 港股在 yfinance 中的格式是 XXXX.HK
             yf_symbol = f"{symbol.zfill(4)}.HK"
-            ticker = yf.Ticker(yf_symbol)
-            
-            # Try fast_info first (faster)
-            try:
-                info = ticker.fast_info
-                if hasattr(info, 'last_price') and info.last_price and info.last_price > 0:
-                    return {
-                        'last': float(info.last_price),
-                        'change': float(info.last_price - info.previous_close) if hasattr(info, 'previous_close') and info.previous_close else 0,
-                        'changePercent': float((info.last_price - info.previous_close) / info.previous_close * 100) if hasattr(info, 'previous_close') and info.previous_close else 0,
-                        'high': float(info.day_high) if hasattr(info, 'day_high') and info.day_high else float(info.last_price),
-                        'low': float(info.day_low) if hasattr(info, 'day_low') and info.day_low else float(info.last_price),
-                        'open': float(info.open) if hasattr(info, 'open') and info.open else float(info.last_price),
-                        'previousClose': float(info.previous_close) if hasattr(info, 'previous_close') and info.previous_close else 0
-                    }
-            except Exception:
-                pass
-            
-            # Fallback to history
-            hist = ticker.history(period="2d")
-            if hist is not None and not hist.empty:
-                current = float(hist['Close'].iloc[-1])
-                prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current
-                return {
-                    'last': current,
-                    'change': current - prev_close,
-                    'changePercent': (current - prev_close) / prev_close * 100 if prev_close else 0,
-                    'high': float(hist['High'].iloc[-1]),
-                    'low': float(hist['Low'].iloc[-1]),
-                    'open': float(hist['Open'].iloc[-1]),
-                    'previousClose': prev_close
-                }
+            result = _yf_executor.submit(
+                USStockDataSource._yf_get_ticker, yf_symbol
+            ).result(timeout=_YF_TIMEOUT_SEC)
+            if result:
+                return result
+        except FuturesTimeoutError:
+            logger.warning(f"yfinance get_ticker timed out after {_YF_TIMEOUT_SEC}s for HK:{symbol}")
         except Exception as e:
             logger.debug(f"yfinance ticker failed for {symbol}: {e}")
         
