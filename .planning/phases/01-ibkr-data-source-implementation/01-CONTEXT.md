@@ -33,8 +33,8 @@
 - **D-11:** 股票代码使用 IBKR 格式：AAPL, MSFT, GOOGL
 
 ### Use Case 2: 实时报价
-- **D-12:** 使用 WebSocket 推送模式获取实时报价
-- **D-13:** 支持价格变化实时推送
+- **D-12:** 同步阻塞调用 get_ticker()，IBKRClient 内部使用异步请求+回调
+- **D-13:** 策略执行时同时调用 get_ticker 和 get_kline（保持现有逻辑不变）
 
 ### Use Case 3: 数据源切换
 - **D-14:** 策略配置中包含 exchange_id
@@ -43,11 +43,14 @@
 ### Use Case 4: 连接管理
 - **D-16:** 连接参数通过配置文件/环境变量管理（IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID）
 - **D-17:** 实现自动重连机制，连接断开后自动重连
+- **D-18:** 使用成员变量 `_pending_requests` 字典 + request_id 进行请求-回调通信
+
+### 缓存策略
+- **D-19:** 缓存按现有系统方式，不增强（get_kline 已有数据库缓存，get_ticker 无缓存）
 
 ### Claude's Discretion
 - 数据重试和错误处理的具体实现细节
 - K线数据格式的微调
-- WebSocket 连接的具体实现细节
 
 </decisions>
 
