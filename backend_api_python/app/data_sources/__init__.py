@@ -33,6 +33,7 @@ from app.data_sources.data_manager import (
     AShareDataManager,
     get_ashare_data_manager
 )
+from app.data_sources.ibkr import IBKRDataSource
 
 __all__ = [
     # 工厂
@@ -57,5 +58,7 @@ __all__ = [
     # 数据管理器
     'AShareDataManager',
     'get_ashare_data_manager',
+    # IBKR 数据源
+    'IBKRDataSource',
 ]
 
