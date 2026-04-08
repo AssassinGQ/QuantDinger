@@ -245,3 +245,62 @@ class TestGetKlineCache:
             # Network call should be made since cache was empty
             assert len(result) > 0
             mock_client.get_historical_bars.assert_called_once()
+
+
+class TestGetTicker:
+    """Test get_ticker method per D-20 (no caching)."""
+
+    def test_get_ticker_returns_dict_with_last_key(self):
+        """get_ticker returns dict with 'last' key."""
+        from unittest.mock import MagicMock, patch
+        from ibkr_datafetcher.types import SymbolConfig
+
+        ds = IBKRDataSource()
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_client.make_contract.return_value = MagicMock()
+        mock_client.qualify_contract.return_value = 123456
+        # Mock get_ticker_price to return actual price
+        mock_client.get_ticker_price.return_value = 150.25
+        ds._client = mock_client
+
+        result = ds.get_ticker(symbol="AAPL")
+
+        assert isinstance(result, dict)
+        assert "last" in result
+        assert "symbol" in result
+
+    def test_get_ticker_returns_fallback_on_error(self):
+        """get_ticker returns {'last': 0} on error (consistent with factory)."""
+        from unittest.mock import MagicMock, patch
+
+        ds = IBKRDataSource()
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_client.make_contract.side_effect = Exception("Invalid symbol")
+        ds._client = mock_client
+
+        result = ds.get_ticker(symbol="INVALID")
+
+        # Should return fallback per plan behavior
+        assert isinstance(result, dict)
+        assert result.get("last") == 0 or result.get("last") is None
+
+    def test_get_ticker_no_cache(self):
+        """get_ticker does NOT use cache per D-20 (verifies no cache lookup)."""
+        from unittest.mock import MagicMock, patch
+
+        ds = IBKRDataSource()
+        mock_client = MagicMock()
+        mock_client.is_connected.return_value = True
+        mock_client.make_contract.return_value = MagicMock()
+        mock_client.qualify_contract.return_value = 123456
+        mock_client.get_ticker_price.return_value = 150.00
+        ds._client = mock_client
+
+        # Call get_ticker twice
+        result1 = ds.get_ticker(symbol="AAPL")
+        result2 = ds.get_ticker(symbol="AAPL")
+
+        # Verify no cache is involved - client method should be called twice
+        assert mock_client.get_ticker_price.call_count == 2

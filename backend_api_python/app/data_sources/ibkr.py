@@ -200,20 +200,23 @@ class IBKRDataSource(BaseDataSource):
         """
         获取实时报价
 
+        Per D-20: No caching - always fetch fresh data from IBKR Gateway.
+
         Args:
             symbol: 股票代码
 
         Returns:
-            报价数据字典
+            报价数据字典，包含 'last' 键
         """
         if not self.is_connected():
             if not self.connect():
                 logger.error("Failed to connect to IBKR Gateway")
-                return {}
+                return {'last': 0, 'symbol': symbol}
 
         try:
             if not self.is_connected():
-                self.connect()
+                if not self.connect():
+                    return {'last': 0, 'symbol': symbol}
 
             # 创建合约配置
             symbol_config = SymbolConfig(
@@ -227,16 +230,16 @@ class IBKRDataSource(BaseDataSource):
             contract = self._client.make_contract(symbol_config)
             qualified = self._client.qualify_contract(contract)
 
-            # 使用 reqMktData 获取实时数据
-            # 这里返回简化版 ticker 数据
+            # 使用 reqMktData 获取实时价格（同步阻塞调用）
+            price = self._client.get_ticker_price(contract)
+
             return {
                 "symbol": symbol,
                 "conId": qualified,
-                "last": None,  # 需要通过市场数据回调获取
-                "bid": None,
-                "ask": None,
+                "last": price if price is not None else 0,
             }
 
         except Exception as e:
             logger.exception(f"Failed to get ticker for {symbol}")
-            return {}
+            # Per D-20 fallback: return fallback with last=0
+            return {'last': 0, 'symbol': symbol}
