@@ -50,7 +50,7 @@
 - **D-20:** get_ticker 缓存：无缓存，直接调用 IBKRClient 获取
 
 ### 限流策略
-- **D-21:** 复用 ibkr-datafetcher 中的 RateLimiter（不是 QuantDinger 现有的 RateLimiter）
+- **D-21:** 在 QuantDinger 的 `rate_limiter.py` 中添加 IBKR 限流器（复用 ibkr-datafetcher 的 RateLimiter 逻辑）
 - **D-22:** 对 get_ticker 添加限流保护，防止触发 IBKR 内置限流
 - **D-23:** get_kline 限流：复用现有 kline_fetcher 逻辑（已有数据库缓存减轻 API 压力）
 
