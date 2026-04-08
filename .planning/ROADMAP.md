@@ -7,16 +7,16 @@
 
 ### IBKR Data Source
 
-- [x] **IBKR-01**: 创建 IBKRDataSource 类，继承 BaseDataSource
-- [x] **IBKR-02**: 实现 get_kline() 方法获取历史K线数据
-- [x] **IBKR-03**: 实现 get_ticker() 方法获取实时报价
-- [x] **IBKR-04**: 连接 IBKR Gateway 并处理连接/断开
+- [ ] **IBKR-01**: 创建 IBKRDataSource 类，继承 BaseDataSource
+- [ ] **IBKR-02**: 实现 get_kline() 方法获取历史K线数据
+- [ ] **IBKR-03**: 实现 get_ticker() 方法获取实时报价
+- [ ] **IBKR-04**: 连接 IBKR Gateway 并处理连接/断开
 
 ### Integration
 
-- [x] **INT-01**: DataSourceFactory 支持基于 exchange_id 选择数据源
-- [x] **INT-02**: trading_executor 优先使用 exchange_id 选择数据源
-- [x] **INT-03**: exchange_id="ibkr-live" 自动使用 IBKRDataSource
+- [ ] **INT-01**: DataSourceFactory 支持基于 exchange_id 选择数据源
+- [ ] **INT-02**: trading_executor 优先使用 exchange_id 选择数据源
+- [ ] **INT-03**: exchange_id="ibkr-live" 自动使用 IBKRDataSource
 
 ## v2 Requirements
 
@@ -40,14 +40,14 @@
 
 | # | Plan | Goal | Requirements | Status |
 |---|------|------|--------------|--------|
-| 1 | 01-01 | IBKRDataSource 实现 | IBKR-01, IBKR-02, IBKR-03, IBKR-04, INT-01, INT-03 | Planned |
-| 2 | 01-02 | 服务层集成 + 测试 | INT-02 | Planned |
+| 1 | 01-01 | IBKRDataSource + Rate Limiter | IBKR-01, IBKR-02, IBKR-03, IBKR-04, D-21 | Planned |
+| 2 | 01-02 | DataSourceFactory Integration | INT-01, INT-02, INT-03, D-01, D-02, D-03, D-08 | Planned |
 
 **Plans:** 2 plans
 
 **Plan list:**
-- [x] 01-01-PLAN.md — IBKRDataSource 实现 + 工厂扩展
-- [x] 01-02-PLAN.md — 服务层集成 + 测试
+- [ ] 01-01-PLAN.md — IBKRDataSource + Rate Limiter
+- [ ] 01-02-PLAN.md — DataSourceFactory Integration
 
 **Success Criteria:**
 1. `exchange_id="ibkr-live"` 策略能获取 IBKR 数据
@@ -68,5 +68,5 @@
 
 ---
 *Roadmap created: 2026-04-08*
-*Last updated: 2026-04-08 after initial definition*
+*Last updated: 2026-04-08 after planning*
 *Plans: 2 plans created*
