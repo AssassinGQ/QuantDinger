@@ -50,17 +50,17 @@ Plans:
 - [ ] 02-01-PLAN.md — TDD: MockForex + 6 use-case tests (RED) → _create_contract Forex/ValueError branches (GREEN)
 
 ### Phase 3: Contract qualification
-**Goal**: Forex contracts qualify like equities: stable `conId`, `localSymbol`, and details for sizing and display.
+**Goal**: Forex contracts qualify like equities: stable `conId`, `localSymbol`, and details for sizing and display. Post-qualify validation (`_validate_qualified_contract`) catches conId=0 and secType mismatches; error messages include market_type across all 4 callers.
 **Depends on**: Phase 2
 **Requirements**: CONT-03
 **Success Criteria** (what must be TRUE):
   1. After `qualifyContracts` (or async equivalent), Forex contracts carry a valid `conId` and IB-expected `localSymbol` (e.g. `EUR.USD`).
   2. Qualification failure surfaces as a clear error; the system does not proceed with an unqualified Forex contract.
   3. Tests mock or record qualification outcomes for at least one liquid pair.
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 03-01: Qualification use cases; wire qualify path for Forex; tests for success/failure
+- [ ] 03-01-PLAN.md — TDD: 9 UC tests (RED) → _validate_qualified_contract + 4-caller error message enhancement (GREEN)
 
 ### Phase 4: Market category & worker gate
 **Goal**: The runner and pending-order pipeline accept Forex as a first-class market category end-to-end.
