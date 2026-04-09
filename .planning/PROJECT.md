@@ -25,7 +25,7 @@
 ### Active
 
 - [ ] IBKRClient 支持 Forex 市价单下单
-- [ ] Forex 合约创建（ib_insync.Forex，IDEALPRO 交易所）
+- ✓ Forex 合约创建（ib_insync.Forex，IDEALPRO 交易所） — Validated in Phase 2: Forex contract creation
 - ✓ symbol 解析支持外汇对格式（如 EUR.USD, EURUSD） — Validated in Phase 1: Forex symbol normalization
 - [ ] IBKRClient.supported_market_categories 包含 "Forex"
 - [ ] Forex RTH 使用 IBKR 合约交易时间（与现有逻辑一致）
@@ -65,4 +65,4 @@
 | RTH 复用 IBKR 合约时间 | 与股票路径一致，IBKR 返回的 liquidHours 能正确反映 Forex 24/5 特性 | — Pending |
 
 ---
-*Last updated: 2026-04-09 — Phase 1 complete: Forex symbol normalization*
+*Last updated: 2026-04-09 — Phase 2 complete: Forex contract creation (IDEALPRO)*
