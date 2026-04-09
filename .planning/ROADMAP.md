@@ -31,10 +31,10 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
   1. Inputs like `EURUSD`, `EUR.USD`, and `EUR/USD` normalize to the same canonical base and quote the rest of the stack can consume.
   2. When the caller indicates Forex (or equivalent routing context), symbol handling does not silently treat the symbol as a US equity ticker.
   3. Automated tests document and lock accepted formats and edge cases (uppercase, separators).
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 01-01: Use cases + test specs for symbol formats; implement `normalize_symbol` Forex branch; run full existing test suite plus new cases
+- [ ] 01-01-PLAN.md — TDD: Forex symbol tests + normalize_symbol/parse_symbol/format_display_symbol Forex branches
 
 ### Phase 2: Forex contract creation (IDEALPRO)
 **Goal**: `IBKRClient` builds `ib_insync.Forex` with IDEALPRO routing for Forex execution, not `Stock`/`SMART`.
