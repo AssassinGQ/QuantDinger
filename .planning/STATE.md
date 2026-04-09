@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Phase 2 context gathered
-last_updated: "2026-04-09T12:48:44.434Z"
+status: executing
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-04-09T13:36:09Z"
 progress:
   total_phases: 12
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  completed_phases: 2
+  total_plans: 3
+  completed_plans: 2
 ---
 
 # Project State
@@ -20,21 +20,19 @@ See: `.planning/PROJECT.md` (updated 2026-04-09)
 
 **Core value:** 策略系统发出的 Forex 交易信号能正确通过 IBKRClient 在 IDEALPRO 上执行，从信号到成交的完整链路畅通。
 
-**Current focus:** Phase 01 — forex-symbol-normalization
+**Current focus:** Phase 02 — forex-contract-creation-idealpro
 
 ## Current Position
 
-Phase: 01 (forex-symbol-normalization) — EXECUTING
-Plan: 1 of 1
+Phase: 02 (forex-contract-creation-idealpro) — COMPLETE
+Plan: 1 of 1 (done)
 
 ## Performance Metrics
 
-**Velocity:** Not tracked yet (first plan not started).
-
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| — | — | — | — |
 | Phase 01 P01 | 2min | 2 tasks | 2 files |
+| Phase 02 P01 | 8min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -44,6 +42,8 @@ Logged in PROJECT.md Key Decisions. Roadmap follows research build order (symbol
 
 - [Phase 01]: KNOWN_FOREX_PAIRS set for parse_symbol auto-detection (no heuristic fallback)
 - [Phase 01]: Forex display format: dot-separated EUR.USD matching IBKR localSymbol convention
+- [Phase 02]: Forex uses ib_insync.Forex(pair=ib_symbol) — pair= keyword delegates symbol/currency splitting
+- [Phase 02]: Explicit elif market_type guard (USStock/HShare) — unknown market_type raises ValueError
 
 ### Pending Todos
 
@@ -55,6 +55,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-09T12:48:44.431Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-forex-contract-creation-idealpro/02-CONTEXT.md
+Last session: 2026-04-09T13:36:09Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: .planning/phases/02-forex-contract-creation-idealpro/02-01-SUMMARY.md
