@@ -8,7 +8,7 @@
 ### IBKR Data Source
 
 - [ ] **IBKR-01**: 创建 IBKRDataSource 类，继承 BaseDataSource
-- [ ] **IBKR-02**: 实现 get_kline() 方法获取历史K线数据
+- [x] **IBKR-02**: 实现 get_kline() 方法获取历史K线数据
 - [ ] **IBKR-03**: 实现 get_ticker() 方法获取实时报价
 - [ ] **IBKR-04**: 连接 IBKR Gateway 并处理连接/断开
 
@@ -40,19 +40,19 @@
 
 | # | Plan | Goal | Requirements | Status |
 |---|------|------|--------------|--------|
-| 1 | 01-01 | 1/5 | In Progress|  |
-| 2 | 01-02 | get_kline implementation | IBKR-02 | Planned |
+| 1 | 01-01 | 0/5 | Complete    | 2026-04-08 |
+| 2 | 01-02 | get_kline implementation | IBKR-02 | Complete |
 | 3 | 01-03 | get_ticker implementation | IBKR-03 | Planned |
 | 4 | 01-04 | IBKR rate limiter | D-21, D-22 | Planned |
 | 5 | 01-05 | DataSourceFactory with exchange_id | INT-01, INT-02, INT-03 | Planned |
 
-**Plans:** 1/5 plans executed
+**Plans:** 1/5 plans complete
 
 **Wave 1 (4 plans, parallel execution):**
 - [x] 01-01-PLAN.md — IBKRDataSource class + connection
-- [ ] 01-02-PLAN.md — get_kline implementation  
+- [x] 01-02-PLAN.md — get_kline implementation  
 - [ ] 01-03-PLAN.md — get_ticker implementation
-- [ ] 01-04-PLAN.md — IBKR rate limiter
+- [x] 01-04-PLAN.md — IBKR rate limiter
 
 **Wave 2 (1 plan, depends on Wave 1):**
 - [ ] 01-05-PLAN.md — DataSourceFactory with exchange_id
