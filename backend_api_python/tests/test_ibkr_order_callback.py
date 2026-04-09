@@ -355,8 +355,15 @@ class TestFullOrderLifecycle:
         client._ib.qualifyContracts.return_value = [MagicMock()]
 
         import asyncio as _aio
-        async def _mock_qualify_async(*args):
-            return client._ib.qualifyContracts.return_value
+        async def _mock_qualify_async(*contracts):
+            for c in contracts:
+                con_id = getattr(c, 'conId', None)
+                if not isinstance(con_id, int) or con_id == 0:
+                    c.conId = 1
+                sec = getattr(c, 'secType', None)
+                if not isinstance(sec, str):
+                    c.secType = 'STK'
+            return list(contracts)
         client._ib.qualifyContractsAsync = _mock_qualify_async
         client._ib.isConnected.return_value = True
 

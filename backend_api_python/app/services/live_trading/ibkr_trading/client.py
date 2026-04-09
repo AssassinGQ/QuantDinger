@@ -794,6 +794,21 @@ class IBKRClient(BaseStatefulClient):
             logger.warning("Contract qualification failed: %s", e)
             return False
 
+    _EXPECTED_SEC_TYPES = {
+        "Forex": "CASH",
+        "USStock": "STK",
+        "HShare": "STK",
+    }
+
+    def _validate_qualified_contract(self, contract, market_type: str) -> tuple:
+        con_id = getattr(contract, "conId", 0) or 0
+        if con_id == 0:
+            return (False, f"conId is 0 after qualification for {market_type} contract")
+        expected = self._EXPECTED_SEC_TYPES.get(market_type)
+        if expected and contract.secType != expected:
+            return (False, f"Expected secType={expected} for {market_type}, got {contract.secType}")
+        return (True, "")
+
     _lot_size_cache: Dict[int, float] = {}
 
     async def _align_qty_to_contract(self, contract, quantity: float, symbol: str) -> float:
@@ -984,7 +999,12 @@ class IBKRClient(BaseStatefulClient):
                     "blocking order as safety measure",
                     symbol, market_type, self._RTH_QUALIFY_RETRIES,
                 )
-                return False, f"{symbol} contract not found"
+                return False, f"Invalid {market_type} contract: {symbol}"
+
+            valid, reason = self._validate_qualified_contract(contract, market_type)
+            if not valid:
+                logger.warning("[RTH] post-qualify validation failed for %s: %s", symbol, reason)
+                return False, reason
 
             server_time = await self._ib.reqCurrentTimeAsync()
             if server_time.tzinfo is None:
@@ -1036,7 +1056,12 @@ class IBKRClient(BaseStatefulClient):
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
             if not await self._qualify_contract_async(contract):
-                return LiveOrderResult(success=False, message=f"Invalid contract: {symbol}",
+                return LiveOrderResult(success=False, message=f"Invalid {market_type} contract: {symbol}",
+                                   exchange_id=self.engine_id)
+
+            valid, reason = self._validate_qualified_contract(contract, market_type)
+            if not valid:
+                return LiveOrderResult(success=False, message=reason,
                                    exchange_id=self.engine_id)
 
             qty = await self._align_qty_to_contract(contract, quantity, symbol)
@@ -1101,7 +1126,12 @@ class IBKRClient(BaseStatefulClient):
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
             if not await self._qualify_contract_async(contract):
-                return LiveOrderResult(success=False, message=f"Invalid contract: {symbol}",
+                return LiveOrderResult(success=False, message=f"Invalid {market_type} contract: {symbol}",
+                                   exchange_id=self.engine_id)
+
+            valid, reason = self._validate_qualified_contract(contract, market_type)
+            if not valid:
+                return LiveOrderResult(success=False, message=reason,
                                    exchange_id=self.engine_id)
 
             qty = await self._align_qty_to_contract(contract, quantity, symbol)
@@ -1306,7 +1336,11 @@ class IBKRClient(BaseStatefulClient):
             await self._ensure_connected_async()
             contract = self._create_contract(symbol, market_type)
             if not await self._qualify_contract_async(contract):
-                return {"success": False, "error": f"Invalid contract: {symbol}"}
+                return {"success": False, "error": f"Invalid {market_type} contract: {symbol}"}
+
+            valid, reason = self._validate_qualified_contract(contract, market_type)
+            if not valid:
+                return {"success": False, "error": reason}
             ticker = self._ib.reqMktData(contract, "", False, False)
             await _aio.sleep(2)
             result = {

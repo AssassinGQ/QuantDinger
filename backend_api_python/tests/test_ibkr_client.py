@@ -106,8 +106,17 @@ def _make_client_with_mock_ib():
     client._ib.qualifyContracts.return_value = [MagicMock()]
 
     import asyncio
-    async def _mock_qualify_async(*args):
-        return client._ib.qualifyContracts.return_value
+    async def _mock_qualify_async(*contracts):
+        if not client._ib.qualifyContracts.return_value:
+            return []
+        for c in contracts:
+            con_id = getattr(c, 'conId', None)
+            if not isinstance(con_id, int) or con_id == 0:
+                c.conId = 1
+            sec = getattr(c, 'secType', None)
+            if not isinstance(sec, str):
+                c.secType = 'STK'
+        return list(contracts)
     client._ib.qualifyContractsAsync = _mock_qualify_async
 
     _mock_details = MagicMock()
@@ -618,7 +627,7 @@ class TestFireAndForgetOrder:
         client._ib.qualifyContracts.return_value = []
         result = client.place_market_order("INVALID", "buy", 10, "USStock")
         assert result.success is False
-        assert "Invalid contract" in result.message
+        assert "Invalid" in result.message and "contract" in result.message
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_sell_action_correct(self):
