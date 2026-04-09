@@ -780,7 +780,12 @@ class IBKRClient(BaseStatefulClient):
     def _create_contract(self, symbol: str, market_type: str):
         _ensure_ib_insync()
         ib_symbol, exchange, currency = normalize_symbol(symbol, market_type)
-        return ib_insync.Stock(symbol=ib_symbol, exchange=exchange, currency=currency)
+        if market_type == "Forex":
+            return ib_insync.Forex(pair=ib_symbol)
+        elif market_type in ("USStock", "HShare"):
+            return ib_insync.Stock(symbol=ib_symbol, exchange=exchange, currency=currency)
+        else:
+            raise ValueError(f"Unsupported market_type: {market_type}")
 
     async def _qualify_contract_async(self, contract) -> bool:
         try:
