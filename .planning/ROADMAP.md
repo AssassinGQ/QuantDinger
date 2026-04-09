@@ -70,10 +70,10 @@ Plans:
   1. `IBKRClient.supported_market_categories` includes `"Forex"`.
   2. `PendingOrderWorker.validate_market_category` (or equivalent) allows Forex alongside existing categories.
   3. A Forex-marked signal is not rejected solely for category when other validations pass.
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 04-01: Category list + worker validation use cases; tests covering accept/reject paths
+- [ ] 04-01-PLAN.md — Forex in `supported_market_categories`; flip/extend `test_exchange_engine`; `test_pending_order_worker` UC-4/UC-5 via `_execute_live_order`
 
 ### Phase 5: Signal-to-side mapping (two-way FX)
 **Goal**: Strategy signal semantics for Forex map to correct IB BUY/SELL including short-style flows.
@@ -188,7 +188,7 @@ Plans:
 | 1. Forex symbol normalization | 0/1 | Not started | - |
 | 2. Forex contract creation (IDEALPRO) | 0/1 | Not started | - |
 | 3. Contract qualification | 0/1 | Not started | - |
-| 4. Market category & worker gate | 0/1 | Not started | - |
+| 4. Market category & worker gate | 0/1 | Not started (planned) | - |
 | 5. Signal-to-side mapping (two-way FX) | 0/1 | Not started | - |
 | 6. TIF policy for Forex | 0/1 | Not started | - |
 | 7. Forex market orders | 0/1 | Not started | - |
