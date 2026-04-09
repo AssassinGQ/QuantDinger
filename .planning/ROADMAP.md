@@ -44,10 +44,10 @@ Plans:
   1. For `market_type`/`market_category` Forex, `_create_contract` returns a Forex contract with `secType=CASH` and `exchange=IDEALPRO` (via ib_insync conventions).
   2. USStock and HShare contract creation remain unchanged for non-Forex paths.
   3. Unit tests assert contract fields for representative pairs (e.g. EURUSD).
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 02-01: Use cases for contract creation; implement `_create_contract` Forex branch; regression on US/HK
+- [ ] 02-01-PLAN.md — TDD: MockForex + 6 use-case tests (RED) → _create_contract Forex/ValueError branches (GREEN)
 
 ### Phase 3: Contract qualification
 **Goal**: Forex contracts qualify like equities: stable `conId`, `localSymbol`, and details for sizing and display.
