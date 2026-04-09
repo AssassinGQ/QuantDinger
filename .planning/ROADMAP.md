@@ -14,9 +14,9 @@
 
 ### Integration
 
-- [ ] **INT-01**: DataSourceFactory 支持基于 exchange_id 选择数据源
-- [ ] **INT-02**: trading_executor 优先使用 exchange_id 选择数据源
-- [ ] **INT-03**: exchange_id="ibkr-live" 自动使用 IBKRDataSource
+- [x] **INT-01**: DataSourceFactory 支持基于 exchange_id 选择数据源
+- [x] **INT-02**: trading_executor 优先使用 exchange_id 选择数据源
+- [x] **INT-03**: exchange_id="ibkr-live" 自动使用 IBKRDataSource
 
 ## v2 Requirements
 
@@ -40,11 +40,11 @@
 
 | # | Plan | Goal | Requirements | Status |
 |---|------|------|--------------|--------|
-| 1 | 01-01 | 4/5 | In Progress|  |
+| 1 | 01-01 | IBKRDataSource class | IBKR-01, IBKR-04 | Complete |
 | 2 | 01-02 | get_kline implementation | IBKR-02 | Complete |
-| 3 | 01-03 | get_ticker implementation | IBKR-03 | Planned |
-| 4 | 01-04 | IBKR rate limiter | D-21, D-22 | Planned |
-| 5 | 01-05 | DataSourceFactory with exchange_id | INT-01, INT-02, INT-03 | Planned |
+| 3 | 01-03 | get_ticker implementation | IBKR-03 | Complete |
+| 4 | 01-04 | IBKR rate limiter | D-21, D-22 | Complete |
+| 5 | 01-05 | DataSourceFactory with exchange_id | INT-01, INT-02, INT-03 | Complete |
 
 **Plans:** 4/5 plans executed
 
@@ -55,7 +55,7 @@
 - [x] 01-04-PLAN.md — IBKR rate limiter
 
 **Wave 2 (1 plan, depends on Wave 1):**
-- [ ] 01-05-PLAN.md — DataSourceFactory with exchange_id
+- [x] 01-05-PLAN.md — DataSourceFactory with exchange_id
 
 **Success Criteria:**
 1. `exchange_id="ibkr-live"` 策略能获取 IBKR 数据
