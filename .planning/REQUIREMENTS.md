@@ -68,24 +68,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CONT-01 | — | Pending |
-| CONT-02 | — | Pending |
-| CONT-03 | — | Pending |
-| CONT-04 | — | Pending |
-| EXEC-01 | — | Pending |
-| EXEC-02 | — | Pending |
-| EXEC-03 | — | Pending |
-| EXEC-04 | — | Pending |
-| RUNT-01 | — | Pending |
-| RUNT-02 | — | Pending |
-| RUNT-03 | — | Pending |
-| FRNT-01 | — | Pending |
+| CONT-01 | Phase 2 | Pending |
+| CONT-02 | Phase 1 | Pending |
+| CONT-03 | Phase 3 | Pending |
+| CONT-04 | Phase 4 | Pending |
+| EXEC-01 | Phase 7 | Pending |
+| EXEC-02 | Phase 5 | Pending |
+| EXEC-03 | Phase 6 | Pending |
+| EXEC-04 | Phase 8 | Pending |
+| RUNT-01 | Phase 9 | Pending |
+| RUNT-02 | Phase 10 | Pending |
+| RUNT-03 | Phase 11 | Pending |
+| FRNT-01 | Phase 12 | Pending |
 
 **Coverage:**
 - v1 requirements: 12 total
-- Mapped to phases: 0
-- Unmapped: 12 ⚠️
+- Mapped to phases: 12
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-09 after initial definition*
+*Last updated: 2026-04-09 after roadmap creation*
