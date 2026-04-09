@@ -1,0 +1,15 @@
+{
+  "mode": "yolo",
+  "granularity": "fine",
+  "parallelization": true,
+  "commit_docs": true,
+  "model_profile": "quality",
+  "workflow": {
+    "research": true,
+    "plan_check": true,
+    "verifier": true,
+    "nyquist_validation": true,
+    "verification_strategy": "use-case-driven",
+    "verification_notes": "每个阶段计划需明确用例和规格，实施时实现用例测试，verify 阶段运行所有用例（含代码库中已有用例）"
+  }
+}
