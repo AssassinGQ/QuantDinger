@@ -1323,6 +1323,94 @@ class IBKRClient(BaseStatefulClient):
             logger.error("Get quote failed: %s", e)
             return {"success": False, "error": str(e)}
 
+    def get_historical_bars(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int,
+        before_time: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """获取历史K线数据
+
+        Args:
+            symbol: 股票代码 (例如: AAPL, MSFT)
+            timeframe: 时间周期 (1m, 5m, 15m, 30m, 1H, 4H, 1D)
+            limit: 数据条数
+            before_time: 获取此时间之前的数据（Unix时间戳）
+
+        Returns:
+            K线数据列表，格式:
+            [{"time": int, "open": float, "high": float, "low": float, "close": float, "volume": float}, ...]
+        """
+        import asyncio as _aio
+        from datetime import datetime
+
+        # Timeframe to IBKR duration mapping
+        DURATION_MAP = {
+            '1m': '1 D', '5m': '5 D', '15m': '15 D',
+            '30m': '1 M', '1H': '1 M', '4H': '1 M', '1D': '1 Y'
+        }
+        BAR_SIZE_MAP = {
+            '1m': '1 secs', '5m': '5 secs', '15m': '15 secs',
+            '30m': '30 secs', '1H': '1 min', '4H': '4 hours', '1D': '1 day'
+        }
+
+        async def _task():
+            await self._ensure_connected_async()
+
+            # Create contract using internal method (D-36)
+            contract = self._create_contract(symbol, "USStock")
+            if not await self._qualify_contract_async(contract):
+                logger.warning(f"Contract qualification failed for {symbol}")
+                return []
+
+            # Determine duration based on timeframe
+            duration_str = DURATION_MAP.get(timeframe, '1 D')
+            bar_size = BAR_SIZE_MAP.get(timeframe, '1 secs')
+
+            # Get historical bars from IBKR
+            bars = await self._ib.reqHistoricalBarsAsync(
+                contract=contract,
+                endDateTime="",
+                durationStr=duration_str,
+                barSize=bar_size,
+                whatToShow='TRADES',
+                useRTH=False,
+                formatDate=1,
+                keepUpToDate=False,
+            )
+
+            # Convert to dict format per D-29
+            result: List[Dict[str, Any]] = []
+            for bar in bars:
+                result.append({
+                    'time': int(bar.date.timestamp()),
+                    'open': float(bar.open),
+                    'high': float(bar.high),
+                    'low': float(bar.low),
+                    'close': float(bar.close),
+                    'volume': float(bar.volume),
+                })
+
+            # Sort by time ascending
+            result.sort(key=lambda x: x['time'])
+
+            # Apply before_time filter (TC-42)
+            if before_time is not None:
+                result = [b for b in result if b['time'] < before_time]
+
+            # Apply limit
+            if len(result) > limit:
+                result = result[-limit:]
+
+            return result
+
+        try:
+            return self._submit(_task(), timeout=30.0) or []
+        except Exception as e:
+            logger.error(f"Failed to get historical bars for {symbol}: {e}")
+            return []
+
     def get_connection_status(self) -> Dict[str, Any]:
         return {
             "connected": self.connected,
