@@ -66,6 +66,26 @@
 - 数据重试和错误处理的具体实现细节
 - K线数据格式的微调
 
+### v2.0 Internal IBKRClient 迁移 (2026-04-09)
+#### API 方法设计
+- **D-28:** 内部 IBKRClient 添加 `get_historical_bars(symbol, timeframe, limit, before_time=None)` 方法，签名与 BaseDataSource.get_kline() 一致
+- **D-29:** 返回 `List[Dict[str, Any]]`，格式: `[{"time": int, "open": float, "high": float, "low": float, "close": float, "volume": float}]`
+
+#### 错误处理（遵循现有框架）
+- **D-30:** get_kline 异常 → `logger.error` 记录 → 返回 `[]` 空列表
+- **D-31:** get_ticker 异常 → `logger.warning` 记录 → 返回 `{last: 0, symbol: symbol}`
+- **D-32:** 不自动重连，依赖 IBKRClient 内部健康检查机制
+
+#### 缓存策略
+- **D-33:** 保持 v1.0 逻辑：数据库1m → 数据库5m → 数据库k线 → 拉网（调用内部 get_historical_bars）
+
+#### 数据格式转换
+- **D-34:** 直接返回 Dict 格式，与 BaseDataSource 接口定义一致，无需额外转换
+
+#### 关键映射
+- **D-35:** `get_ticker_price(contract)` → `get_quote(symbol, market_type)` (内部 IBKRClient 已实现)
+- **D-36:** `make_contract(SymbolConfig)` → `_create_contract(symbol, market_type)` (内部已实现)
+
 </decisions>
 
 <canonical_refs>
@@ -78,11 +98,18 @@
 - `backend_api_python/app/data_sources/factory.py` — DataSourceFactory 工厂模式
 
 ### 参考实现
-- `/home/workspace/ws/ibkr-datafetcher/` — 现有 IBKRClient 使用 ib_insync
+- `/home/workspace/ws/ibkr-datafetcher/` — 现有 IBKRClient 使用 ib_insync (v1.0)
+
+### 内部 IBKRClient (v2.0)
+- `backend_api_python/app/services/live_trading/ibkr_trading/client.py` — 内部 IBKRClient 单例
+  - `get_quote()` 方法 (line 1297) — 已实现，用于 get_ticker
+  - `_create_contract()` 方法 (line 780) — 已实现，用于合约创建
+  - `_qualify_contract_async()` 方法 (line 785) — 已实现，用于合约认证
 
 ### 需求文档
 - `.planning/REQUIREMENTS.md` — IBKR-01 到 IBKR-04, INT-01 到 INT-03
 - `.planning/PROJECT.md` — 项目愿景和约束
+- `.planning/v2.0-test-cases.md` — v2.0 测试用例规格
 
 </canonical_refs>
 
