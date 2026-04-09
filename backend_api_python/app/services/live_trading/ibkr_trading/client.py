@@ -99,7 +99,7 @@ class IBKRClient(BaseStatefulClient):
     """
 
     engine_id = "ibkr"
-    supported_market_categories = frozenset({"USStock", "HShare"})
+    supported_market_categories = frozenset({"USStock", "HShare", "Forex"})
 
     _TERMINAL_STATUSES = frozenset({
         "Filled", "Cancelled", "ApiCancelled", "Inactive",

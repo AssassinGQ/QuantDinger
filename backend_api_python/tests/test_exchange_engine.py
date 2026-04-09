@@ -64,7 +64,8 @@ class TestBaseStatefulClientABC:
         assert MT5Client.engine_id == "mt5"
 
     def test_ibkr_supported_categories(self):
-        assert IBKRClient.supported_market_categories == frozenset({"USStock", "HShare"})
+        assert IBKRClient.supported_market_categories == frozenset({"USStock", "HShare", "Forex"})
+        assert "Forex" in IBKRClient.supported_market_categories
 
     def test_mt5_supported_categories(self):
         assert MT5Client.supported_market_categories == frozenset({"Forex"})
@@ -91,9 +92,9 @@ class TestValidateMarketCategory:
         assert not ok
         assert "Crypto" in msg
 
-    def test_ibkr_forex_rejected(self):
-        ok, msg = self._ibkr().validate_market_category("Forex")
-        assert not ok
+    def test_ibkr_forex_ok(self):
+        ok, _ = self._ibkr().validate_market_category("Forex")
+        assert ok
 
     def test_mt5_forex_ok(self):
         ok, _ = self._mt5().validate_market_category("Forex")
