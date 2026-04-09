@@ -2,7 +2,9 @@
 Tests for IBKR client: quantity guard, fire-and-forget order flow, connection retry,
 RTH gate, and the TaskQueue-based task dispatch mechanism.
 """
+import asyncio
 import datetime
+import logging
 import threading
 import time
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -222,6 +224,161 @@ class TestCreateContractForex:
         client = _make_client_with_mock_ib()
         result = client.place_market_order("AAPL", "buy", 100, "Crypto")
         assert result.success is False
+
+
+# ===========================================================================
+# Forex contract qualification tests (TDD)
+# ===========================================================================
+
+class TestQualifyContractForex:
+    """UC-1,2,3,7: _qualify_contract_async behavior for Forex contracts."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_forex_qualify_success_fields(self):
+        """UC-1: qualifyContractsAsync populates conId, localSymbol on Forex contract."""
+        client = _make_client_with_mock_ib()
+
+        async def _mock_qualify_success_forex(*contracts):
+            for c in contracts:
+                c.conId = 12087792
+                c.localSymbol = "EUR.USD"
+                c.tradingClass = "EUR.USD"
+            return list(contracts)
+
+        client._ib.qualifyContractsAsync = _mock_qualify_success_forex
+        mock_ib_insync = _make_mock_ib_insync()
+        contract = mock_ib_insync.Forex(pair='EURUSD')
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(client._qualify_contract_async(contract))
+        finally:
+            loop.close()
+
+        assert result is True
+        assert contract.conId == 12087792
+        assert contract.localSymbol == "EUR.USD"
+        assert contract.exchange == "IDEALPRO"
+        assert contract.secType == "CASH"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_forex_qualify_failure(self):
+        """UC-2: qualifyContractsAsync returns empty list → False."""
+        client = _make_client_with_mock_ib()
+
+        async def _mock_qualify_empty(*contracts):
+            return []
+
+        client._ib.qualifyContractsAsync = _mock_qualify_empty
+        mock_ib_insync = _make_mock_ib_insync()
+        contract = mock_ib_insync.Forex(pair='EURUSD')
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(client._qualify_contract_async(contract))
+        finally:
+            loop.close()
+
+        assert result is False
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_forex_qualify_exception(self, caplog):
+        """UC-3: qualifyContractsAsync raises Exception → returns False, logs WARNING."""
+        client = _make_client_with_mock_ib()
+
+        async def _mock_qualify_raise(*contracts):
+            raise Exception("Network error")
+
+        client._ib.qualifyContractsAsync = _mock_qualify_raise
+        mock_ib_insync = _make_mock_ib_insync()
+        contract = mock_ib_insync.Forex(pair='EURUSD')
+
+        loop = asyncio.new_event_loop()
+        try:
+            with caplog.at_level(logging.WARNING):
+                result = loop.run_until_complete(client._qualify_contract_async(contract))
+        finally:
+            loop.close()
+
+        assert result is False
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warning_records) >= 1
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_error_message_includes_market_type(self):
+        """UC-7: place_market_order with Forex, qualify fails → message contains 'Forex'."""
+        client = _make_client_with_mock_ib()
+
+        async def _mock_qualify_empty(*contracts):
+            return []
+
+        client._ib.qualifyContractsAsync = _mock_qualify_empty
+
+        result = client.place_market_order("EURUSD", "buy", 20000, "Forex")
+        assert result.success is False
+        assert "Forex" in result.message
+
+
+class TestValidateQualifiedContract:
+    """UC-4,5,6,8,9: _validate_qualified_contract post-qualify defensive checks."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_forex_valid(self):
+        """UC-4: Forex contract with correct secType and conId → (True, "")."""
+        client = _make_client_with_mock_ib()
+        mock_ib_insync = _make_mock_ib_insync()
+        contract = mock_ib_insync.Forex(pair='EURUSD')
+        contract.conId = 12087792
+        valid, reason = client._validate_qualified_contract(contract, "Forex")
+        assert valid is True
+        assert reason == ""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_forex_sectype_mismatch(self):
+        """UC-5: Forex contract with secType='STK' → (False, 'Expected secType=CASH...')."""
+        client = _make_client_with_mock_ib()
+        mock_ib_insync = _make_mock_ib_insync()
+        contract = mock_ib_insync.Forex(pair='EURUSD')
+        contract.secType = "STK"
+        contract.conId = 12087792
+        valid, reason = client._validate_qualified_contract(contract, "Forex")
+        assert valid is False
+        assert "Expected secType=CASH for Forex, got STK" in reason
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_conid_zero(self):
+        """UC-6: Contract with conId=0 → (False, contains 'conId is 0')."""
+        client = _make_client_with_mock_ib()
+        mock_ib_insync = _make_mock_ib_insync()
+        contract = mock_ib_insync.Forex(pair='EURUSD')
+        contract.conId = 0
+        valid, reason = client._validate_qualified_contract(contract, "Forex")
+        assert valid is False
+        assert "conId is 0" in reason
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_stock_valid(self):
+        """UC-8: USStock with secType='STK' and valid conId → (True, "")."""
+        client = _make_client_with_mock_ib()
+        mock_ib_insync = _make_mock_ib_insync()
+        contract = mock_ib_insync.Stock(symbol="AAPL", exchange="SMART", currency="USD")
+        contract.secType = "STK"
+        contract.conId = 265598
+        valid, reason = client._validate_qualified_contract(contract, "USStock")
+        assert valid is True
+        assert reason == ""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_hshare_valid(self):
+        """UC-9: HShare with secType='STK' and valid conId → (True, "")."""
+        client = _make_client_with_mock_ib()
+        mock_ib_insync = _make_mock_ib_insync()
+        contract = mock_ib_insync.Stock(symbol="700", exchange="SEHK", currency="HKD")
+        contract.secType = "STK"
+        contract.conId = 4157892
+        valid, reason = client._validate_qualified_contract(contract, "HShare")
+        assert valid is True
+        assert reason == ""
 
 
 # ===========================================================================
