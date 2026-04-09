@@ -10,16 +10,19 @@
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ IBKRDataSource 类创建 — v1.0
+- ✓ get_kline() 实现 — v1.0
+- ✓ get_ticker() 实现 — v1.0
+- ✓ 连接 IBKR Gateway — v1.0
+- ✓ DataSourceFactory 支持 exchange_id — v1.0
+- ✓ trading_executor 传递 exchange_id — v1.0
+- ✓ exchange_id="ibkr-live" 使用 IBKRDataSource — v1.0
 
 ### Active
 
-- [ ] 创建 IBKRDataSource 类，继承 BaseDataSource
-- [ ] 实现 get_kline() 方法获取历史K线
-- [ ] 实现 get_ticker() 方法获取实时报价
-- [ ] 根据 exchange_id 选择 IBKR 数据源（非 market_category）
-- [ ] 支持美股数据获取
-- [ ] 架构支持扩展到港股、外汇
+- [ ] 支持港股数据获取
+- [ ] 支持外汇数据获取
+- [ ] 优化连接复用和重连机制
 
 ### Out of Scope
 
@@ -31,8 +34,10 @@
 
 - **现有代码库**: QuantDinger 交易平台
 - **参考实现**: `/home/workspace/ws/ibkr-datafetcher/` 使用 ib_insync
-- **当前 USStock 数据源**: yfinance + Finnhub
+- **当前 USStock 数据源**: IBKR 原生数据源 (v1.0)
 - **目标 exchange_id**: `ibkr-live`
+- **技术栈**: ib_insync, Python, Flask
+- **里程碑**: v1.0 shipped 2026-04-09
 
 ## Constraints
 
@@ -44,9 +49,9 @@
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| 基于 exchange_id 选择数据源 | 与 trading executor 的 exchange_id 一致，支持多数据源 | — Pending |
-| 优先美股，后续港股外汇 | ibkr-live 当前只有美股策略 | — Pending |
+| 基于 exchange_id 选择数据源 | 与 trading executor 的 exchange_id 一致，支持多数据源 | ✓ Good - 已通过 DataSourceFactory 实现 |
+| 优先美股，后续港股外汇 | ibkr-live 当前只有美股策略 | ✓ Good - v1.0 专注美股，v2.0 规划港股外汇 |
 
 ---
 
-*Last updated: 2026-04-08 after initialization*
+*Last updated: 2026-04-09 after v1.0 milestone*
