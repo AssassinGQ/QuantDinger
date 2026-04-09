@@ -6,13 +6,10 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from ibkr_datafetcher.config import GatewayConfig
-from ibkr_datafetcher.ibkr_client import IBKRClient
-from ibkr_datafetcher.types import KlineBar, SymbolConfig, Timeframe, resolve_timeframe
-
 from app.data_sources.base import BaseDataSource
 from app.data_sources.rate_limiter import get_ibkr_limiter
 from app.services import kline_fetcher
+from app.services.live_trading.ibkr_trading.client import get_ibkr_client, IBKRConfig
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +21,7 @@ class IBKRDataSource(BaseDataSource):
 
     def __init__(
         self,
+        mode: Optional[str] = None,  # paper/live
         host: Optional[str] = None,
         port: Optional[int] = None,
         client_id: Optional[int] = None,
@@ -32,28 +30,32 @@ class IBKRDataSource(BaseDataSource):
         初始化 IBKRDataSource
 
         Args:
+            mode: IBKR 模式 (paper/live)
             host: IBKR Gateway 主机地址
             port: IBKR Gateway 端口
             client_id: IBKR 客户端 ID
         """
+        self._mode = mode or os.environ.get("IBKR_MODE", "paper")
         self._host = host or os.environ.get("IBKR_HOST", "ib-live-gateway")
         self._port = port or int(os.environ.get("IBKR_PORT", "4003"))
         self._client_id = client_id or int(os.environ.get("IBKR_CLIENT_ID", "1"))
+        self._market_type = "USStock"
 
-        self._config = GatewayConfig(
+        self._config = IBKRConfig(
             host=self._host,
             port=self._port,
             client_id=self._client_id,
         )
-        self._client: Optional[IBKRClient] = None
+        self._client: Optional[Any] = None
         self._pending_requests: Dict[int, Any] = {}
         self._rate_limiter = get_ibkr_limiter()
 
     @property
-    def client(self) -> IBKRClient:
-        """获取或创建 IBKR 客户端实例"""
+    def client(self):
+        """Get or create internal IBKRClient instance"""
         if self._client is None:
-            self._client = IBKRClient(self._config)
+            cfg = IBKRConfig.from_env(self._mode)
+            self._client = get_ibkr_client(cfg, mode=self._mode)
         return self._client
 
     def connect(self, timeout: float = 60) -> bool:
@@ -81,7 +83,7 @@ class IBKRDataSource(BaseDataSource):
         """
         if self._client is None:
             return False
-        return self._client.is_connected()
+        return self.client.connected
 
     def disconnect(self) -> None:
         """
@@ -145,60 +147,20 @@ class IBKRDataSource(BaseDataSource):
         # Per D-23: Acquire rate limiter before API call
         self._rate_limiter.acquire(request_type="hist", symbol=symbol)
 
-        if not self.is_connected():
-            if not self.connect():
-                logger.error("Failed to connect to IBKR Gateway")
-                return []
-
         try:
-            # 确保连接
-            if not self.is_connected():
-                self.connect()
+            # Use internal get_historical_bars method per D-28
+            bars = self.client.get_historical_bars(symbol, timeframe, limit, before_time)
 
-            # 创建合约配置
-            symbol_config = SymbolConfig(
-                symbol=symbol,
-                name=symbol,  # For US stocks, name is same as symbol
-                sec_type="STK",
-                exchange="SMART",
-                currency="USD",
-            )
+            # Apply filter and limit
+            result = self.filter_and_limit(bars, limit, before_time)
 
-            # 转换时间周期
-            tf = resolve_timeframe(timeframe)
-            if tf is None:
-                logger.error(f"Invalid timeframe: {timeframe}")
-                return []
-
-            # 获取历史数据
-            contract = self._client.make_contract(symbol_config)
-            bars = self._client.get_historical_bars(
-                contract=contract,
-                timeframe=tf,
-            )
-
-            # 转换为字典格式
-            result: List[Dict[str, Any]] = []
-            for bar in bars:
-                result.append(self.format_kline(
-                    timestamp=bar.timestamp,
-                    open_price=bar.open,
-                    high=bar.high,
-                    low=bar.low,
-                    close=bar.close,
-                    volume=bar.volume,
-                ))
-
-            # 应用过滤和限制
-            result = self.filter_and_limit(result, limit, before_time)
-
-            # 记录日志
+            # Record log
             self.log_result(symbol, result, timeframe)
 
             return result
 
         except Exception as e:
-            logger.exception(f"Failed to get kline for {symbol}")
+            logger.error(f"Failed to get kline for {symbol}: {e}")
             return []
 
     def get_ticker(self, symbol: str) -> Dict[str, Any]:
@@ -216,38 +178,20 @@ class IBKRDataSource(BaseDataSource):
         # Per D-22: Acquire rate limiter before API call
         self._rate_limiter.acquire(request_type="hist", symbol=symbol)
 
-        if not self.is_connected():
-            if not self.connect():
-                logger.error("Failed to connect to IBKR Gateway")
+        try:
+            # Use internal get_quote method per D-35
+            quote = self.client.get_quote(symbol, self._market_type)
+
+            if quote.get("success", False):
+                return {
+                    "symbol": symbol,
+                    "last": quote.get("last", 0),
+                }
+            else:
+                logger.warning(f"Failed to get quote for {symbol}: {quote.get('error')}")
                 return {'last': 0, 'symbol': symbol}
 
-        try:
-            if not self.is_connected():
-                if not self.connect():
-                    return {'last': 0, 'symbol': symbol}
-
-            # 创建合约配置
-            symbol_config = SymbolConfig(
-                symbol=symbol,
-                name=symbol,  # For US stocks, name is same as symbol
-                sec_type="STK",
-                exchange="SMART",
-                currency="USD",
-            )
-
-            contract = self._client.make_contract(symbol_config)
-            qualified = self._client.qualify_contract(contract)
-
-            # 使用 reqMktData 获取实时价格（同步阻塞调用）
-            price = self._client.get_ticker_price(contract)
-
-            return {
-                "symbol": symbol,
-                "conId": qualified,
-                "last": price if price is not None else 0,
-            }
-
         except Exception as e:
-            logger.exception(f"Failed to get ticker for {symbol}")
+            logger.warning(f"Failed to get ticker for {symbol}: {e}")
             # Per D-20 fallback: return fallback with last=0
             return {'last': 0, 'symbol': symbol}
