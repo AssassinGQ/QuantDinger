@@ -54,9 +54,21 @@ def _make_mock_ib_insync():
             self.exchange = exchange
             self.currency = currency
 
+    class MockForex:
+        def __init__(self, pair='', exchange='IDEALPRO', symbol='', currency='', **kwargs):
+            if pair:
+                assert len(pair) == 6
+                symbol = symbol or pair[:3]
+                currency = currency or pair[3:]
+            self.secType = 'CASH'
+            self.symbol = symbol
+            self.currency = currency
+            self.exchange = exchange
+
     mock_mod.MarketOrder = MockMarketOrder
     mock_mod.LimitOrder = MockLimitOrder
     mock_mod.Stock = MockStock
+    mock_mod.Forex = MockForex
     mock_mod.IB = MagicMock
     return mock_mod
 
@@ -150,6 +162,66 @@ def _make_client_with_mock_ib():
     client._ensure_connected_async = _noop_ensure
 
     return client
+
+
+# ===========================================================================
+# Forex contract creation tests (TDD)
+# ===========================================================================
+
+class TestCreateContractForex:
+    """UC-1 through UC-6: _create_contract Forex branch and error handling."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_create_contract_forex_eurusd(self):
+        """UC-1: Forex EURUSD → secType=CASH, symbol=EUR, currency=USD, exchange=IDEALPRO."""
+        client = _make_client_with_mock_ib()
+        contract = client._create_contract("EURUSD", "Forex")
+        assert contract.secType == "CASH"
+        assert contract.symbol == "EUR"
+        assert contract.currency == "USD"
+        assert contract.exchange == "IDEALPRO"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_create_contract_forex_usdjpy(self):
+        """UC-2: Forex USDJPY → secType=CASH, symbol=USD, currency=JPY, exchange=IDEALPRO."""
+        client = _make_client_with_mock_ib()
+        contract = client._create_contract("USDJPY", "Forex")
+        assert contract.secType == "CASH"
+        assert contract.symbol == "USD"
+        assert contract.currency == "JPY"
+        assert contract.exchange == "IDEALPRO"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_create_contract_usstock_regression(self):
+        """UC-3: USStock AAPL unchanged → symbol=AAPL, exchange=SMART, currency=USD."""
+        client = _make_client_with_mock_ib()
+        contract = client._create_contract("AAPL", "USStock")
+        assert contract.symbol == "AAPL"
+        assert contract.exchange == "SMART"
+        assert contract.currency == "USD"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_create_contract_hshare_regression(self):
+        """UC-4: HShare 0700.HK unchanged → symbol=700, exchange=SEHK, currency=HKD."""
+        client = _make_client_with_mock_ib()
+        contract = client._create_contract("0700.HK", "HShare")
+        assert contract.symbol == "700"
+        assert contract.exchange == "SEHK"
+        assert contract.currency == "HKD"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_create_contract_unknown_raises(self):
+        """UC-5: Unknown market_type 'Crypto' → ValueError with 'Crypto' in message."""
+        client = _make_client_with_mock_ib()
+        with pytest.raises(ValueError, match="Crypto"):
+            client._create_contract("AAPL", "Crypto")
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_place_order_unknown_market_type_graceful(self):
+        """UC-6: ValueError from _create_contract caught by place_market_order → LiveOrderResult(success=False)."""
+        client = _make_client_with_mock_ib()
+        result = client.place_market_order("AAPL", "buy", 100, "Crypto")
+        assert result.success is False
 
 
 # ===========================================================================
