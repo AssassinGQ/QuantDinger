@@ -31,11 +31,11 @@
 - [ ] Forex RTH 使用 IBKR 合约交易时间（与现有逻辑一致）
 - [ ] Lot size 复用现有两层机制（ForexNormalizer + _align_qty_to_contract）
 - [ ] 策略系统可配置 market_category=Forex 执行自动交易
+- [ ] 前端策略创建/编辑时 Forex 可选 ibkr-paper/ibkr-live 交易所
 
 ### Out of Scope
 
 - 限价单 — 当前只需市价单，与需求一致
-- 前端 UI 改动 — 纯后端功能扩展
 - 新建 Forex 专用策略类型 — 复用现有策略框架
 - ForexNormalizer 最小下单量检查 — 依赖 IBKR 拒单和 _align_qty 兜底
 - MT5 Forex 相关改动 — MT5 已有独立 Forex 实现，不受影响
