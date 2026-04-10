@@ -24,7 +24,7 @@
 
 ### Active
 
-- [ ] IBKRClient 支持 Forex 市价单下单
+- ✓ IBKRClient 支持 Forex 市价单下单 — Validated in Phase 7: Forex market orders (integration tests UC-M1–M3, UC-E1–E3, UC-R1–R2; qty=0 IDEALPRO hint)
 - ✓ Forex 合约创建（ib_insync.Forex，IDEALPRO 交易所） — Validated in Phase 2: Forex contract creation
 - ✓ symbol 解析支持外汇对格式（如 EUR.USD, EURUSD） — Validated in Phase 1: Forex symbol normalization
 - ✓ Forex 合约 qualify 验证（conId、localSymbol、secType 防御性检查） — Validated in Phase 3: Contract qualification
@@ -64,9 +64,10 @@
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Forex TIF = IOC | IDEALPRO 市价单需要 IOC（避免 DAY 挂单残留），paper trading 验证通过 | ✓ Decided (Phase 6) |
-| 市价单优先 | 外汇流动性好，市价单滑点可控，简化实现 | — Pending |
+| 市价单优先 | 外汇流动性好，市价单滑点可控，简化实现 | ✓ Decided (Phase 7) |
+| Forex qty=0 after alignment 提示 IDEALPRO 最小量 | 用户可读性优化，区分 Forex 与股票的 qty=0 原因 | ✓ Decided (Phase 7) |
 | 复用 ForexNormalizer | 已有取整逻辑 + IBKR sizeIncrement 对齐，无需额外最小量检查 | — Pending |
 | RTH 复用 IBKR 合约时间 | 与股票路径一致，IBKR 返回的 liquidHours 能正确反映 Forex 24/5 特性 | — Pending |
 
 ---
-*Last updated: 2026-04-10 — Phase 6 complete: TIF policy for Forex (IOC, paper validated)*
+*Last updated: 2026-04-10 — Phase 7 complete: Forex market orders (integration tests + qty=0 IDEALPRO hint)*
