@@ -12,7 +12,7 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
 - [ ] **Phase 2: Forex contract creation (IDEALPRO)** — `Forex` contracts with CASH + IDEALPRO from `market_type=Forex`
 - [ ] **Phase 3: Contract qualification** — `qualifyContracts` resolves conId, localSymbol for Forex
 - [ ] **Phase 4: Market category & worker gate** — `supported_market_categories` + PendingOrderWorker validation for Forex
-- [ ] **Phase 5: Signal-to-side mapping (two-way FX)** — Long/short-style signals map to BUY/SELL for Forex
+- [x] **Phase 5: Signal-to-side mapping (two-way FX)** — Long/short-style signals map to BUY/SELL for Forex (completed 2026-04-10)
 - [ ] **Phase 6: TIF policy for Forex** — `_get_tif_for_signal` Forex branch (DAY/IOC/GTC per paper validation)
 - [ ] **Phase 7: Forex market orders** — `place_market_order` for Forex with base-currency `totalQuantity`
 - [ ] **Phase 8: Quantity normalization & IB alignment** — ForexNormalizer + `_align_qty_to_contract` on Forex path
@@ -83,10 +83,10 @@ Plans:
   1. `open_long` → BUY, `close_long` → SELL, `open_short` → SELL, `close_short` → BUY for Forex (per project conventions).
   2. Forex no longer fails purely because “short” is disallowed as on single-stock equity assumptions.
   3. Table-driven tests cover all four signal types for `market_category=Forex`.
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 05-01-PLAN.md — Base `map_signal_to_side(..., market_category=)`; IBKR `_FOREX_SIGNAL_MAP`; runner wiring; UC-F1–F6 / UC-E1–E3 / UC-R1 tests; REGR-01
+- [x] 05-01-PLAN.md — Base `map_signal_to_side(..., market_category=)`; IBKR `_FOREX_SIGNAL_MAP`; runner wiring; UC-F1–F6 / UC-E1–E3 / UC-R1 tests; REGR-01
 
 ### Phase 6: TIF policy for Forex
 **Goal**: Time-in-force for Forex market orders matches IBKR behavior validated in paper (open vs close; DAY vs IOC vs GTC as decided).
@@ -189,7 +189,7 @@ Plans:
 | 2. Forex contract creation (IDEALPRO) | 0/1 | Not started | - |
 | 3. Contract qualification | 0/1 | Not started | - |
 | 4. Market category & worker gate | 0/1 | Not started (planned) | - |
-| 5. Signal-to-side mapping (two-way FX) | 0/1 | Planned | - |
+| 5. Signal-to-side mapping (two-way FX) | 1/1 | Complete   | 2026-04-10 |
 | 6. TIF policy for Forex | 0/1 | Not started | - |
 | 7. Forex market orders | 0/1 | Not started | - |
 | 8. Quantity normalization & IB alignment | 0/1 | Not started | - |
