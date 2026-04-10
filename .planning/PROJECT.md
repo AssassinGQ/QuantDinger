@@ -29,6 +29,7 @@
 - ✓ symbol 解析支持外汇对格式（如 EUR.USD, EURUSD） — Validated in Phase 1: Forex symbol normalization
 - ✓ Forex 合约 qualify 验证（conId、localSymbol、secType 防御性检查） — Validated in Phase 3: Contract qualification
 - ✓ IBKRClient.supported_market_categories 包含 "Forex" — Validated in Phase 4: Market category & worker gate
+- ✓ map_signal_to_side 支持 Forex 双向交易信号（八信号映射，与 MT5 对齐） — Validated in Phase 5: Signal-to-side mapping (two-way FX)
 - [ ] Forex RTH 使用 IBKR 合约交易时间（与现有逻辑一致）
 - [ ] Lot size 复用现有两层机制（ForexNormalizer + _align_qty_to_contract）
 - [ ] 策略系统可配置 market_category=Forex 执行自动交易
@@ -66,4 +67,4 @@
 | RTH 复用 IBKR 合约时间 | 与股票路径一致，IBKR 返回的 liquidHours 能正确反映 Forex 24/5 特性 | — Pending |
 
 ---
-*Last updated: 2026-04-09 — Phase 2 complete: Forex contract creation (IDEALPRO)*
+*Last updated: 2026-04-10 — Phase 5 complete: Signal-to-side mapping (two-way FX)*
