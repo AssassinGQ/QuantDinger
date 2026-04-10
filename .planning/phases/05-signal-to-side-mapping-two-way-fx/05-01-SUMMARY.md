@@ -72,7 +72,7 @@ Each task was committed atomically:
 
 1. **Task 1: Production + tests — UC-F1–F6, UC-E1–E3, UC-R1, REGR-01** - `234af30` (feat)
 
-**Plan metadata:** `692cd3f` (docs: SUMMARY, STATE, REQUIREMENTS); `403e385` (docs: ROADMAP phase 5 progress — follow-up after `update-plan-progress 05` did not match table rows keyed by `5.`)
+**Plan metadata:** `692cd3f` (SUMMARY, STATE, REQUIREMENTS); `403e385` (ROADMAP); later `docs(05-01)` commits refine SUMMARY (`git log --oneline --grep=05-01`)
 
 ## Files Created/Modified
 
@@ -112,4 +112,4 @@ None.
 
 - `05-01-SUMMARY.md` exists at `.planning/phases/05-signal-to-side-mapping-two-way-fx/05-01-SUMMARY.md`
 - Commit `234af30` present in history for feat(05-01)
-- Commits `692cd3f`, `403e385` present in history for docs(05-01)
+- Docs commits include `692cd3f`, `403e385`, and follow-up `docs(05-01)` amends for SUMMARY
