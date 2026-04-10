@@ -46,7 +46,7 @@ class TestConnectionState:
         """is_connected() returns True when client is connected."""
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = True
+        mock_client.connected = True
         ds._client = mock_client
         assert ds.is_connected() is True
 
@@ -54,7 +54,7 @@ class TestConnectionState:
         """is_connected() returns False when client is disconnected."""
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = False
+        mock_client.connected = False
         ds._client = mock_client
         assert ds.is_connected() is False
 
@@ -112,29 +112,12 @@ class TestGetKline:
     def test_get_kline_returns_list_of_dicts(self):
         """get_kline returns list of kline dicts."""
         from unittest.mock import MagicMock, patch
-        from ibkr_datafetcher.types import KlineBar, Timeframe, resolve_timeframe, SymbolConfig
-        from datetime import datetime, timezone
 
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = True
-        mock_client.make_contract.return_value = MagicMock()
-
-        # Use correct Timeframe enum value (M1 = 1 min)
-        tf = resolve_timeframe("1m")
+        mock_client.connected = True
         mock_client.get_historical_bars.return_value = [
-            KlineBar(
-                symbol="AAPL",
-                timeframe=tf,
-                timestamp=1700000000,
-                open=150.0,
-                high=151.0,
-                low=149.0,
-                close=150.5,
-                volume=1000000,
-                bar_count=100,
-                bar_time=datetime(2023, 11, 15, 0, 0, tzinfo=timezone.utc),
-            )
+            {'time': 1700000000, 'open': 150.0, 'high': 151.0, 'low': 149.0, 'close': 150.5, 'volume': 1000000}
         ]
         ds._client = mock_client
 
@@ -155,8 +138,8 @@ class TestGetKline:
 
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = True
-        mock_client.make_contract.side_effect = Exception("Invalid contract")
+        mock_client.connected = True
+        mock_client.get_historical_bars.side_effect = Exception("Invalid contract")
         ds._client = mock_client
 
         result = ds.get_kline(symbol="INVALID", timeframe="1m", limit=100)
@@ -170,8 +153,10 @@ class TestGetKline:
 
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = False
+        mock_client.connected = False
         mock_client.connect.return_value = False
+        # Return empty list when not connected
+        mock_client.get_historical_bars.return_value = []
         ds._client = mock_client
 
         result = ds.get_kline(symbol="AAPL", timeframe="1m", limit=100)
@@ -212,28 +197,12 @@ class TestGetKlineCache:
     def test_get_kline_network_call_on_cache_miss(self):
         """get_kline falls back to network when cache is empty."""
         from unittest.mock import MagicMock, patch
-        from ibkr_datafetcher.types import KlineBar, resolve_timeframe
-        from datetime import datetime, timezone
 
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = True
-        mock_client.make_contract.return_value = MagicMock()
-
-        tf = resolve_timeframe("1m")
+        mock_client.connected = True
         mock_client.get_historical_bars.return_value = [
-            KlineBar(
-                symbol="AAPL",
-                timeframe=tf,
-                timestamp=1700000000,
-                open=150.0,
-                high=151.0,
-                low=149.0,
-                close=150.5,
-                volume=1000000,
-                bar_count=100,
-                bar_time=datetime(2023, 11, 15, 0, 0, tzinfo=timezone.utc),
-            )
+            {'time': 1700000000, 'open': 150.0, 'high': 151.0, 'low': 149.0, 'close': 150.5, 'volume': 1000000}
         ]
         ds._client = mock_client
 
@@ -253,15 +222,12 @@ class TestGetTicker:
     def test_get_ticker_returns_dict_with_last_key(self):
         """get_ticker returns dict with 'last' key."""
         from unittest.mock import MagicMock, patch
-        from ibkr_datafetcher.types import SymbolConfig
 
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = True
-        mock_client.make_contract.return_value = MagicMock()
-        mock_client.qualify_contract.return_value = 123456
-        # Mock get_ticker_price to return actual price
-        mock_client.get_ticker_price.return_value = 150.25
+        mock_client.connected = True
+        # Mock get_quote to return actual price per D-35
+        mock_client.get_quote.return_value = {"success": True, "last": 150.25}
         ds._client = mock_client
 
         result = ds.get_ticker(symbol="AAPL")
@@ -276,8 +242,8 @@ class TestGetTicker:
 
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = True
-        mock_client.make_contract.side_effect = Exception("Invalid symbol")
+        mock_client.connected = True
+        mock_client.get_quote.side_effect = Exception("Invalid symbol")
         ds._client = mock_client
 
         result = ds.get_ticker(symbol="INVALID")
@@ -292,10 +258,9 @@ class TestGetTicker:
 
         ds = IBKRDataSource()
         mock_client = MagicMock()
-        mock_client.is_connected.return_value = True
-        mock_client.make_contract.return_value = MagicMock()
-        mock_client.qualify_contract.return_value = 123456
-        mock_client.get_ticker_price.return_value = 150.00
+        mock_client.connected = True
+        # Mock get_quote to return actual price per D-35
+        mock_client.get_quote.return_value = {"success": True, "last": 150.00}
         ds._client = mock_client
 
         # Call get_ticker twice
@@ -303,4 +268,4 @@ class TestGetTicker:
         result2 = ds.get_ticker(symbol="AAPL")
 
         # Verify no cache is involved - client method should be called twice
-        assert mock_client.get_ticker_price.call_count == 2
+        assert mock_client.get_quote.call_count == 2
