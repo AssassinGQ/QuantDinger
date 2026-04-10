@@ -5,6 +5,7 @@ RTH gate, and the TaskQueue-based task dispatch mechanism.
 import asyncio
 import datetime
 import logging
+import types
 import threading
 import time
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -711,6 +712,135 @@ class TestTifForexPolicy:
         client.place_limit_order("EURUSD", "buy", 10000.0, 1.10, "Forex", signal_type="close_long")
         placed_order = client._ib.placeOrder.call_args[0][1]
         assert placed_order.tif == "IOC"
+
+
+class TestPlaceMarketOrderForex:
+    """UC-M1–M3: Forex market paths; UC-E1–E3: errors; UC-R1–R2: USStock/HShare TIF regression."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_m1_eurusd_buy_market_ioc_cash(self):
+        """UC-M1: EURUSD buy 20000 → CASH, EUR/USD, IOC, totalQuantity base units."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=600)
+        client._ib.placeOrder.return_value = trade_mock
+        result = client.place_market_order(
+            "EURUSD", "buy", 20000.0, "Forex", signal_type="open_long",
+        )
+        assert result.success is True
+        assert result.status == "Submitted"
+        contract, placed_order = client._ib.placeOrder.call_args[0]
+        assert contract.secType == "CASH"
+        assert contract.symbol == "EUR"
+        assert contract.currency == "USD"
+        assert placed_order.totalQuantity == 20000
+        assert placed_order.tif == "IOC"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_m2_gbpjpy_sell_market(self):
+        """UC-M2: GBPJPY sell 50000 → SELL, GBP/JPY, IOC."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=601)
+        client._ib.placeOrder.return_value = trade_mock
+        result = client.place_market_order(
+            "GBPJPY", "sell", 50000.0, "Forex", signal_type="open_short",
+        )
+        assert result.success is True
+        contract, placed_order = client._ib.placeOrder.call_args[0]
+        assert contract.symbol == "GBP"
+        assert contract.currency == "JPY"
+        assert placed_order.action == "SELL"
+        assert placed_order.totalQuantity == 50000
+        assert placed_order.tif == "IOC"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_m3_xauusd_buy_market(self):
+        """UC-M3: XAUUSD buy 10 → XAU/USD, IOC."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=602)
+        client._ib.placeOrder.return_value = trade_mock
+        result = client.place_market_order(
+            "XAUUSD", "buy", 10.0, "Forex", signal_type="open_long",
+        )
+        assert result.success is True
+        contract, placed_order = client._ib.placeOrder.call_args[0]
+        assert contract.symbol == "XAU"
+        assert contract.currency == "USD"
+        assert float(placed_order.totalQuantity) == 10.0
+        assert placed_order.tif == "IOC"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_e1_qualify_failure_unknown_pair(self):
+        """UC-E1: unknown 6-letter pair ABCDEF → qualify [], message has Invalid/Forex/ABCDEF."""
+        client = _make_client_with_mock_ib()
+
+        async def _mock_qualify_empty(*contracts):
+            return []
+
+        client._ib.qualifyContractsAsync = _mock_qualify_empty
+        result = client.place_market_order(
+            "ABCDEF", "buy", 20000.0, "Forex", signal_type="open_long",
+        )
+        assert result.success is False
+        assert "Invalid" in result.message
+        assert "Forex" in result.message
+        assert "ABCDEF" in result.message
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_e2_alignment_yields_zero_forex_hint(self):
+        """UC-E2: sizeIncrement 25000 with qty 10000 → 0; Forex IDEALPRO hint; no placeOrder."""
+        IBKRClient._lot_size_cache.clear()
+        try:
+            client = _make_client_with_mock_ib()
+
+            async def _mock_details(*args, **kwargs):
+                return [types.SimpleNamespace(sizeIncrement=25000.0, minSize=0)]
+
+            client._ib.reqContractDetailsAsync = _mock_details
+            trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=603)
+            client._ib.placeOrder.return_value = trade_mock
+            result = client.place_market_order(
+                "EURUSD", "buy", 10000.0, "Forex", signal_type="open_long",
+            )
+            assert result.success is False
+            assert "Quantity 10000.0 rounds to 0" in result.message
+            assert (
+                "For Forex (IDEALPRO), the amount may be below the minimum tradable size for this pair."
+                in result.message
+            )
+            assert client._ib.placeOrder.call_count == 0
+        finally:
+            IBKRClient._lot_size_cache.clear()
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_e3_zero_qty_rejected_before_place_order(self):
+        """UC-E3: quantity 0 → normalizer; no placeOrder."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=604)
+        client._ib.placeOrder.return_value = trade_mock
+        result = client.place_market_order("EURUSD", "buy", 0.0, "Forex")
+        assert result.success is False
+        assert "Quantity must be positive" in result.message
+        assert client._ib.placeOrder.call_count == 0
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_r1_usstock_open_long_uses_day_tif(self):
+        """UC-R1: USStock open_long market order uses tif DAY."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=605)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_market_order("AAPL", "buy", 100.0, "USStock", signal_type="open_long")
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.tif == "DAY"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_r2_hshare_open_long_uses_day_tif(self):
+        """UC-R2: HShare open_long market order uses tif DAY."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=606)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_market_order("00005", "buy", 400.0, "HShare", signal_type="open_long")
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.tif == "DAY"
 
 
 # ===========================================================================
