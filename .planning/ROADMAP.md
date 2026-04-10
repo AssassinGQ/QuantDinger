@@ -83,10 +83,10 @@ Plans:
   1. `open_long` → BUY, `close_long` → SELL, `open_short` → SELL, `close_short` → BUY for Forex (per project conventions).
   2. Forex no longer fails purely because “short” is disallowed as on single-stock equity assumptions.
   3. Table-driven tests cover all four signal types for `market_category=Forex`.
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 05-01: Signal→side matrix use cases; implement `map_signal_to_side` Forex branch; full regression
+- [ ] 05-01-PLAN.md — Base `map_signal_to_side(..., market_category=)`; IBKR `_FOREX_SIGNAL_MAP`; runner wiring; UC-F1–F6 / UC-E1–E3 / UC-R1 tests; REGR-01
 
 ### Phase 6: TIF policy for Forex
 **Goal**: Time-in-force for Forex market orders matches IBKR behavior validated in paper (open vs close; DAY vs IOC vs GTC as decided).
@@ -189,7 +189,7 @@ Plans:
 | 2. Forex contract creation (IDEALPRO) | 0/1 | Not started | - |
 | 3. Contract qualification | 0/1 | Not started | - |
 | 4. Market category & worker gate | 0/1 | Not started (planned) | - |
-| 5. Signal-to-side mapping (two-way FX) | 0/1 | Not started | - |
+| 5. Signal-to-side mapping (two-way FX) | 0/1 | Planned | - |
 | 6. TIF policy for Forex | 0/1 | Not started | - |
 | 7. Forex market orders | 0/1 | Not started | - |
 | 8. Quantity normalization & IB alignment | 0/1 | Not started | - |
