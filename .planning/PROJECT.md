@@ -30,6 +30,7 @@
 - ✓ Forex 合约 qualify 验证（conId、localSymbol、secType 防御性检查） — Validated in Phase 3: Contract qualification
 - ✓ IBKRClient.supported_market_categories 包含 "Forex" — Validated in Phase 4: Market category & worker gate
 - ✓ map_signal_to_side 支持 Forex 双向交易信号（八信号映射，与 MT5 对齐） — Validated in Phase 5: Signal-to-side mapping (two-way FX)
+- ✓ Forex TIF 策略：所有信号统一使用 IOC — Validated in Phase 6: TIF policy for Forex (paper trading verified on DUQ123679)
 - [ ] Forex RTH 使用 IBKR 合约交易时间（与现有逻辑一致）
 - [ ] Lot size 复用现有两层机制（ForexNormalizer + _align_qty_to_contract）
 - [ ] 策略系统可配置 market_category=Forex 执行自动交易
@@ -50,7 +51,7 @@
 - IBKR IDEALPRO Forex 以基础货币单位下单（如 25000 EUR），不是标准手
 - `ForexNormalizer` 和 `_align_qty_to_contract` 已有，无需改动数量处理逻辑
 - ib_insync.Forex 合约构造：`Forex(pair='EURUSD')` 或 `Forex(symbol='EUR', currency='USD', exchange='IDEALPRO')`
-- TIF 需要确认 Forex 场景下的合适值（DAY vs GTC）
+- TIF 已确认：Forex 所有信号统一使用 IOC（Phase 6 决策，paper trading 验证通过）
 
 ## Constraints
 
@@ -62,9 +63,10 @@
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
+| Forex TIF = IOC | IDEALPRO 市价单需要 IOC（避免 DAY 挂单残留），paper trading 验证通过 | ✓ Decided (Phase 6) |
 | 市价单优先 | 外汇流动性好，市价单滑点可控，简化实现 | — Pending |
 | 复用 ForexNormalizer | 已有取整逻辑 + IBKR sizeIncrement 对齐，无需额外最小量检查 | — Pending |
 | RTH 复用 IBKR 合约时间 | 与股票路径一致，IBKR 返回的 liquidHours 能正确反映 Forex 24/5 特性 | — Pending |
 
 ---
-*Last updated: 2026-04-10 — Phase 5 complete: Signal-to-side mapping (two-way FX)*
+*Last updated: 2026-04-10 — Phase 6 complete: TIF policy for Forex (IOC, paper validated)*
