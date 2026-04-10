@@ -640,11 +640,11 @@ class TestFireAndForgetOrder:
 
 
 # ===========================================================================
-# TIF = 'DAY' tests
+# TIF policy: USStock non-close uses DAY; Forex uses IOC (TestTifForexPolicy)
 # ===========================================================================
 
 class TestTifDay:
-    """Verify that orders explicitly set tif='DAY' to prevent Error 10349."""
+    """USStock: non-close paths use tif='DAY' on market/limit orders (Error 10349)."""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_sets_tif_day(self):
@@ -663,6 +663,54 @@ class TestTifDay:
         client.place_limit_order("GOOGL", "buy", 5, 180.0, "USStock")
         placed_order = client._ib.placeOrder.call_args[0][1]
         assert placed_order.tif == "DAY"
+
+
+class TestTifForexPolicy:
+    """UC-T1–T8: Forex IOC for every signal; UC-E1–E3: USStock/HShare TIF regression."""
+
+    @pytest.mark.parametrize(
+        "signal_type",
+        [
+            "open_long",  # UC-T1
+            "close_long",  # UC-T2
+            "open_short",  # UC-T3
+            "close_short",  # UC-T4
+            "add_long",  # UC-T5
+            "add_short",  # UC-T6
+            "reduce_long",  # UC-T7
+            "reduce_short",  # UC-T8
+        ],
+        ids=["uc_t1", "uc_t2", "uc_t3", "uc_t4", "uc_t5", "uc_t6", "uc_t7", "uc_t8"],
+    )
+    def test_forex_signal_returns_ioc(self, signal_type):
+        assert IBKRClient._get_tif_for_signal(signal_type, "Forex") == "IOC"
+
+    def test_uc_e1_usstock_open_uses_day(self):
+        assert IBKRClient._get_tif_for_signal("open_long", "USStock") == "DAY"
+
+    def test_uc_e2_usstock_close_uses_ioc(self):
+        assert IBKRClient._get_tif_for_signal("close_long", "USStock") == "IOC"
+
+    def test_uc_e3_hshare_close_uses_day(self):
+        assert IBKRClient._get_tif_for_signal("close_long", "HShare") == "DAY"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_forex_market_order_passes_tif_ioc(self):
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=500)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_market_order("EURUSD", "buy", 10000.0, "Forex", signal_type="open_long")
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.tif == "IOC"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_forex_limit_order_passes_tif_ioc(self):
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=501)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_limit_order("EURUSD", "buy", 10000.0, 1.10, "Forex", signal_type="close_long")
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.tif == "IOC"
 
 
 # ===========================================================================
