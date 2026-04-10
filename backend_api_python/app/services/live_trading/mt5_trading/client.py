@@ -79,7 +79,7 @@ class MT5Client(BaseStatefulClient):
 
     # ── signal mapping (BaseStatefulClient) ─────────────────────────────
 
-    def map_signal_to_side(self, signal_type: str) -> str:
+    def map_signal_to_side(self, signal_type: str, *, market_category: str = "") -> str:
         sig = (signal_type or "").strip().lower()
         side = self._SIGNAL_MAP.get(sig)
         if side is None:

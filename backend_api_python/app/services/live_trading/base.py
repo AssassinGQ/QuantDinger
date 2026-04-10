@@ -198,7 +198,7 @@ class BaseStatefulClient(ABC):
         return False
 
     @abstractmethod
-    def map_signal_to_side(self, signal_type: str) -> str:
+    def map_signal_to_side(self, signal_type: str, *, market_category: str = "") -> str:
         """Convert strategy signal (e.g. 'open_long') to 'buy'/'sell'."""
 
     def get_positions(self) -> List[Dict[str, Any]]:

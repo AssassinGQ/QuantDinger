@@ -117,6 +117,17 @@ class IBKRClient(BaseStatefulClient):
         "reduce_long": "sell",
     }
 
+    _FOREX_SIGNAL_MAP = {
+        "open_long": "buy",
+        "add_long": "buy",
+        "close_long": "sell",
+        "reduce_long": "sell",
+        "open_short": "sell",
+        "add_short": "sell",
+        "close_short": "buy",
+        "reduce_short": "buy",
+    }
+
     _RECONNECT_DELAYS = [2, 5, 10, 30, 60]
 
     @staticmethod
@@ -158,10 +169,16 @@ class IBKRClient(BaseStatefulClient):
 
     # ── signal mapping ──────────────────────────────────────────────
 
-    def map_signal_to_side(self, signal_type: str) -> str:
+    def map_signal_to_side(self, signal_type: str, *, market_category: str = "") -> str:
         sig = (signal_type or "").strip().lower()
+        cat = (market_category or "").strip()
+        if cat == "Forex":
+            side = self._FOREX_SIGNAL_MAP.get(sig)
+            if side is None:
+                raise ValueError(f"Unsupported signal_type for IBKR: {signal_type}")
+            return side
         if "short" in sig:
-            raise ValueError("IBKR stock trading does not support short signals")
+            raise ValueError(f"IBKR 美股/港股不支持 short 信号: {signal_type}")
         side = self._SIGNAL_MAP.get(sig)
         if side is None:
             raise ValueError(f"Unsupported signal_type for IBKR: {signal_type}")

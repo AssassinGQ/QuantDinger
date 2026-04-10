@@ -128,14 +128,40 @@ class TestIBKRSignalMapping:
         c = self._make_client()
         assert c.map_signal_to_side("reduce_long") == "sell"
 
+    def test_forex_uc_f1_f6_and_add_reduce_long(self):
+        c = self._make_client()
+        fx = "Forex"
+        assert c.map_signal_to_side("open_long", market_category=fx) == "buy"
+        assert c.map_signal_to_side("close_long", market_category=fx) == "sell"
+        assert c.map_signal_to_side("open_short", market_category=fx) == "sell"
+        assert c.map_signal_to_side("close_short", market_category=fx) == "buy"
+        assert c.map_signal_to_side("add_short", market_category=fx) == "sell"
+        assert c.map_signal_to_side("reduce_short", market_category=fx) == "buy"
+        assert c.map_signal_to_side("add_long", market_category=fx) == "buy"
+        assert c.map_signal_to_side("reduce_long", market_category=fx) == "sell"
+
+    def test_uc_e1_open_short_default_category_rejects(self):
+        c = self._make_client()
+        with pytest.raises(ValueError, match=r"美股/港股不支持 short"):
+            c.map_signal_to_side("open_short")
+
+    def test_uc_e2_open_short_us_stock_rejects(self):
+        c = self._make_client()
+        with pytest.raises(ValueError, match=r"美股/港股不支持 short"):
+            c.map_signal_to_side("open_short", market_category="USStock")
+
+    def test_uc_e3_close_long_without_kwarg_returns_sell(self):
+        c = self._make_client()
+        assert c.map_signal_to_side("close_long") == "sell"
+
     def test_short_rejected(self):
         c = self._make_client()
-        with pytest.raises(ValueError, match="short"):
+        with pytest.raises(ValueError, match=r"美股/港股不支持 short"):
             c.map_signal_to_side("open_short")
 
     def test_close_short_rejected(self):
         c = self._make_client()
-        with pytest.raises(ValueError, match="short"):
+        with pytest.raises(ValueError, match=r"美股/港股不支持 short"):
             c.map_signal_to_side("close_short")
 
     def test_unknown_signal_rejected(self):

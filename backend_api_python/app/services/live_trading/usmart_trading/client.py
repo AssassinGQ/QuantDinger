@@ -123,7 +123,7 @@ class USmartClient(BaseStatefulClient):
             return "1"
         return "0"
 
-    def map_signal_to_side(self, signal_type: str) -> str:
+    def map_signal_to_side(self, signal_type: str, *, market_category: str = "") -> str:
         signal = signal_type.lower()
         if signal in ("open_long", "add_long"):
             return "buy"

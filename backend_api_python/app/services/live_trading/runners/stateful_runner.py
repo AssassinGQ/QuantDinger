@@ -57,7 +57,10 @@ class StatefulClientRunner(OrderRunner):
         eid = client.engine_id or "engine"
 
         try:
-            action = client.map_signal_to_side(ctx.signal_type)
+            action = client.map_signal_to_side(
+                ctx.signal_type,
+                market_category=(ctx.market_category or "").strip(),
+            )
         except ValueError as e:
             return ExecutionResult(success=False, error=f"{eid}_unsupported_signal:{e}")
 
