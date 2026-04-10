@@ -1087,9 +1087,17 @@ class IBKRClient(BaseStatefulClient):
 
             qty = await self._align_qty_to_contract(contract, quantity, symbol)
             if qty <= 0:
+                msg = (
+                    f"Quantity {quantity} rounds to 0 after lot-size alignment for {symbol}"
+                )
+                if market_type == "Forex":
+                    msg += (
+                        " For Forex (IDEALPRO), the amount may be below the minimum "
+                        "tradable size for this pair."
+                    )
                 return LiveOrderResult(
                     success=False,
-                    message=f"Quantity {quantity} rounds to 0 after lot-size alignment for {symbol}",
+                    message=msg,
                     exchange_id=self.engine_id,
                 )
 
@@ -1157,9 +1165,17 @@ class IBKRClient(BaseStatefulClient):
 
             qty = await self._align_qty_to_contract(contract, quantity, symbol)
             if qty <= 0:
+                msg = (
+                    f"Quantity {quantity} rounds to 0 after lot-size alignment for {symbol}"
+                )
+                if market_type == "Forex":
+                    msg += (
+                        " For Forex (IDEALPRO), the amount may be below the minimum "
+                        "tradable size for this pair."
+                    )
                 return LiveOrderResult(
                     success=False,
-                    message=f"Quantity {quantity} rounds to 0 after lot-size alignment for {symbol}",
+                    message=msg,
                     exchange_id=self.engine_id,
                 )
 
