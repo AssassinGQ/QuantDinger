@@ -72,7 +72,7 @@ Each task was committed atomically:
 
 1. **Task 1: Production + tests — UC-F1–F6, UC-E1–E3, UC-R1, REGR-01** - `234af30` (feat)
 
-**Plan metadata:** `4e6c8fb` (docs: complete signal-to-side mapping plan)
+**Plan metadata:** `692cd3f` (docs: SUMMARY, STATE, REQUIREMENTS); `403e385` (docs: ROADMAP phase 5 progress — follow-up after `update-plan-progress 05` did not match table rows keyed by `5.`)
 
 ## Files Created/Modified
 
@@ -90,11 +90,11 @@ Each task was committed atomically:
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+None for application code and tests. Planning automation: ROADMAP table update required a second `roadmap update-plan-progress 5` invocation (see Issues Encountered).
 
 ## Issues Encountered
 
-None.
+- `gsd-tools roadmap update-plan-progress 05` did not update the progress table (rows use `5.` not `05`). Re-ran with `5` and committed ROADMAP changes in `403e385`.
 
 ## User Setup Required
 
@@ -112,4 +112,4 @@ None.
 
 - `05-01-SUMMARY.md` exists at `.planning/phases/05-signal-to-side-mapping-two-way-fx/05-01-SUMMARY.md`
 - Commit `234af30` present in history for feat(05-01)
-- Commit `4e6c8fb` present in history for docs(05-01)
+- Commits `692cd3f`, `403e385` present in history for docs(05-01)
