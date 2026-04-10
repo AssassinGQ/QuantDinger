@@ -18,7 +18,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **EXEC-01**: IBKRClient.place_market_order 可对 Forex 合约下市价单（MarketOrder + totalQuantity 基础货币单位）
 - [x] **EXEC-02**: map_signal_to_side 支持 Forex 双向交易（open_long→BUY, close_long→SELL, open_short→SELL, close_short→BUY）
-- [ ] **EXEC-03**: _get_tif_for_signal 有 Forex 专属分支，根据 paper 验证结果设定正确的 TIF（DAY/IOC/GTC）
+- [x] **EXEC-03**: _get_tif_for_signal 有 Forex 专属分支，根据 paper 验证结果设定正确的 TIF（DAY/IOC/GTC）
 - [ ] **EXEC-04**: 数量处理复用 ForexNormalizer（整数取整）+ _align_qty_to_contract（IBKR sizeIncrement 对齐）
 
 ### 运行时支持 (Runtime Support)
@@ -74,7 +74,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONT-04 | Phase 4 | Complete |
 | EXEC-01 | Phase 7 | Pending |
 | EXEC-02 | Phase 5 | Complete |
-| EXEC-03 | Phase 6 | Pending |
+| EXEC-03 | Phase 6 | Complete |
 | EXEC-04 | Phase 8 | Pending |
 | RUNT-01 | Phase 9 | Pending |
 | RUNT-02 | Phase 10 | Pending |

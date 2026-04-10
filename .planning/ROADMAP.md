@@ -13,7 +13,7 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
 - [ ] **Phase 3: Contract qualification** — `qualifyContracts` resolves conId, localSymbol for Forex
 - [ ] **Phase 4: Market category & worker gate** — `supported_market_categories` + PendingOrderWorker validation for Forex
 - [x] **Phase 5: Signal-to-side mapping (two-way FX)** — Long/short-style signals map to BUY/SELL for Forex (completed 2026-04-10)
-- [ ] **Phase 6: TIF policy for Forex** — `_get_tif_for_signal` Forex branch (DAY/IOC/GTC per paper validation)
+- [x] **Phase 6: TIF policy for Forex** — `_get_tif_for_signal` Forex → IOC for all signals (completed 2026-04-10)
 - [ ] **Phase 7: Forex market orders** — `place_market_order` for Forex with base-currency `totalQuantity`
 - [ ] **Phase 8: Quantity normalization & IB alignment** — ForexNormalizer + `_align_qty_to_contract` on Forex path
 - [ ] **Phase 9: Forex trading hours (liquidHours)** — `is_market_open` uses IBKR contract hours for 24/5 FX
@@ -96,10 +96,10 @@ Plans:
   1. `_get_tif_for_signal` applies a documented Forex-specific policy distinct from equity where needed.
   2. Submitted orders carry the TIF chosen by that policy for open and close scenarios.
   3. Tests encode the policy; paper trading notes document any IOC/DAY fallback (per research).
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 06-01-PLAN.md — Forex `_get_tif_for_signal` → IOC (UC-T1–T8, UC-E1–E3, REGR-01); tests in `test_ibkr_client.py`
+- [x] 06-01-PLAN.md — Forex `_get_tif_for_signal` → IOC (UC-T1–T8, UC-E1–E3, REGR-01); tests in `test_ibkr_client.py`
 
 ### Phase 7: Forex market orders
 **Goal**: Market orders for Forex submit through the same client surface as equities with correct `MarketOrder` + quantity.
@@ -190,7 +190,7 @@ Plans:
 | 3. Contract qualification | 0/1 | Not started | - |
 | 4. Market category & worker gate | 0/1 | Not started (planned) | - |
 | 5. Signal-to-side mapping (two-way FX) | 1/1 | Complete   | 2026-04-10 |
-| 6. TIF policy for Forex | 0/1 | Planned | - |
+| 6. TIF policy for Forex | 1/1 | Complete   | 2026-04-10 |
 | 7. Forex market orders | 0/1 | Not started | - |
 | 8. Quantity normalization & IB alignment | 0/1 | Not started | - |
 | 9. Forex trading hours (liquidHours) | 0/1 | Not started | - |
