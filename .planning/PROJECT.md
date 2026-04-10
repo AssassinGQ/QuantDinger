@@ -28,7 +28,7 @@
 - ✓ Forex 合约创建（ib_insync.Forex，IDEALPRO 交易所） — Validated in Phase 2: Forex contract creation
 - ✓ symbol 解析支持外汇对格式（如 EUR.USD, EURUSD） — Validated in Phase 1: Forex symbol normalization
 - ✓ Forex 合约 qualify 验证（conId、localSymbol、secType 防御性检查） — Validated in Phase 3: Contract qualification
-- [ ] IBKRClient.supported_market_categories 包含 "Forex"
+- ✓ IBKRClient.supported_market_categories 包含 "Forex" — Validated in Phase 4: Market category & worker gate
 - [ ] Forex RTH 使用 IBKR 合约交易时间（与现有逻辑一致）
 - [ ] Lot size 复用现有两层机制（ForexNormalizer + _align_qty_to_contract）
 - [ ] 策略系统可配置 market_category=Forex 执行自动交易

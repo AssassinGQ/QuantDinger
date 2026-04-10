@@ -12,7 +12,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **CONT-01**: IBKRClient._create_contract 根据 market_type="Forex" 创建 ib_insync.Forex 合约（secType=CASH, exchange=IDEALPRO）
 - [x] **CONT-02**: normalize_symbol 支持 Forex 符号格式（EURUSD, EUR.USD, EUR/USD）解析为 base+quote
 - [x] **CONT-03**: Forex 合约通过 qualifyContracts 验证，正确获取 conId 和 localSymbol
-- [ ] **CONT-04**: IBKRClient.supported_market_categories 包含 "Forex"，PendingOrderWorker 的 validate_market_category 放行
+- [x] **CONT-04**: IBKRClient.supported_market_categories 包含 "Forex"，PendingOrderWorker 的 validate_market_category 放行
 
 ### 交易执行 (Trading Execution)
 
@@ -71,7 +71,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONT-01 | Phase 2 | Complete |
 | CONT-02 | Phase 1 | Complete |
 | CONT-03 | Phase 3 | Complete |
-| CONT-04 | Phase 4 | Pending |
+| CONT-04 | Phase 4 | Complete |
 | EXEC-01 | Phase 7 | Pending |
 | EXEC-02 | Phase 5 | Pending |
 | EXEC-03 | Phase 6 | Pending |
