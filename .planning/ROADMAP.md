@@ -96,10 +96,10 @@ Plans:
   1. `_get_tif_for_signal` applies a documented Forex-specific policy distinct from equity where needed.
   2. Submitted orders carry the TIF chosen by that policy for open and close scenarios.
   3. Tests encode the policy; paper trading notes document any IOC/DAY fallback (per research).
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 06-01: TIF matrix use cases; paper validation checklist; implement branch; tests
+- [ ] 06-01-PLAN.md — Forex `_get_tif_for_signal` → IOC (UC-T1–T8, UC-E1–E3, REGR-01); tests in `test_ibkr_client.py`
 
 ### Phase 7: Forex market orders
 **Goal**: Market orders for Forex submit through the same client surface as equities with correct `MarketOrder` + quantity.
@@ -190,7 +190,7 @@ Plans:
 | 3. Contract qualification | 0/1 | Not started | - |
 | 4. Market category & worker gate | 0/1 | Not started (planned) | - |
 | 5. Signal-to-side mapping (two-way FX) | 1/1 | Complete   | 2026-04-10 |
-| 6. TIF policy for Forex | 0/1 | Not started | - |
+| 6. TIF policy for Forex | 0/1 | Planned | - |
 | 7. Forex market orders | 0/1 | Not started | - |
 | 8. Quantity normalization & IB alignment | 0/1 | Not started | - |
 | 9. Forex trading hours (liquidHours) | 0/1 | Not started | - |
