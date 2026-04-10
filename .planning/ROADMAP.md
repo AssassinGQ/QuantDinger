@@ -14,7 +14,7 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
 - [ ] **Phase 4: Market category & worker gate** — `supported_market_categories` + PendingOrderWorker validation for Forex
 - [x] **Phase 5: Signal-to-side mapping (two-way FX)** — Long/short-style signals map to BUY/SELL for Forex (completed 2026-04-10)
 - [x] **Phase 6: TIF policy for Forex** — `_get_tif_for_signal` Forex → IOC for all signals (completed 2026-04-10)
-- [ ] **Phase 7: Forex market orders** — `place_market_order` for Forex with base-currency `totalQuantity`
+- [x] **Phase 7: Forex market orders** — `place_market_order` for Forex with base-currency `totalQuantity` (completed 2026-04-10)
 - [ ] **Phase 8: Quantity normalization & IB alignment** — ForexNormalizer + `_align_qty_to_contract` on Forex path
 - [ ] **Phase 9: Forex trading hours (liquidHours)** — `is_market_open` uses IBKR contract hours for 24/5 FX
 - [ ] **Phase 10: Fills, position & PnL events** — Callbacks and keys correct for Forex symbols and currencies
@@ -109,10 +109,10 @@ Plans:
   1. `place_market_order` successfully submits a market order for a qualified Forex contract.
   2. `totalQuantity` is interpreted in base-currency units per IDEALPRO conventions.
   3. Integration-style tests (mock IB) show order construction for Forex without breaking US/HK order tests.
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 07-01-PLAN.md — Forex `place_market_order` integration tests (UC-M1–M3, UC-E1–E3, UC-R1–R2, REGR-01) + Forex qty=0-after-alignment message (IDEALPRO hint)
+- [x] 07-01-PLAN.md — Forex `place_market_order` integration tests (UC-M1–M3, UC-E1–E3, UC-R1–R2, REGR-01) + Forex qty=0-after-alignment message (IDEALPRO hint)
 
 ### Phase 8: Quantity normalization & IB alignment
 **Goal**: Lot sizing uses existing ForexNormalizer plus `_align_qty_to_contract` from `ContractDetails` for Forex.
@@ -191,7 +191,7 @@ Plans:
 | 4. Market category & worker gate | 0/1 | Not started (planned) | - |
 | 5. Signal-to-side mapping (two-way FX) | 1/1 | Complete   | 2026-04-10 |
 | 6. TIF policy for Forex | 1/1 | Complete   | 2026-04-10 |
-| 7. Forex market orders | 0/1 | Planned | - |
+| 7. Forex market orders | 1/1 | Complete   | 2026-04-10 |
 | 8. Quantity normalization & IB alignment | 0/1 | Not started | - |
 | 9. Forex trading hours (liquidHours) | 0/1 | Not started | - |
 | 10. Fills, position & PnL events | 0/1 | Not started | - |
