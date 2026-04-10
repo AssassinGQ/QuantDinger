@@ -109,10 +109,10 @@ Plans:
   1. `place_market_order` successfully submits a market order for a qualified Forex contract.
   2. `totalQuantity` is interpreted in base-currency units per IDEALPRO conventions.
   3. Integration-style tests (mock IB) show order construction for Forex without breaking US/HK order tests.
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 07-01: Place-order use cases; implement Forex path; expand `test_ibkr_client` / exchange tests
+- [ ] 07-01-PLAN.md — Forex `place_market_order` integration tests (UC-M1–M3, UC-E1–E3, UC-R1–R2, REGR-01) + Forex qty=0-after-alignment message (IDEALPRO hint)
 
 ### Phase 8: Quantity normalization & IB alignment
 **Goal**: Lot sizing uses existing ForexNormalizer plus `_align_qty_to_contract` from `ContractDetails` for Forex.
@@ -191,7 +191,7 @@ Plans:
 | 4. Market category & worker gate | 0/1 | Not started (planned) | - |
 | 5. Signal-to-side mapping (two-way FX) | 1/1 | Complete   | 2026-04-10 |
 | 6. TIF policy for Forex | 1/1 | Complete   | 2026-04-10 |
-| 7. Forex market orders | 0/1 | Not started | - |
+| 7. Forex market orders | 0/1 | Planned | - |
 | 8. Quantity normalization & IB alignment | 0/1 | Not started | - |
 | 9. Forex trading hours (liquidHours) | 0/1 | Not started | - |
 | 10. Fills, position & PnL events | 0/1 | Not started | - |
