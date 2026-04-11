@@ -2,18 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
-current_phase: 14 — TIF unification (USStock/HShare)
-current_plan: 1
-status: ready
+current_phase: 14
+current_plan: Not started
+status: planning
 stopped_at: Completed 13-01-SUMMARY.md
-last_updated: "2026-04-11T14:48:22.385Z"
+last_updated: "2026-04-11T14:54:08.389Z"
 last_activity: 2026-04-11
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # Project State
@@ -30,9 +29,9 @@ See: `.planning/PROJECT.md`
 
 ## Current Position
 
-**Current Phase:** 14 — TIF unification (USStock/HShare)
-**Status:** Ready to plan/execute
-**Current Plan:** 1
+**Current Phase:** 14
+**Status:** Ready to plan
+**Current Plan:** Not started
 **Total Plans in Phase:** TBD (see `.planning/ROADMAP.md` Phase 14)
 **Last Activity:** 2026-04-11
 

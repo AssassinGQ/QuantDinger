@@ -123,7 +123,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 10. Fills, position & PnL events | v1.0 | 1/1 | Complete | 2026-04-11 |
 | 11. Strategy automation (Forex + IBKR) | v1.0 | 3/3 | Complete | 2026-04-11 |
 | 12. Frontend IBKR exchanges for Forex | v1.0 | 1/1 | Complete | 2026-04-11 |
-| 13. Qualify result caching + E2E prefix fix | 2/2 | Complete   | 2026-04-11 | 2026-04-11 |
+| 13. Qualify result caching + E2E prefix fix | 2/2 | Complete    | 2026-04-11 | 2026-04-11 |
 | 14. TIF unification (USStock/HShare) | v1.1 | 0/? | Not started | — |
 | 15. Normalize pipeline ordering | v1.1 | 0/? | Not started | — |
 | 16. Precious metals classification | v1.1 | 0/? | Not started | — |
