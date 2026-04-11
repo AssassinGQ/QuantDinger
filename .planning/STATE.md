@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: 2
 status: unknown
-stopped_at: Completed 08-01-PLAN.md
-last_updated: "2026-04-11T02:49:24.263Z"
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-04-11T02:50:37.989Z"
 progress:
   total_phases: 12
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 9
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 # Project State
@@ -41,6 +41,7 @@ Phase: 08 (quantity-normalization-ib-alignment) — EXECUTING
 | Phase 06 P01 | 5 min | 1 tasks | 2 files |
 | Phase 07-forex-market-orders P01 | 12min | 2 tasks | 2 files |
 | Phase 08 P01 | 4min | 1 tasks | 2 files |
+| Phase 08-quantity-normalization-ib-alignment P02 | 12min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -59,6 +60,7 @@ Logged in PROJECT.md Key Decisions. Roadmap follows research build order (symbol
 - [Phase 06]: Forex TIF (EXEC-03): _get_tif_for_signal returns IOC for all Forex signal types; USStock and HShare rules unchanged.
 - [Phase 07-forex-market-orders]: Forex zero-after-alignment errors append IDEALPRO minimum-size hint; equity messages unchanged.
 - [Phase 08-01 / EXEC-04]: ForexNormalizer `normalize` passthrough (`float`); IB increment alignment remains for 08-02 (`_align_qty_to_contract` tests).
+- [Phase 08-quantity-normalization-ib-alignment]: Isolated _align_qty_to_contract tests use AsyncMock + SimpleNamespace; UC-A5 proves single reqContractDetailsAsync via cache.
 
 ### Pending Todos
 
@@ -70,6 +72,6 @@ None yet.
 
 ## Session Continuity
 
-**Last session:** 2026-04-11T02:49:24.259Z
-**Stopped At:** Completed 08-01-PLAN.md
+**Last session:** 2026-04-11T02:50:37.983Z
+**Stopped At:** Completed 08-02-PLAN.md
 **Resume File:** None
