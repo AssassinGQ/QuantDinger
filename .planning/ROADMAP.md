@@ -16,7 +16,7 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
 - [x] **Phase 6: TIF policy for Forex** — `_get_tif_for_signal` Forex → IOC for all signals (completed 2026-04-10)
 - [x] **Phase 7: Forex market orders** — `place_market_order` for Forex with base-currency `totalQuantity` (completed 2026-04-10)
 - [ ] **Phase 8: Quantity normalization & IB alignment** — ForexNormalizer + `_align_qty_to_contract` on Forex path
-- [ ] **Phase 9: Forex trading hours (liquidHours)** — `is_market_open` uses IBKR contract hours for 24/5 FX
+- [x] **Phase 9: Forex trading hours (liquidHours)** — `is_market_open` uses IBKR contract hours for 24/5 FX (completed 2026-04-11)
 - [ ] **Phase 10: Fills, position & PnL events** — Callbacks and keys correct for Forex symbols and currencies
 - [ ] **Phase 11: Strategy automation (Forex + IBKR)** — Config `market_category=Forex` + ibkr-paper/live drives auto-trade
 - [ ] **Phase 12: Frontend IBKR exchanges for Forex** — Strategy UI offers ibkr-paper / ibkr-live when Forex is selected
@@ -136,10 +136,10 @@ Plans:
   1. `is_market_open` (or equivalent) for Forex reflects `liquidHours` / contract metadata from IBKR.
   2. Weekend and holiday behavior matches IBKR’s Forex schedule, not US equity RTH calendars.
   3. Tests include time-window scenarios (e.g. Fri–Sun boundaries) with mocked hours.
-**Plans**: TBD
+**Plans:** 1/1 plans executed
 
 Plans:
-- [ ] 09-01: Hours use cases; implement Forex branch; tests
+- [x] 09-01-PLAN.md — UC-FX-L01–L09 + UC-FX-I01–I05; Forex closed reason; `TestForexLiquidHours` / `TestForexRTHGate`; RUNT-01
 
 ### Phase 10: Fills, position & PnL events
 **Goal**: Execution and portfolio events expose Forex positions with correct symbol keys, quantities, and currencies.
@@ -194,7 +194,7 @@ Plans:
 | 6. TIF policy for Forex | 1/1 | Complete   | 2026-04-10 |
 | 7. Forex market orders | 1/1 | Complete   | 2026-04-10 |
 | 8. Quantity normalization & IB alignment | 1/2 | In Progress   | - |
-| 9. Forex trading hours (liquidHours) | 0/1 | Not started | - |
+| 9. Forex trading hours (liquidHours) | 1/1 | Complete   | 2026-04-11 |
 | 10. Fills, position & PnL events | 0/1 | Not started | - |
 | 11. Strategy automation (Forex + IBKR) | 0/1 | Not started | - |
 | 12. Frontend IBKR exchanges for Forex | 0/1 | Not started | - |
