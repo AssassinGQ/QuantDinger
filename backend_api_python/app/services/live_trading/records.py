@@ -57,6 +57,15 @@ def _ensure_tables() -> None:
                     UNIQUE(account, con_id)
                 )
             """)
+            cur.execute(
+                "ALTER TABLE qd_ibkr_pnl_single ADD COLUMN IF NOT EXISTS sec_type VARCHAR(20) DEFAULT ''"
+            )
+            cur.execute(
+                "ALTER TABLE qd_ibkr_pnl_single ADD COLUMN IF NOT EXISTS exchange VARCHAR(50) DEFAULT ''"
+            )
+            cur.execute(
+                "ALTER TABLE qd_ibkr_pnl_single ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT ''"
+            )
             db.commit()
             cur.close()
         _IBKR_TABLES_ENSURED = True
@@ -550,12 +559,9 @@ def ibkr_save_pnl(
 ) -> bool:
     _ensure_tables()
     MAX_VALUE = 1e15
-    position = max(-MAX_VALUE, min(MAX_VALUE, float(position)))
-    avg_cost = max(0, min(MAX_VALUE, float(avg_cost)))
     daily_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(daily_pnl)))
     unrealized_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(unrealized_pnl)))
     realized_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(realized_pnl)))
-    value = max(-MAX_VALUE, min(MAX_VALUE, float(value)))
     try:
         with get_db_connection() as db:
             cur = db.cursor()
@@ -584,6 +590,9 @@ def ibkr_save_position(
     account: str,
     con_id: int,
     symbol: str = "",
+    sec_type: str = "",
+    exchange: str = "",
+    currency: str = "",
     position: float = 0.0,
     avg_cost: float = 0.0,
     daily_pnl: float = 0.0,
@@ -598,10 +607,14 @@ def ibkr_save_position(
             cur.execute(
                 """
                 INSERT INTO qd_ibkr_pnl_single
-                (account, con_id, symbol, position, avg_cost, daily_pnl, unrealized_pnl, realized_pnl, value, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                (account, con_id, symbol, sec_type, exchange, currency,
+                 position, avg_cost, daily_pnl, unrealized_pnl, realized_pnl, value, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (account, con_id) DO UPDATE SET
                     symbol = COALESCE(NULLIF(EXCLUDED.symbol, ''), qd_ibkr_pnl_single.symbol),
+                    sec_type = COALESCE(NULLIF(EXCLUDED.sec_type, ''), qd_ibkr_pnl_single.sec_type),
+                    exchange = COALESCE(NULLIF(EXCLUDED.exchange, ''), qd_ibkr_pnl_single.exchange),
+                    currency = COALESCE(NULLIF(EXCLUDED.currency, ''), qd_ibkr_pnl_single.currency),
                     position = EXCLUDED.position,
                     avg_cost = COALESCE(NULLIF(EXCLUDED.avg_cost, 0), qd_ibkr_pnl_single.avg_cost),
                     daily_pnl = COALESCE(NULLIF(EXCLUDED.daily_pnl, 0), qd_ibkr_pnl_single.daily_pnl),
@@ -610,8 +623,20 @@ def ibkr_save_position(
                     value = COALESCE(NULLIF(EXCLUDED.value, 0), qd_ibkr_pnl_single.value),
                     updated_at = NOW()
                 """,
-                (str(account), int(con_id), str(symbol), position, avg_cost,
-                 daily_pnl, unrealized_pnl, realized_pnl, value),
+                (
+                    str(account),
+                    int(con_id),
+                    str(symbol),
+                    str(sec_type or ""),
+                    str(exchange or ""),
+                    str(currency or ""),
+                    position,
+                    avg_cost,
+                    daily_pnl,
+                    unrealized_pnl,
+                    realized_pnl,
+                    value,
+                ),
             )
             db.commit()
             cur.close()
@@ -645,7 +670,8 @@ def ibkr_get_positions(account: str) -> List[Dict[str, Any]]:
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT account, con_id, symbol, position, avg_cost, 
+                SELECT account, con_id, symbol, sec_type, exchange, currency,
+                       position, avg_cost,
                        daily_pnl, unrealized_pnl, realized_pnl, value, updated_at
                 FROM qd_ibkr_pnl_single
                 WHERE account = %s AND position != 0
