@@ -60,10 +60,12 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 **Depends on**: Phase 13 (qualify cache available for TIF validation tests)
 **Requirements**: INFRA-02
 **Success Criteria** (what must be TRUE):
-  1. USStock **open** signals use IOC where applicable; behavior matches the agreed matrix.
-  2. HShare exceptions (e.g. DAY-only where IOC is invalid) are explicit in code or docs and covered by tests—no accidental IOC on unsupported paths.
-  3. A TIF matrix (signal type × market category) is enforced by automated tests so future changes cannot drift policy unnoticed.
-**Plans**: TBD
+  1. All eight signal types for Forex, USStock, and HShare use **IOC**; behavior matches the 8×3 matrix (`TestTifMatrix`, 24 combinations).
+  2. `_get_tif_for_signal` docstring cites IBKR IOC exchange list (including SEHK); no unsourced claim that Hong Kong stocks cannot use IOC.
+  3. Full backend pytest suite remains green (regression gate).
+**Plans:** 1 plan
+Plans:
+- [ ] `14-01-PLAN.md` — IOC for Forex/USStock/HShare + `TestTifMatrix` + ROADMAP alignment (INFRA-02)
 
 ### Phase 15: Normalize pipeline ordering
 **Goal**: One consistent order pipeline: normalize after checks, align only after qualify, no duplicate normalize/align.
@@ -124,7 +126,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 11. Strategy automation (Forex + IBKR) | v1.0 | 3/3 | Complete | 2026-04-11 |
 | 12. Frontend IBKR exchanges for Forex | v1.0 | 1/1 | Complete | 2026-04-11 |
 | 13. Qualify result caching + E2E prefix fix | 2/2 | Complete    | 2026-04-11 | 2026-04-11 |
-| 14. TIF unification (USStock/HShare) | v1.1 | 0/? | Not started | — |
+| 14. TIF unification (USStock/HShare) | v1.1 | 0/1 | Not started | — |
 | 15. Normalize pipeline ordering | v1.1 | 0/? | Not started | — |
 | 16. Precious metals classification | v1.1 | 0/? | Not started | — |
 | 17. Forex limit orders & automation | v1.1 | 0/? | Not started | — |
