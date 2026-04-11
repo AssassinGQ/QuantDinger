@@ -1,4 +1,3 @@
-import math
 from typing import Tuple
 
 from app.services.live_trading.order_normalizer import OrderNormalizer
@@ -6,8 +5,8 @@ from app.services.live_trading.order_normalizer import OrderNormalizer
 
 class ForexNormalizer(OrderNormalizer):
 
-    def normalize(self, raw_qty: float, symbol: str) -> int:
-        return math.floor(raw_qty)
+    def normalize(self, raw_qty: float, symbol: str) -> float:
+        return raw_qty
 
     def check(self, qty: float, symbol: str) -> Tuple[bool, str]:
         if qty <= 0:

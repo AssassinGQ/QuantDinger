@@ -154,7 +154,37 @@ class TestForexNormalizer:
     norm = ForexNormalizer()
 
     def test_normalize(self):
-        assert self.norm.normalize(1000.7, "EURUSD") == 1000
+        assert self.norm.normalize(1000.7, "EURUSD") == 1000.7
+
+    def test_uc_n1_large_fractional_passthrough_eurusd_and_gbpjpy(self):
+        """UC-N1: large fractional qty passes through; second symbol sanity check."""
+        assert self.norm.normalize(20000.99, "EURUSD") == 20000.99
+        assert self.norm.normalize(20000.99, "GBPJPY") == 20000.99
+
+    def test_uc_n2_half_unit_passthrough(self):
+        """UC-N2: fractional 0.5 passes through."""
+        assert self.norm.normalize(0.5, "EURUSD") == 0.5
+
+    def test_uc_n3_small_positive_passthrough(self):
+        """UC-N3: 0.001 passes through."""
+        assert self.norm.normalize(0.001, "EURUSD") == 0.001
+
+    def test_uc_n4_large_magnitude_passthrough(self):
+        """UC-N4: 1e9 passes through."""
+        assert self.norm.normalize(1e9, "EURUSD") == 1e9
+
+    def test_uc_n5_check_rejects_negative(self):
+        """UC-N5: check rejects negative qty with positive wording."""
+        ok, msg = self.norm.check(-5, "EURUSD")
+        assert ok is False
+        assert "positive" in msg.lower()
+        assert "-5" in msg or "-5.0" in msg
+
+    def test_uc_n6_check_accepts_small_positive(self):
+        """UC-N6: small positive qty accepted."""
+        ok, reason = self.norm.check(0.001, "EURUSD")
+        assert ok is True
+        assert reason == ""
 
     def test_check_valid(self):
         ok, _ = self.norm.check(1000, "EURUSD")
