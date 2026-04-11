@@ -59,7 +59,7 @@ completed: 2026-04-11
 
 1. **Task 1: test_ibkr_forex_paper_smoke.py — three pairs, open+close, mocked IB** - `047a773` (test)
 
-**Plan metadata:** `e7a72f9` (docs: complete plan)
+**Plan metadata:** `403c443` (docs: complete plan)
 
 ## Files Created/Modified
 
@@ -89,7 +89,7 @@ None - no external service configuration required.
 ## Self-Check: PASSED
 
 - `backend_api_python/tests/test_ibkr_forex_paper_smoke.py` exists.
-- Commits `047a773` (tests), `e7a72f9` (planning docs) present on branch.
+- Commits `047a773` (tests), `403c443` (planning docs) present on branch.
 
 ---
 *Phase: 11-strategy-automation-forex-ibkr*
