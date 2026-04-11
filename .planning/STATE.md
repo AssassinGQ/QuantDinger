@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
-current_phase: 13 — Qualify result caching + E2E prefix fix
+current_phase: 14 — TIF unification (USStock/HShare)
 current_plan: 1
-status: executing
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-04-11T14:44:23.123Z"
+status: ready
+stopped_at: Completed 13-01-SUMMARY.md
+last_updated: "2026-04-11T14:48:22.385Z"
 last_activity: 2026-04-11
 progress:
   total_phases: 6
-  completed_phases: 0
-  total_plans: 2
-  completed_plans: 1
-  percent: 50
+  completed_phases: 1
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -24,21 +24,21 @@ See: `.planning/PROJECT.md`
 
 **Core value:** 清理 v1.0 遗留技术债务，增加 Forex 限价单，补全 E2E 测试覆盖。
 
-**Current focus:** Phase 13 — Qualify result caching + E2E prefix fix
+**Current focus:** Phase 14 — TIF unification (USStock/HShare)
 
 **Verification:** use-case-driven (`.planning/config.json`). **Regression gate:** ~928 existing backend tests must stay green.
 
 ## Current Position
 
-**Current Phase:** 13 — Qualify result caching + E2E prefix fix
-**Status:** EXECUTING
+**Current Phase:** 14 — TIF unification (USStock/HShare)
+**Status:** Ready to plan/execute
 **Current Plan:** 1
-**Total Plans in Phase:** 2
+**Total Plans in Phase:** TBD (see `.planning/ROADMAP.md` Phase 14)
 **Last Activity:** 2026-04-11
 
-Phase 13 progress: `13-02-PLAN.md` executed (E2E `/api` prefix); `13-01-PLAN.md` (qualify cache) still pending.
+Phase 13 complete: `13-01-PLAN.md` (qualify TTL cache + docs) and `13-02-PLAN.md` (E2E `/api` prefix) both delivered.
 
-**Progress:** [█████░░░░░] 50%
+**Progress:** (phase 14 not started)
 
 ## Performance Metrics
 
@@ -49,6 +49,8 @@ Phase 13 progress: `13-02-PLAN.md` executed (E2E `/api` prefix); `13-01-PLAN.md`
 
 *(v1.0 metrics retained in git history / prior STATE revisions.)*
 
+| Phase 13-qualify-result-caching-e2e-prefix-fix P01 | 25min | 3 tasks | 6 files |
+
 ## Accumulated Context
 
 ### Decisions
@@ -56,10 +58,11 @@ Phase 13 progress: `13-02-PLAN.md` executed (E2E `/api` prefix); `13-01-PLAN.md`
 - **Roadmap order (v1.1):** qualify cache → TIF unification → normalize timing → precious metals classification → Forex limit orders (client + partials + runner/worker) → E2E/API prefix/optional Playwright — per `.planning/research/SUMMARY.md`.
 - **Requirement mapping:** each v1.1 requirement maps to exactly one phase (see `.planning/REQUIREMENTS.md` traceability).
 - **[Phase 13]:** E2E test Flask app registers `strategy_bp` with `url_prefix='/api'` and POST `/api/strategies/create`, matching `register_routes` (TEST-01).
+- [Phase 13]: Qualify cache: (symbol, market_type) key, per-market IBKR_QUALIFY_TTL_*_SEC, no flush on reconnect
 
 ### Pending Todos
 
-- Execute `13-01-PLAN.md` (qualify TTL cache) to finish Phase 13.
+- Run `/gsd:plan-phase 14` or begin Phase 14 implementation when ready.
 
 ### Blockers/Concerns
 
@@ -67,6 +70,6 @@ Phase 13 progress: `13-02-PLAN.md` executed (E2E `/api` prefix); `13-01-PLAN.md`
 
 ## Session Continuity
 
-**Last session:** 2026-04-11T14:44:23.119Z
-**Stopped At:** Completed 13-02-PLAN.md
+**Last session:** 2026-04-11T14:48:22.382Z
+**Stopped At:** Completed 13-01-SUMMARY.md
 **Resume File:** None

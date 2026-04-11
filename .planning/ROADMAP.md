@@ -51,7 +51,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   2. After qualify failure, qualify exception, or post-qualify validation failure for a symbol, the cached entry for that `(symbol, market_type)` is removed. IBKR reconnect does **not** flush the qualify cache (TTL + targeted invalidation only; see Phase 13 CONTEXT).
   3. TTL (or equivalent expiry) is configurable per market (Forex / USStock / HShare) and documented for operators (`IBKR_QUALIFY_TTL_*_SEC`).
   4. `test_forex_ibkr_e2e.py` blueprint prefix matches production API routing (no `/api/strategy/` vs `/api/` drift).
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 - [x] `13-01-PLAN.md` — Qualify TTL cache + docs + requirements reconcile
 - [x] `13-02-PLAN.md` — E2E Flask blueprint `/api` prefix alignment (`test_forex_ibkr_e2e.py`)
 
@@ -123,7 +123,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 10. Fills, position & PnL events | v1.0 | 1/1 | Complete | 2026-04-11 |
 | 11. Strategy automation (Forex + IBKR) | v1.0 | 3/3 | Complete | 2026-04-11 |
 | 12. Frontend IBKR exchanges for Forex | v1.0 | 1/1 | Complete | 2026-04-11 |
-| 13. Qualify result caching + E2E prefix fix | v1.1 | 2/2 | Complete | 2026-04-11 |
+| 13. Qualify result caching + E2E prefix fix | 2/2 | Complete   | 2026-04-11 | 2026-04-11 |
 | 14. TIF unification (USStock/HShare) | v1.1 | 0/? | Not started | — |
 | 15. Normalize pipeline ordering | v1.1 | 0/? | Not started | — |
 | 16. Precious metals classification | v1.1 | 0/? | Not started | — |
