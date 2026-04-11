@@ -31,6 +31,24 @@ logger = get_logger(__name__)
 ib_insync = None
 
 
+def _contract_symbol_label(contract) -> str:
+    """Prefer IBKR localSymbol (e.g. EUR.USD) over base symbol for stable map/API keys."""
+    ls = getattr(contract, "localSymbol", None)
+    sym = getattr(contract, "symbol", None)
+    if isinstance(ls, str) and ls.strip():
+        return ls.strip()
+    if isinstance(sym, str) and sym.strip():
+        return sym.strip()
+    return ""
+
+
+def _contract_str_field(val) -> str:
+    """String metadata from Contract; ignore non-strings (e.g. MagicMock in tests)."""
+    if isinstance(val, str):
+        return val
+    return ""
+
+
 def _ensure_ib_insync():
     global ib_insync
     if ib_insync is None:
@@ -581,22 +599,27 @@ class IBKRClient(BaseStatefulClient):
         unrealized_pnl = float(item.unrealizedPNL or 0)
         realized_pnl = float(item.realizedPNL or 0)
         value = float(item.marketValue or 0)
+        contract = item.contract
+        label = _contract_symbol_label(contract)
 
         logger.info(
             "[IBKR-Event] updatePortfolio: symbol=%s pos=%s mktPrice=%.2f mktValue=%.2f unrealPNL=%.2f realPNL=%.2f",
-            item.contract.symbol, item.position,
+            label, item.position,
             float(item.marketPrice or 0), value,
             unrealized_pnl, realized_pnl,
         )
 
-        self._conid_to_symbol[item.contract.conId] = item.contract.symbol
+        self._conid_to_symbol[contract.conId] = label
 
         def _save_to_db():
             for attempt in range(3):
                 if records.ibkr_save_position(
                     account=item.account,
-                    con_id=item.contract.conId,
-                    symbol=item.contract.symbol,
+                    con_id=contract.conId,
+                    symbol=label,
+                    sec_type=_contract_str_field(getattr(contract, "secType", None)),
+                    exchange=_contract_str_field(getattr(contract, "exchange", None)),
+                    currency=_contract_str_field(getattr(contract, "currency", None)),
                     position=float(item.position or 0),
                     avg_cost=float(item.averageCost or 0),
                     daily_pnl=0.0,
@@ -613,25 +636,29 @@ class IBKRClient(BaseStatefulClient):
         self._fire_submit(_save_to_db, is_blocking=True)
 
     def _on_position(self, position):
-        symbol = position.contract.symbol or ""
-        con_id = position.contract.conId
+        contract = position.contract
+        label = _contract_symbol_label(contract)
+        con_id = contract.conId
         account = position.account
         pos = float(position.position or 0)
         avg_cost = float(position.avgCost or 0)
 
         logger.info(
             "[IBKR-Event] position: account=%s symbol=%s pos=%s avgCost=%.4f",
-            account, symbol, pos, avg_cost,
+            account, label, pos, avg_cost,
         )
 
-        self._conid_to_symbol[con_id] = symbol
+        self._conid_to_symbol[con_id] = label
 
         def _save_to_db():
             for attempt in range(3):
                 if records.ibkr_save_position(
                     account=account,
                     con_id=con_id,
-                    symbol=symbol,
+                    symbol=label,
+                    sec_type=_contract_str_field(getattr(contract, "secType", None)),
+                    exchange=_contract_str_field(getattr(contract, "exchange", None)),
+                    currency=_contract_str_field(getattr(contract, "currency", None)),
                     position=pos,
                     avg_cost=avg_cost,
                 ):

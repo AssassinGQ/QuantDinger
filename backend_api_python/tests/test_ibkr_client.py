@@ -1695,6 +1695,70 @@ class TestPositionEventCallback:
 
 
 # ===========================================================================
+# Phase 10: Forex position / portfolio — localSymbol + contract metadata (RUNT-02)
+# ===========================================================================
+
+class TestForexFillsPositionPnLCallbacks:
+    """UC-FP1, UC-FP2 — _conid_to_symbol and ibkr_save_position use localSymbol + metadata."""
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_uc_fp1_position_event_uses_eurusd_label(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+
+        position = MagicMock()
+        position.account = "DU1"
+        position.contract.conId = 4242
+        position.contract.symbol = "EUR"
+        position.contract.localSymbol = "EUR.USD"
+        position.contract.secType = "CASH"
+        position.contract.exchange = "IDEALPRO"
+        position.contract.currency = "USD"
+        position.position = 10000.0
+        position.avgCost = 1.05
+
+        client._on_position(position)
+
+        assert client._conid_to_symbol[4242] == "EUR.USD"
+        mock_save_position.assert_called_once()
+        kwargs = mock_save_position.call_args[1]
+        assert kwargs["symbol"] == "EUR.USD"
+        assert kwargs["sec_type"] == "CASH"
+        assert kwargs["exchange"] == "IDEALPRO"
+        assert kwargs["currency"] == "USD"
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_uc_fp2_update_portfolio_matches_forex_metadata(self, mock_save_position):
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+
+        item = MagicMock()
+        item.account = "DU1"
+        item.contract.conId = 4242
+        item.contract.symbol = "EUR"
+        item.contract.localSymbol = "EUR.USD"
+        item.contract.secType = "CASH"
+        item.contract.exchange = "IDEALPRO"
+        item.contract.currency = "USD"
+        item.position = 10000.0
+        item.unrealizedPNL = 10.0
+        item.realizedPNL = 0.0
+        item.marketValue = 10500.0
+        item.marketPrice = 1.05
+        item.averageCost = 1.0
+
+        client._on_update_portfolio(item)
+
+        assert client._conid_to_symbol[4242] == "EUR.USD"
+        mock_save_position.assert_called_once()
+        kwargs = mock_save_position.call_args[1]
+        assert kwargs["symbol"] == "EUR.USD"
+        assert kwargs["sec_type"] == "CASH"
+        assert kwargs["exchange"] == "IDEALPRO"
+        assert kwargs["currency"] == "USD"
+
+
+# ===========================================================================
 # get_pnl database read tests
 # ===========================================================================
 
