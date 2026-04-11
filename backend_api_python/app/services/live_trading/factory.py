@@ -12,7 +12,7 @@ Crypto clients inherit ``BaseRestfulClient``; IBKR and MT5 inherit
 
 from __future__ import annotations
 
-from typing import Any, Dict, Union
+from typing import Any, Dict, Tuple, Union
 
 from app.services.live_trading.base import BaseRestfulClient, BaseStatefulClient, LiveTradingError
 from app.services.live_trading.crypto_trading.binance import BinanceFuturesClient
@@ -28,6 +28,60 @@ from app.services.live_trading.crypto_trading.kucoin import KucoinSpotClient, Ku
 from app.services.live_trading.crypto_trading.gate import GateSpotClient, GateUsdtFuturesClient
 from app.services.live_trading.crypto_trading.bitfinex import BitfinexClient, BitfinexDerivativesClient
 from app.services.live_trading.crypto_trading.deepcoin import DeepcoinClient
+
+
+# Mirror pending_order_worker._EXCHANGE_MARKET_RULES (crypto-only REST exchanges).
+_CRYPTO_EXCHANGE_MARKET_RULES: Dict[str, set] = {
+    "binance": {"Crypto"},
+    "okx": {"Crypto"},
+    "bitget": {"Crypto"},
+    "bybit": {"Crypto"},
+    "coinbaseexchange": {"Crypto"},
+    "kraken": {"Crypto"},
+    "kucoin": {"Crypto"},
+    "gate": {"Crypto"},
+    "bitfinex": {"Crypto"},
+    "deepcoin": {"Crypto"},
+}
+
+
+def validate_exchange_market_category(exchange_id: str, market_category: str) -> Tuple[bool, str]:
+    """Validate exchange_id + market_category without instantiating clients or calling connect()."""
+    ex = (exchange_id or "").strip().lower()
+    if ex == "coinbase_exchange":
+        ex = "coinbaseexchange"
+    cat = str(market_category or "").strip()
+
+    if not ex:
+        return False, "missing_exchange_id"
+
+    allowed_crypto = _CRYPTO_EXCHANGE_MARKET_RULES.get(ex)
+    if allowed_crypto is not None:
+        if cat not in allowed_crypto:
+            return False, f"{ex}_only_supports_crypto_got_{cat.lower()}"
+        return True, ""
+
+    if ex in ("ibkr-paper", "ibkr-live"):
+        from app.services.live_trading.ibkr_trading.client import IBKRClient
+
+        return IBKRClient.validate_market_category_static(cat)
+
+    if ex == "mt5":
+        from app.services.live_trading.mt5_trading.client import MT5Client
+
+        return MT5Client.validate_market_category_static(cat)
+
+    if ex == "usmart":
+        from app.services.live_trading.usmart_trading.client import USmartClient
+
+        return USmartClient.validate_market_category_static(cat)
+
+    if ex == "eastmoney":
+        from app.services.live_trading.ef_trading.client import EFClient
+
+        return EFClient.validate_market_category_static(cat)
+
+    return False, f"Unsupported exchange_id: {ex}"
 
 
 def _get(cfg: Dict[str, Any], *keys: str) -> str:

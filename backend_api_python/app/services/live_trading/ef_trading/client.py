@@ -25,6 +25,20 @@ class EFClient(BaseStatefulClient):
 
     engine_id = "eastmoney"
     supported_market_categories = frozenset({"AShare", "HKStock", "Bond", "ETF"})
+
+    @staticmethod
+    def validate_market_category_static(market_category: str) -> Tuple[bool, str]:
+        cat = str(market_category or "").strip()
+        if not EFClient.supported_market_categories:
+            return True, ""
+        if cat in EFClient.supported_market_categories:
+            return True, ""
+        return False, (
+            f"{EFClient.engine_id} only supports "
+            f"{', '.join(sorted(EFClient.supported_market_categories))}, "
+            f"got {cat}"
+        )
+
     _DEFAULT_SERVER_URL = "http://47.106.76.80:9000"
     _SERVER_DISCOVERY_URL = "http://jvQuant.com/query/server"
 

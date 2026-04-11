@@ -16,7 +16,7 @@ import os
 import time
 import threading
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Tuple
 import math
 
 from app.utils.logger import get_logger
@@ -118,6 +118,19 @@ class IBKRClient(BaseStatefulClient):
 
     engine_id = "ibkr"
     supported_market_categories = frozenset({"USStock", "HShare", "Forex"})
+
+    @staticmethod
+    def validate_market_category_static(market_category: str) -> Tuple[bool, str]:
+        cat = str(market_category or "").strip()
+        if not IBKRClient.supported_market_categories:
+            return True, ""
+        if cat in IBKRClient.supported_market_categories:
+            return True, ""
+        return False, (
+            f"{IBKRClient.engine_id} only supports "
+            f"{', '.join(sorted(IBKRClient.supported_market_categories))}, "
+            f"got {cat}"
+        )
 
     _TERMINAL_STATUSES = frozenset({
         "Filled", "Cancelled", "ApiCancelled", "Inactive",

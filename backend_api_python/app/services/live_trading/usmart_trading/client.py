@@ -21,6 +21,19 @@ class USmartClient(BaseStatefulClient):
     engine_id = "usmart"
     supported_market_categories = frozenset({"HKStock", "USStock", "AShare"})
 
+    @staticmethod
+    def validate_market_category_static(market_category: str) -> Tuple[bool, str]:
+        cat = str(market_category or "").strip()
+        if not USmartClient.supported_market_categories:
+            return True, ""
+        if cat in USmartClient.supported_market_categories:
+            return True, ""
+        return False, (
+            f"{USmartClient.engine_id} only supports "
+            f"{', '.join(sorted(USmartClient.supported_market_categories))}, "
+            f"got {cat}"
+        )
+
     def __init__(self, config: USmartConfig):
         self.config = config
         self._base_url = (config.base_url or "").rstrip("/")

@@ -8,7 +8,7 @@ Note: Requires Windows platform and MT5 terminal installed.
 import time
 import threading
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 
 from app.utils.logger import get_logger
@@ -60,6 +60,19 @@ class MT5Client(BaseStatefulClient):
 
     engine_id = "mt5"
     supported_market_categories = frozenset({"Forex"})
+
+    @staticmethod
+    def validate_market_category_static(market_category: str) -> Tuple[bool, str]:
+        cat = str(market_category or "").strip()
+        if not MT5Client.supported_market_categories:
+            return True, ""
+        if cat in MT5Client.supported_market_categories:
+            return True, ""
+        return False, (
+            f"{MT5Client.engine_id} only supports "
+            f"{', '.join(sorted(MT5Client.supported_market_categories))}, "
+            f"got {cat}"
+        )
 
     _SIGNAL_MAP = {
         "open_long": "buy",

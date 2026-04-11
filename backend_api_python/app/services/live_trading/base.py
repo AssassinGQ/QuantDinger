@@ -156,6 +156,11 @@ class BaseStatefulClient(ABC):
             f"got {market_category}"
         )
 
+    @staticmethod
+    @abstractmethod
+    def validate_market_category_static(market_category: str) -> Tuple[bool, str]:
+        """Validate *market_category* for this engine using class attrs only (no instance, no connect)."""
+
     @abstractmethod
     def connect(self) -> bool:
         """Establish connection. Return True on success."""
