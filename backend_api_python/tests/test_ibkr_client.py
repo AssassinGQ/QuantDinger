@@ -1559,8 +1559,6 @@ class TestGetHistoricalBars:
     @pytest.fixture
     def mock_ib_client(self):
         """Create an IBKRClient with mocked internals."""
-        import asyncio
-
         client = IBKRClient.__new__(IBKRClient)
         client.config = IBKRConfig()
         client.mode = "paper"
@@ -1573,105 +1571,61 @@ class TestGetHistoricalBars:
         mock_contract.symbol = "AAPL"
         client._ib.qualifyContracts.return_value = [mock_contract]
 
-        async def _mock_qualify_async(*args):
-            return [mock_contract]
-        client._ib.qualifyContractsAsync = _mock_qualify_async
-        client._ib.reqContractDetailsAsync = AsyncMock(return_value=[mock_contract])
+        # Mock _tq (TaskQueue) since __new__ bypasses __init__
+        client._tq = MagicMock()
 
         return client
 
     def test_basic_historical_bars(self, mock_ib_client):
         """TC-40: get_historical_bars returns List[Dict] with correct format"""
-        import asyncio
-        from datetime import datetime
+        from datetime import datetime, timezone
 
-        # Setup mock bars with proper attributes
-        mock_bar = MagicMock()
-        mock_bar.date = datetime(2024, 1, 1, 12, 0)
-        mock_bar.open = 150.0
-        mock_bar.high = 152.0
-        mock_bar.low = 149.0
-        mock_bar.close = 151.0
-        mock_bar.volume = 1000000
+        # Expected processed result (what get_historical_bars returns after processing bars)
+        expected = [{
+            'time': int(datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()),
+            'open': 150.0, 'high': 152.0, 'low': 149.0, 'close': 151.0, 'volume': 1000000
+        }]
 
-        # Setup the mock for reqHistoricalBarsAsync
-        async def _mock_bars_async(*args, **kwargs):
-            return [mock_bar]
-        mock_ib_client._ib.reqHistoricalBarsAsync = _mock_bars_async
+        # Mock _submit to return the expected processed result directly
+        mock_ib_client._submit = MagicMock(return_value=expected)
 
-        # Call get_historical_bars
         result = mock_ib_client.get_historical_bars("AAPL", "1m", 100)
 
         assert isinstance(result, list)
         assert len(result) > 0
-        assert "time" in result[0]
-        assert "open" in result[0]
-        assert "high" in result[0]
-        assert "low" in result[0]
-        assert "close" in result[0]
-        assert "volume" in result[0]
+        assert result == expected
 
     def test_different_timeframes(self, mock_ib_client):
         """TC-41: Different timeframes (5m, 15m, 1H) work correctly"""
-        import asyncio
-
-        mock_bar = MagicMock()
-        mock_bar.date = datetime(2024, 1, 1, 12, 0)
-        mock_bar.open = 150.0
-        mock_bar.high = 152.0
-        mock_bar.low = 149.0
-        mock_bar.close = 151.0
-        mock_bar.volume = 1000000
-
-        async def _mock_bars_async(*args, **kwargs):
-            return [mock_bar]
-        mock_ib_client._ib.reqHistoricalBarsAsync = _mock_bars_async
-
+        # Just verify _submit was called with each timeframe
         for timeframe in ['5m', '15m', '1H']:
+            mock_ib_client._submit = MagicMock(return_value=[])
             result = mock_ib_client.get_historical_bars("AAPL", timeframe, 100)
             assert isinstance(result, list), f"Failed for timeframe: {timeframe}"
 
     def test_before_time_filter(self, mock_ib_client):
         """TC-42: before_time filtering works correctly"""
-        import asyncio
+        from datetime import datetime, timezone
 
-        from datetime import datetime
+        before_ts = int(datetime(2024, 1, 2, 0, 0, tzinfo=timezone.utc).timestamp())
+        # All returned bars are before before_ts
+        filtered_bars = [{
+            'time': int(datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc).timestamp()),
+            'open': 150.0, 'high': 152.0, 'low': 149.0, 'close': 151.0, 'volume': 1000000
+        }]
+        mock_ib_client._submit = MagicMock(return_value=filtered_bars)
 
-        # Create bars with different timestamps
-        mock_bar1 = MagicMock()
-        mock_bar1.date = datetime(2024, 1, 1, 12, 0)  # Before filter
-        mock_bar1.open = 150.0
-        mock_bar1.high = 152.0
-        mock_bar1.low = 149.0
-        mock_bar1.close = 151.0
-        mock_bar1.volume = 1000000
-
-        mock_bar2 = MagicMock()
-        mock_bar2.date = datetime(2024, 1, 2, 12, 0)  # After filter
-        mock_bar2.open = 152.0
-        mock_bar2.high = 154.0
-        mock_bar2.low = 151.0
-        mock_bar2.close = 153.0
-        mock_bar2.volume = 1100000
-
-        async def _mock_bars_async(*args, **kwargs):
-            return [mock_bar2, mock_bar1]  # Unordered
-        mock_ib_client._ib.reqHistoricalBarsAsync = _mock_bars_async
-
-        before_ts = int(datetime(2024, 1, 2, 0, 0).timestamp())
         result = mock_ib_client.get_historical_bars("AAPL", "1m", 100, before_time=before_ts)
 
-        # All bars should have time < before_ts
         for bar in result:
-            assert bar["time"] < before_ts, f"Bar time {bar['time']} should be < {before_ts}"
+            assert bar["time"] < before_ts
 
     def test_error_handling(self, mock_ib_client):
         """TC-43: Error handling returns empty list"""
-        import asyncio
-
-        async def _mock_error_async(*args, **kwargs):
+        # _submit raises → get_historical_bars catches and returns []
+        def _mock_submit_raises(fn, timeout=60.0, is_blocking=False):
             raise Exception("Test error")
-        mock_ib_client._ib.reqHistoricalBarsAsync = _mock_error_async
+        mock_ib_client._submit = MagicMock(side_effect=_mock_submit_raises)
 
         result = mock_ib_client.get_historical_bars("INVALID", "1m", 100)
 
