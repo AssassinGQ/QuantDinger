@@ -8,14 +8,14 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
 
 ## Phases
 
-- [ ] **Phase 1: Forex symbol normalization** — Parse EURUSD / EUR.USD / EUR/USD to base+quote without equity mis-routing
-- [ ] **Phase 2: Forex contract creation (IDEALPRO)** — `Forex` contracts with CASH + IDEALPRO from `market_type=Forex`
-- [ ] **Phase 3: Contract qualification** — `qualifyContracts` resolves conId, localSymbol for Forex
-- [ ] **Phase 4: Market category & worker gate** — `supported_market_categories` + PendingOrderWorker validation for Forex
+- [x] **Phase 1: Forex symbol normalization** — Parse EURUSD / EUR.USD / EUR/USD to base+quote without equity mis-routing (completed 2026-04-09)
+- [x] **Phase 2: Forex contract creation (IDEALPRO)** — `Forex` contracts with CASH + IDEALPRO from `market_type=Forex` (completed 2026-04-09)
+- [x] **Phase 3: Contract qualification** — `qualifyContracts` resolves conId, localSymbol for Forex (completed 2026-04-09)
+- [x] **Phase 4: Market category & worker gate** — `supported_market_categories` + PendingOrderWorker validation for Forex (completed 2026-04-10)
 - [x] **Phase 5: Signal-to-side mapping (two-way FX)** — Long/short-style signals map to BUY/SELL for Forex (completed 2026-04-10)
 - [x] **Phase 6: TIF policy for Forex** — `_get_tif_for_signal` Forex → IOC for all signals (completed 2026-04-10)
 - [x] **Phase 7: Forex market orders** — `place_market_order` for Forex with base-currency `totalQuantity` (completed 2026-04-10)
-- [ ] **Phase 8: Quantity normalization & IB alignment** — ForexNormalizer + `_align_qty_to_contract` on Forex path
+- [x] **Phase 8: Quantity normalization & IB alignment** — ForexNormalizer + `_align_qty_to_contract` on Forex path (completed 2026-04-10)
 - [x] **Phase 9: Forex trading hours (liquidHours)** — `is_market_open` uses IBKR contract hours for 24/5 FX (completed 2026-04-11)
 - [x] **Phase 10: Fills, position & PnL events** — Callbacks and keys correct for Forex symbols and currencies (completed 2026-04-11)
 - [x] **Phase 11: Strategy automation (Forex + IBKR)** — Config `market_category=Forex` + ibkr-paper/live drives auto-trade (completed 2026-04-11)
@@ -31,10 +31,10 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
   1. Inputs like `EURUSD`, `EUR.USD`, and `EUR/USD` normalize to the same canonical base and quote the rest of the stack can consume.
   2. When the caller indicates Forex (or equivalent routing context), symbol handling does not silently treat the symbol as a US equity ticker.
   3. Automated tests document and lock accepted formats and edge cases (uppercase, separators).
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 01-01-PLAN.md — TDD: Forex symbol tests + normalize_symbol/parse_symbol/format_display_symbol Forex branches
+- [x] 01-01-PLAN.md — TDD: Forex symbol tests + normalize_symbol/parse_symbol/format_display_symbol Forex branches
 
 ### Phase 2: Forex contract creation (IDEALPRO)
 **Goal**: `IBKRClient` builds `ib_insync.Forex` with IDEALPRO routing for Forex execution, not `Stock`/`SMART`.
@@ -44,10 +44,10 @@ Plans:
   1. For `market_type`/`market_category` Forex, `_create_contract` returns a Forex contract with `secType=CASH` and `exchange=IDEALPRO` (via ib_insync conventions).
   2. USStock and HShare contract creation remain unchanged for non-Forex paths.
   3. Unit tests assert contract fields for representative pairs (e.g. EURUSD).
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 02-01-PLAN.md — TDD: MockForex + 6 use-case tests (RED) → _create_contract Forex/ValueError branches (GREEN)
+- [x] 02-01-PLAN.md — TDD: MockForex + 6 use-case tests (RED) → _create_contract Forex/ValueError branches (GREEN)
 
 ### Phase 3: Contract qualification
 **Goal**: Forex contracts qualify like equities: stable `conId`, `localSymbol`, and details for sizing and display. Post-qualify validation (`_validate_qualified_contract`) catches conId=0 and secType mismatches; error messages include market_type across all 4 callers.
@@ -57,10 +57,10 @@ Plans:
   1. After `qualifyContracts` (or async equivalent), Forex contracts carry a valid `conId` and IB-expected `localSymbol` (e.g. `EUR.USD`).
   2. Qualification failure surfaces as a clear error; the system does not proceed with an unqualified Forex contract.
   3. Tests mock or record qualification outcomes for at least one liquid pair.
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 03-01-PLAN.md — TDD: 9 UC tests (RED) → _validate_qualified_contract + 4-caller error message enhancement (GREEN)
+- [x] 03-01-PLAN.md — TDD: 9 UC tests (RED) → _validate_qualified_contract + 4-caller error message enhancement (GREEN)
 
 ### Phase 4: Market category & worker gate
 **Goal**: The runner and pending-order pipeline accept Forex as a first-class market category end-to-end.
@@ -70,10 +70,10 @@ Plans:
   1. `IBKRClient.supported_market_categories` includes `"Forex"`.
   2. `PendingOrderWorker.validate_market_category` (or equivalent) allows Forex alongside existing categories.
   3. A Forex-marked signal is not rejected solely for category when other validations pass.
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 04-01-PLAN.md — Forex in `supported_market_categories`; flip/extend `test_exchange_engine`; `test_pending_order_worker` UC-4/UC-5 via `_execute_live_order`
+- [x] 04-01-PLAN.md — Forex in `supported_market_categories`; flip/extend `test_exchange_engine`; `test_pending_order_worker` UC-4/UC-5 via `_execute_live_order`
 
 ### Phase 5: Signal-to-side mapping (two-way FX)
 **Goal**: Strategy signal semantics for Forex map to correct IB BUY/SELL including short-style flows.
@@ -188,18 +188,18 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Forex symbol normalization | 0/1 | Not started | - |
-| 2. Forex contract creation (IDEALPRO) | 0/1 | Not started | - |
-| 3. Contract qualification | 0/1 | Not started | - |
-| 4. Market category & worker gate | 0/1 | Not started (planned) | - |
-| 5. Signal-to-side mapping (two-way FX) | 1/1 | Complete   | 2026-04-10 |
-| 6. TIF policy for Forex | 1/1 | Complete   | 2026-04-10 |
-| 7. Forex market orders | 1/1 | Complete   | 2026-04-10 |
-| 8. Quantity normalization & IB alignment | 1/2 | In Progress   | - |
-| 9. Forex trading hours (liquidHours) | 1/1 | Complete   | 2026-04-11 |
-| 10. Fills, position & PnL events | 1/1 | Complete   | 2026-04-11 |
-| 11. Strategy automation (Forex + IBKR) | 3/3 | Complete   | 2026-04-11 |
-| 12. Frontend IBKR exchanges for Forex | 1/1 | Complete    | 2026-04-11 |
+| 1. Forex symbol normalization | 1/1 | Complete | 2026-04-09 |
+| 2. Forex contract creation (IDEALPRO) | 1/1 | Complete | 2026-04-09 |
+| 3. Contract qualification | 1/1 | Complete | 2026-04-09 |
+| 4. Market category & worker gate | 1/1 | Complete | 2026-04-10 |
+| 5. Signal-to-side mapping (two-way FX) | 1/1 | Complete | 2026-04-10 |
+| 6. TIF policy for Forex | 1/1 | Complete | 2026-04-10 |
+| 7. Forex market orders | 1/1 | Complete | 2026-04-10 |
+| 8. Quantity normalization & IB alignment | 2/2 | Complete | 2026-04-10 |
+| 9. Forex trading hours (liquidHours) | 1/1 | Complete | 2026-04-11 |
+| 10. Fills, position & PnL events | 1/1 | Complete | 2026-04-11 |
+| 11. Strategy automation (Forex + IBKR) | 3/3 | Complete | 2026-04-11 |
+| 12. Frontend IBKR exchanges for Forex | 1/1 | Complete | 2026-04-11 |
 
 ---
 *Roadmap created: 2026-04-09 · Granularity: fine (12 phases) · Coverage: 12/12 v1 requirements*
