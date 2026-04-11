@@ -57,7 +57,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-01 | Phase 13 | Pending |
 | INFRA-02 | Phase 14 | Pending |
 | INFRA-03 | Phase 15 | Pending |
-| TEST-01 | Phase 18 | Pending |
+| TEST-01 | Phase 13 | Pending |
 | TEST-02 | Phase 18 | Pending |
 
 **Coverage:**

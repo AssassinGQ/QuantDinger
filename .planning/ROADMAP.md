@@ -29,30 +29,33 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 ### v1.1 — Tech Debt Cleanup + Limit Orders
 
-- [ ] **Phase 13: Qualify result caching** — TTL cache for `qualifyContractsAsync`, invalidate on reconnect
-- [ ] **Phase 14: TIF unification (USStock/HShare)** — Open signals IOC-aligned with Forex policy where supported; matrix tests
-- [ ] **Phase 15: Normalize pipeline ordering** — `check` → `normalize` → qualify → `align` with no duplicate steps
-- [ ] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex
-- [ ] **Phase 17: Forex limit orders & automation** — LimitOrder + partial fills + runner/worker limit price
-- [ ] **Phase 18: E2E & test quality** — API prefix, metals/limit E2E (mock IBKR), optional frontend HTTP E2E
+- [ ] **Phase 13: Qualify result caching + E2E prefix fix** — TTL cache for `qualifyContractsAsync`, invalidate on reconnect; fix E2E test API prefix
+- [ ] **Phase 14: TIF unification (USStock/HShare)** — Open signals IOC-aligned with Forex policy where supported; matrix tests (depends on 13)
+- [ ] **Phase 15: Normalize pipeline ordering** — `check` → `normalize` → qualify → `align` with no duplicate steps (depends on 13)
+- [ ] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex (depends on 13)
+- [ ] **Phase 17: Forex limit orders & automation** — LimitOrder + partial fills + runner/worker limit price (depends on 14, 15, 16)
+- [ ] **Phase 18: E2E & integration testing** — Metals/limit E2E (mock IBKR), frontend HTTP E2E (depends on 17)
+
+**Execution order:** 13 → {14, 15, 16} (parallel) → 17 → 18
 
 **Verification:** use-case-driven per `.planning/config.json`. **Regression:** existing backend suite (~928 tests) must remain green.
 
 ## Phase Details
 
-### Phase 13: Qualify result caching
-**Goal**: Reduce redundant IB qualify traffic while keeping contract data fresh after reconnects.
+### Phase 13: Qualify result caching + E2E prefix fix
+**Goal**: Reduce redundant IB qualify traffic while keeping contract data fresh after reconnects. Fix E2E test API prefix drift.
 **Depends on**: Phase 12 (v1.0 complete)
-**Requirements**: INFRA-01
+**Requirements**: INFRA-01, TEST-01
 **Success Criteria** (what must be TRUE):
   1. A second request for the same symbol within the TTL reuses cached qualify output without a new `qualifyContractsAsync` round-trip (verifiable in tests or instrumentation).
   2. After IBKR reconnect, cached qualify entries are cleared so the next order path performs a fresh qualify.
   3. TTL (or equivalent expiry) is configurable and documented for operators.
+  4. `test_forex_ibkr_e2e.py` blueprint prefix matches production API routing (no `/api/strategy/` vs `/api/` drift).
 **Plans**: TBD
 
 ### Phase 14: TIF unification (USStock/HShare)
 **Goal**: Align open-signal TIF policy with Forex (IOC) where the venue accepts it, without silent regressions on exceptions.
-**Depends on**: Phase 13
+**Depends on**: Phase 13 (qualify cache available for TIF validation tests)
 **Requirements**: INFRA-02
 **Success Criteria** (what must be TRUE):
   1. USStock **open** signals use IOC where applicable; behavior matches the agreed matrix.
@@ -62,7 +65,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 ### Phase 15: Normalize pipeline ordering
 **Goal**: One consistent order pipeline: normalize after checks, align only after qualify, no duplicate normalize/align.
-**Depends on**: Phase 14
+**Depends on**: Phase 13 (independent of TIF and metals)
 **Requirements**: INFRA-03
 **Success Criteria** (what must be TRUE):
   1. Market-order and limit-order paths both execute: check → normalize → qualify/contract validation → quantity align—never align before qualify.
@@ -72,7 +75,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 ### Phase 16: Precious metals contract classification
 **Goal**: XAUUSD/XAGUSD use the correct IB product type (e.g. CMDTY/SMART vs Forex CASH/IDEALPRO) with validated qualify results.
-**Depends on**: Phase 15
+**Depends on**: Phase 13 (qualify cache benefits metals validation; independent of TIF and normalize)
 **Requirements**: TRADE-04
 **Success Criteria** (what must be TRUE):
   1. XAUUSD (and documented handling for XAGUSD) routes through `_create_contract` / validation distinct from standard IDEALPRO Forex pairs.
@@ -82,7 +85,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 ### Phase 17: Forex limit orders & automation
 **Goal**: Full limit-order execution: REST/automation parity, minTick prices, partial fills, and runner/worker support.
-**Depends on**: Phase 16
+**Depends on**: Phase 14 (TIF policy), Phase 15 (normalize pipeline), Phase 16 (metals contract classification)
 **Requirements**: TRADE-01, TRADE-02, TRADE-03
 **Success Criteria** (what must be TRUE):
   1. A Forex limit order can be placed with limit price snapped to `ContractDetails.minTick`, with TIF choices (IOC/DAY/GTC) per policy.
@@ -91,16 +94,15 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   4. Terminal order statuses remain consistent with existing trackers (no stuck or duplicate terminal handling).
 **Plans**: TBD
 
-### Phase 18: E2E & test quality
-**Goal**: Production-aligned E2E routes and coverage for metals + limits; optional UI HTTP smoke.
-**Depends on**: Phase 17
-**Requirements**: TRADE-05, TRADE-06, TEST-01, TEST-02
+### Phase 18: E2E & integration testing
+**Goal**: End-to-end coverage for metals + limit orders; frontend HTTP E2E.
+**Depends on**: Phase 17 (limit orders and metals both available)
+**Requirements**: TRADE-05, TRADE-06, TEST-02
 **Success Criteria** (what must be TRUE):
-  1. `test_forex_ibkr_e2e.py` uses the same URL prefix as production APIs (no `/api/strategy/` drift vs `/api/`).
-  2. Precious-metals E2E (mock IBKR) exercises qualify → order → callback path end-to-end.
-  3. Limit-order E2E covers normal fill, partial fill, and cancel scenarios with mocks.
-  4. Optional: a frontend HTTP E2E (e.g. Playwright) proves the Vue wizard can round-trip Forex+IBKR strategy creation against the API when enabled in CI.
-  5. Full backend test suite remains green (including existing ~928 tests).
+  1. Precious-metals E2E (mock IBKR) exercises qualify → order → callback path end-to-end.
+  2. Limit-order E2E covers normal fill, partial fill, and cancel scenarios with mocks.
+  3. Frontend HTTP E2E (e.g. Playwright) proves the Vue wizard can round-trip Forex+IBKR strategy creation against the API.
+  4. Full backend test suite remains green (including existing ~928 tests).
 **Plans**: TBD
 
 ## Progress
@@ -119,12 +121,12 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 10. Fills, position & PnL events | v1.0 | 1/1 | Complete | 2026-04-11 |
 | 11. Strategy automation (Forex + IBKR) | v1.0 | 3/3 | Complete | 2026-04-11 |
 | 12. Frontend IBKR exchanges for Forex | v1.0 | 1/1 | Complete | 2026-04-11 |
-| 13. Qualify result caching | v1.1 | 0/? | Not started | — |
+| 13. Qualify result caching + E2E prefix fix | v1.1 | 0/? | Not started | — |
 | 14. TIF unification (USStock/HShare) | v1.1 | 0/? | Not started | — |
 | 15. Normalize pipeline ordering | v1.1 | 0/? | Not started | — |
 | 16. Precious metals classification | v1.1 | 0/? | Not started | — |
 | 17. Forex limit orders & automation | v1.1 | 0/? | Not started | — |
-| 18. E2E & test quality | v1.1 | 0/? | Not started | — |
+| 18. E2E & integration testing | v1.1 | 0/? | Not started | — |
 
 ---
 *Roadmap created: 2026-04-09 · v1.0 shipped: 2026-04-11 · v1.1 phases 13-18: 2026-04-11*
