@@ -24,7 +24,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### 运行时支持 (Runtime Support)
 
 - [x] **RUNT-01**: is_market_open 对 Forex 合约使用 IBKR liquidHours 判断交易时间（24/5 特性）
-- [ ] **RUNT-02**: 成交/仓位/PnL 事件回调正确处理 Forex 合约的数据（symbol key、数量、币种）
+- [x] **RUNT-02**: 成交/仓位/PnL 事件回调正确处理 Forex 合约的数据（symbol key、数量、币种）
 - [ ] **RUNT-03**: 策略可通过配置 market_category=Forex + exchange_id=ibkr-paper/ibkr-live 触发 Forex 自动交易
 
 ### 前端适配 (Frontend)
@@ -77,7 +77,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EXEC-03 | Phase 6 | Complete |
 | EXEC-04 | Phase 8 | Complete |
 | RUNT-01 | Phase 9 | Complete |
-| RUNT-02 | Phase 10 | Pending |
+| RUNT-02 | Phase 10 | Complete |
 | RUNT-03 | Phase 11 | Pending |
 | FRNT-01 | Phase 12 | Pending |
 

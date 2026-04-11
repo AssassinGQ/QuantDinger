@@ -17,7 +17,7 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
 - [x] **Phase 7: Forex market orders** — `place_market_order` for Forex with base-currency `totalQuantity` (completed 2026-04-10)
 - [ ] **Phase 8: Quantity normalization & IB alignment** — ForexNormalizer + `_align_qty_to_contract` on Forex path
 - [x] **Phase 9: Forex trading hours (liquidHours)** — `is_market_open` uses IBKR contract hours for 24/5 FX (completed 2026-04-11)
-- [ ] **Phase 10: Fills, position & PnL events** — Callbacks and keys correct for Forex symbols and currencies
+- [x] **Phase 10: Fills, position & PnL events** — Callbacks and keys correct for Forex symbols and currencies (completed 2026-04-11)
 - [ ] **Phase 11: Strategy automation (Forex + IBKR)** — Config `market_category=Forex` + ibkr-paper/live drives auto-trade
 - [ ] **Phase 12: Frontend IBKR exchanges for Forex** — Strategy UI offers ibkr-paper / ibkr-live when Forex is selected
 
@@ -149,10 +149,10 @@ Plans:
   1. Fill and position updates for Forex use stable identifiers consistent with qualified symbols (e.g. `localSymbol` / internal key scheme).
   2. PnL or notional displays use quote/base currency context appropriate to Forex, not equity “shares” assumptions.
   3. Automated tests or harness assertions cover at least one round-trip position lifecycle for Forex mocks.
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 10-01-PLAN.md — DB columns + records (`ibkr_save_position`, `ibkr_get_positions`, `ibkr_save_pnl` fix); `localSymbol` + metadata in callbacks; `get_positions` DB-backed secType/exchange/currency; tests UC-FP1–FP7; RUNT-02
+- [x] 10-01-PLAN.md — DB columns + records (`ibkr_save_position`, `ibkr_get_positions`, `ibkr_save_pnl` fix); `localSymbol` + metadata in callbacks; `get_positions` DB-backed secType/exchange/currency; tests UC-FP1–FP7; RUNT-02
 
 ### Phase 11: Strategy automation (Forex + IBKR)
 **Goal**: Operators can turn on automated Forex trading via strategy config and IBKR paper/live exchanges; backend integration and paper E2E validate the full chain.
@@ -195,7 +195,7 @@ Plans:
 | 7. Forex market orders | 1/1 | Complete   | 2026-04-10 |
 | 8. Quantity normalization & IB alignment | 1/2 | In Progress   | - |
 | 9. Forex trading hours (liquidHours) | 1/1 | Complete   | 2026-04-11 |
-| 10. Fills, position & PnL events | 0/1 | Planned | - |
+| 10. Fills, position & PnL events | 1/1 | Complete   | 2026-04-11 |
 | 11. Strategy automation (Forex + IBKR) | 0/1 | Not started | - |
 | 12. Frontend IBKR exchanges for Forex | 0/1 | Not started | - |
 

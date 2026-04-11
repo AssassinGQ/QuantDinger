@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-04-11T03:56:11.828Z"
+status: idle
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-04-11T04:28:00.000Z"
 progress:
   total_phases: 12
-  completed_phases: 9
-  total_plans: 10
-  completed_plans: 10
+  completed_phases: 10
+  total_plans: 11
+  completed_plans: 11
 ---
 
 # Project State
@@ -20,12 +20,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-09)
 
 **Core value:** 策略系统发出的 Forex 交易信号能正确通过 IBKRClient 在 IDEALPRO 上执行，从信号到成交的完整链路畅通。
 
-**Current focus:** Phase 09 — forex-trading-hours-liquidhours
+**Current focus:** Phase 11 — strategy automation (Forex + IBKR)
 
 ## Current Position
 
-Phase: 10 (fills, position & PnL events) — next
-Plan: 0 of 1 (TBD)
+Phase: 11 (strategy automation) — next
+Plan: TBD
 
 ## Performance Metrics
 
@@ -40,6 +40,7 @@ Plan: 0 of 1 (TBD)
 | Phase 08 P01 | 4min | 1 tasks | 2 files |
 | Phase 08-quantity-normalization-ib-alignment P02 | 12min | 1 tasks | 1 files |
 | Phase 09-forex-trading-hours-liquidhours P01 | 25min | 3 tasks | 4 files |
+| Phase 10-fills-position-pnl-events P01 | 30min | 4 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -60,6 +61,7 @@ Logged in PROJECT.md Key Decisions. Roadmap follows research build order (symbol
 - [Phase 08-01 / EXEC-04]: ForexNormalizer `normalize` passthrough (`float`); IB increment alignment remains for 08-02 (`_align_qty_to_contract` tests).
 - [Phase 08-quantity-normalization-ib-alignment]: Isolated _align_qty_to_contract tests use AsyncMock + SimpleNamespace; UC-A5 proves single reqContractDetailsAsync via cache.
 - [Phase 09]: Forex is_market_open closed reason: append Forex 24/5 weekend/maintenance hint when market_type is Forex
+- [Phase 10]: `qd_ibkr_pnl_single` stores sec_type/exchange/currency; `get_positions()` reads DB with STK/SMART/USD fallbacks; `_conid_to_symbol` and saves use `localSymbol` when string else `symbol`; `ibkr_save_pnl` dead clamps removed (UC-FP6).
 
 ### Pending Todos
 
@@ -71,6 +73,6 @@ None yet.
 
 ## Session Continuity
 
-**Last session:** 2026-04-11T03:47:50.711Z
-**Stopped At:** Completed 09-01-PLAN.md
+**Last session:** 2026-04-11T04:28:00.000Z
+**Stopped At:** Completed 10-01-PLAN.md
 **Resume File:** None
