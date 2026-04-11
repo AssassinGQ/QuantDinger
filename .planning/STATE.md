@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Tech Debt Cleanup + Limit Orders"
-status: defining_requirements
-stopped_at: Milestone v1.1 started
-last_updated: "2026-04-11T21:30:00.000Z"
+status: roadmap_defined
+stopped_at: ROADMAP.md v1.1 (phases 13-18)
+last_updated: "2026-04-11T22:00:00.000Z"
 progress:
-  total_phases: 0
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -16,74 +16,46 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-11)
+See: `.planning/PROJECT.md`
 
 **Core value:** 清理 v1.0 遗留技术债务，增加 Forex 限价单，补全 E2E 测试覆盖。
 
-**Current focus:** Defining requirements for v1.1
+**Current focus:** Execute v1.1 roadmap — start at **Phase 13** (`/gsd:plan-phase 13`).
+
+**Verification:** use-case-driven (`.planning/config.json`). **Regression gate:** ~928 existing backend tests must stay green.
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-11 — Milestone v1.1 started
+Phase: **13** (next) — Qualify result caching  
+Plan: —  
+Status: Roadmap defined, execution not started  
+Last activity: 2026-04-11 — ROADMAP.md + STATE.md updated for v1.1 phases 13-18
 
 ## Performance Metrics
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| Phase 01 P01 | 2min | 2 tasks | 2 files |
-| Phase 02 P01 | 8min | 2 tasks | 2 files |
-| Phase 03 P01 | 30min | 2 tasks | 3 files |
-| Phase 05 P01 | 10min | 1 tasks | 8 files |
-| Phase 06 P01 | 5 min | 1 tasks | 2 files |
-| Phase 07-forex-market-orders P01 | 12min | 2 tasks | 2 files |
-| Phase 08 P01 | 4min | 1 tasks | 2 files |
-| Phase 08-quantity-normalization-ib-alignment P02 | 12min | 1 tasks | 1 files |
-| Phase 09-forex-trading-hours-liquidhours P01 | 25min | 3 tasks | 4 files |
-| Phase 10-fills-position-pnl-events P01 | 30min | 4 tasks | 4 files |
-| Phase 11-strategy-automation-forex-ibkr P03 | 12min | 1 tasks | 1 files |
-| Phase 11-strategy-automation-forex-ibkr P01 | 25min | 2 tasks | 8 files |
-| Phase 11-strategy-automation-forex-ibkr P02 | 25min | 2 tasks | 2 files |
-| Phase 12-frontend-ibkr-exchanges-for-forex P01 | 28min | 3 tasks | 6 files |
+| *(v1.1 TBD)* | — | — | — |
+
+*(v1.0 metrics retained in git history / prior STATE revisions.)*
 
 ## Accumulated Context
 
 ### Decisions
 
-Logged in PROJECT.md Key Decisions. Roadmap follows research build order (symbols → contract → signal/TIF → execution → runtime → frontend) with use-case-driven verification per `config.json`.
-
-- [Phase 01]: KNOWN_FOREX_PAIRS set for parse_symbol auto-detection (no heuristic fallback)
-- [Phase 01]: Forex display format: dot-separated EUR.USD matching IBKR localSymbol convention
-- [Phase 02]: Forex uses ib_insync.Forex(pair=ib_symbol) — pair= keyword delegates symbol/currency splitting
-- [Phase 02]: Explicit elif market_type guard (USStock/HShare) — unknown market_type raises ValueError
-- [Phase 03]: _EXPECTED_SEC_TYPES dict mapping (Forex→CASH, USStock/HShare→STK) for post-qualify validation
-- [Phase 03]: Mock qualifyContractsAsync simulates in-place mutation (conId, secType) matching real IB dataclassUpdate
-- [Phase 05]: Forex: IBKR uses _FOREX_SIGNAL_MAP (eight signals, MT5-aligned) when market_category is Forex.
-- [Phase 05]: Non-Forex IBKR rejects short-style signals with ValueError containing 美股/港股不支持 short.
-- [Phase 06]: Forex TIF (EXEC-03): _get_tif_for_signal returns IOC for all Forex signal types; USStock and HShare rules unchanged.
-- [Phase 07-forex-market-orders]: Forex zero-after-alignment errors append IDEALPRO minimum-size hint; equity messages unchanged.
-- [Phase 08-01 / EXEC-04]: ForexNormalizer `normalize` passthrough (`float`); IB increment alignment remains for 08-02 (`_align_qty_to_contract` tests).
-- [Phase 08-quantity-normalization-ib-alignment]: Isolated _align_qty_to_contract tests use AsyncMock + SimpleNamespace; UC-A5 proves single reqContractDetailsAsync via cache.
-- [Phase 09]: Forex is_market_open closed reason: append Forex 24/5 weekend/maintenance hint when market_type is Forex
-- [Phase 10]: `qd_ibkr_pnl_single` stores sec_type/exchange/currency; `get_positions()` reads DB with STK/SMART/USD fallbacks; `_conid_to_symbol` and saves use `localSymbol` when string else `symbol`; `ibkr_save_pnl` dead clamps removed (UC-FP6).
-- [Phase 11-strategy-automation-forex-ibkr]: Mock IBKR Paper smoke: test_ibkr_forex_paper_smoke.py uses _FakeEvent for handler registration, pair-specific qualify (EURUSD 12087792, GBPJPY 12345678, XAGUSD 87654321), and orderStatus→execDetails→position→pnlSingle after each fill; DB saves patched.
-- [Phase 11-strategy-automation-forex-ibkr P01]: `validate_exchange_market_category` in factory + static `validate_market_category_static` on stateful clients; `StrategyService` validates non-empty `exchange_id` against `market_category` before INSERT/UPDATE; UC-SA-VAL-01–08 in `test_strategy_exchange_validation.py`.
-- [Phase 11-strategy-automation-forex-ibkr]: E2E tests mock worker imports at pending_order_worker; API test uses mocked DB insert for real StrategyService.create_strategy path.
-- [Phase 12-frontend-ibkr-exchanges-for-forex]: Vault save after strategy create only for crypto (isCryptoMarket); Forex MT5/IBKR excluded.
-- [Phase 12-frontend-ibkr-exchanges-for-forex]: Jest uses @vue/vue2-jest transform for Vue 2 SFCs (CLI 5 peer).
+- **Roadmap order (v1.1):** qualify cache → TIF unification → normalize timing → precious metals classification → Forex limit orders (client + partials + runner/worker) → E2E/API prefix/optional Playwright — per `.planning/research/SUMMARY.md`.
+- **Requirement mapping:** each v1.1 requirement maps to exactly one phase (see `.planning/REQUIREMENTS.md` traceability).
 
 ### Pending Todos
 
-None yet.
+- Run `/gsd:plan-phase 13` when ready to implement Phase 13.
 
 ### Blockers/Concerns
 
-- IDEALPRO paper trading remains useful to validate IOC fills in live-like conditions; policy is locked in code (EXEC-03).
+- Paper/sandbox validation may still be needed for venue-specific metals and HShare TIF edge cases (see research flags).
 
 ## Session Continuity
 
-**Last session:** 2026-04-11T09:16:53.090Z
-**Stopped At:** Completed 12-01-PLAN.md
+**Last session:** 2026-04-11 — v1.1 roadmap authored  
+**Stopped At:** ROADMAP CREATED (awaiting plan-phase 13)  
 **Resume File:** None

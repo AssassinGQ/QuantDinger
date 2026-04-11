@@ -48,23 +48,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRADE-01 | — | Pending |
-| TRADE-02 | — | Pending |
-| TRADE-03 | — | Pending |
-| TRADE-04 | — | Pending |
-| TRADE-05 | — | Pending |
-| TRADE-06 | — | Pending |
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
-| INFRA-03 | — | Pending |
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
+| TRADE-01 | Phase 17 | Pending |
+| TRADE-02 | Phase 17 | Pending |
+| TRADE-03 | Phase 17 | Pending |
+| TRADE-04 | Phase 16 | Pending |
+| TRADE-05 | Phase 18 | Pending |
+| TRADE-06 | Phase 18 | Pending |
+| INFRA-01 | Phase 13 | Pending |
+| INFRA-02 | Phase 14 | Pending |
+| INFRA-03 | Phase 15 | Pending |
+| TEST-01 | Phase 18 | Pending |
+| TEST-02 | Phase 18 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11 ⚠️
+- Mapped to phases: 11
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-11*
-*Last updated: 2026-04-11 after initial definition*
+*Last updated: 2026-04-11 — roadmap v1.1 (phases 13-18)*
