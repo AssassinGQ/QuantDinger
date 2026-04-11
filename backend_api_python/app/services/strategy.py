@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.utils.logger import get_logger
 from app.utils.db import get_db_connection
+from app.services.live_trading.factory import validate_exchange_market_category
 
 logger = get_logger(__name__)
 
@@ -20,6 +21,14 @@ class StrategyService:
     def __init__(self):
         # Local deployment: do not use encryption/decryption.
         pass
+
+    def _validate_exchange_market_for_save(self, exchange_config: Dict[str, Any], market_category: str) -> None:
+        ex_id = (exchange_config or {}).get("exchange_id") or (exchange_config or {}).get("exchangeId") or ""
+        if not str(ex_id).strip():
+            return
+        ok, err = validate_exchange_market_category(ex_id, market_category)
+        if not ok:
+            raise ValueError(err)
 
     def get_running_strategies(self) -> List[Dict[str, Any]]:
         """Get all running strategies (ID only)"""
@@ -591,6 +600,8 @@ class StrategyService:
             trading_config['long_ratio'] = long_ratio
             trading_config['rebalance_frequency'] = rebalance_frequency
 
+        self._validate_exchange_market_for_save(exchange_config, market_category)
+
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
@@ -822,6 +833,8 @@ class StrategyService:
         # Keep trading_config.initial_capital in sync with DB column
         if trading_config is not None:
             trading_config['initial_capital'] = float(initial_capital)
+
+        self._validate_exchange_market_for_save(exchange_config, market_category)
 
         with get_db_connection() as db:
             cur = db.cursor()
