@@ -122,10 +122,11 @@ Plans:
   1. Raw strategy quantities pass through ForexNormalizer integer rules before submission.
   2. `_align_qty_to_contract` adjusts to `sizeIncrement` / broker constraints using qualified Forex contract details.
   3. Tests cover rounding, increment alignment, and parity with existing normalizer behavior.
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 08-01: Sizing use cases with mock `ContractDetails`; tests; no regression on US/HK qty paths
+- [ ] 08-01-PLAN.md — ForexNormalizer `normalize` passthrough + type `float`; tests UC-N1–UC-N6; update `1000.7` expectation; REGR-01
+- [ ] 08-02-PLAN.md — `_align_qty_to_contract` isolated tests UC-A1–UC-A5 (mock IB, cache, `conId=424242`); REGR-01
 
 ### Phase 9: Forex trading hours (liquidHours)
 **Goal**: Session checks for Forex use IBKR contract trading/liquid hours (24/5), not equity-only assumptions.
@@ -192,7 +193,7 @@ Plans:
 | 5. Signal-to-side mapping (two-way FX) | 1/1 | Complete   | 2026-04-10 |
 | 6. TIF policy for Forex | 1/1 | Complete   | 2026-04-10 |
 | 7. Forex market orders | 1/1 | Complete   | 2026-04-10 |
-| 8. Quantity normalization & IB alignment | 0/1 | Not started | - |
+| 8. Quantity normalization & IB alignment | 0/2 | Not started | - |
 | 9. Forex trading hours (liquidHours) | 0/1 | Not started | - |
 | 10. Fills, position & PnL events | 0/1 | Not started | - |
 | 11. Strategy automation (Forex + IBKR) | 0/1 | Not started | - |
