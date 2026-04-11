@@ -79,7 +79,7 @@ def _mock_db(insert_rowid: int = 1):
 def client_fixture():
     """Minimal Flask app with strategy routes; g.user_id set for UC-SA-E2E API tests."""
     app = Flask(__name__)
-    app.register_blueprint(strategy_bp, url_prefix="/api/strategy")
+    app.register_blueprint(strategy_bp, url_prefix="/api")
 
     @app.before_request
     def set_g():
@@ -149,7 +149,7 @@ def patched_records():
 
 
 def test_uc_sa_e2e_api_forex_create_returns_200(client_fixture):
-    """UC-SA-E2E: POST /api/strategy/strategies/create — Forex + ibkr-paper + EURUSD."""
+    """UC-SA-E2E: POST /api/strategies/create — Forex + ibkr-paper + EURUSD."""
     unique = uuid.uuid4().hex[:10]
     payload = {
         "strategy_name": f"UC-SA-E2E-API-forex-{unique}",
@@ -160,7 +160,7 @@ def test_uc_sa_e2e_api_forex_create_returns_200(client_fixture):
         "notification_config": {},
     }
     with _mock_db(insert_rowid=501) as mock_cur:
-        res = client_fixture.post("/api/strategy/strategies/create", json=payload)
+        res = client_fixture.post("/api/strategies/create", json=payload)
     assert res.status_code == 200
     body = res.get_json()
     assert body["code"] == 1
