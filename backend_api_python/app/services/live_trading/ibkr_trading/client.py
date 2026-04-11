@@ -202,6 +202,9 @@ class IBKRClient(BaseStatefulClient):
         self._conid_to_symbol: Dict[int, str] = {}
         self._subscribed_conids: set = set()
 
+        # Per-(symbol, market_type) cache for successful qualifyContractsAsync (TTL via monotonic clock).
+        self._qualify_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
     # ── signal mapping ──────────────────────────────────────────────
 
     def map_signal_to_side(self, signal_type: str, *, market_category: str = "") -> str:
@@ -848,12 +851,61 @@ class IBKRClient(BaseStatefulClient):
         else:
             raise ValueError(f"Unsupported market_type: {market_type}")
 
-    async def _qualify_contract_async(self, contract) -> bool:
+    def _qualify_ttl_seconds(self, market_type: str) -> int:
+        if market_type == "Forex":
+            return int(os.environ.get("IBKR_QUALIFY_TTL_FOREX_SEC", "600"))
+        if market_type == "USStock":
+            return int(os.environ.get("IBKR_QUALIFY_TTL_USSTOCK_SEC", "600"))
+        if market_type == "HShare":
+            return int(os.environ.get("IBKR_QUALIFY_TTL_HSHARE_SEC", "600"))
+        return 600
+
+    def _invalidate_qualify_cache(self, symbol: str, market_type: str) -> None:
+        self._qualify_cache.pop((symbol, market_type), None)
+
+    @staticmethod
+    def _qualify_snapshot_from_contract(contract) -> Dict[str, Any]:
+        snap: Dict[str, Any] = {}
+        for attr in ("conId", "secType", "localSymbol", "exchange", "currency", "tradingClass"):
+            if hasattr(contract, attr):
+                snap[attr] = getattr(contract, attr, None)
+        return snap
+
+    @staticmethod
+    def _qualify_apply_snapshot_to_contract(contract, snapshot: Dict[str, Any]) -> None:
+        for attr, val in snapshot.items():
+            if val is not None:
+                setattr(contract, attr, val)
+
+    async def _qualify_contract_async(self, contract, symbol: str, market_type: str) -> bool:
+        key = (symbol, market_type)
+        ttl = self._qualify_ttl_seconds(market_type)
+        now = time.monotonic()
+        entry = self._qualify_cache.get(key)
+        if entry and now < float(entry.get("expires_at", 0)):
+            self._qualify_apply_snapshot_to_contract(contract, entry.get("snapshot") or {})
+            return True
+
+        if key in self._qualify_cache:
+            self._qualify_cache.pop(key, None)
+
         try:
-            return len(await self._ib.qualifyContractsAsync(contract)) > 0
+            qualified = await self._ib.qualifyContractsAsync(contract)
         except Exception as e:
             logger.warning("Contract qualification failed: %s", e)
+            self._invalidate_qualify_cache(symbol, market_type)
             return False
+
+        if len(qualified) == 0:
+            self._invalidate_qualify_cache(symbol, market_type)
+            return False
+
+        snapshot = self._qualify_snapshot_from_contract(contract)
+        self._qualify_cache[key] = {
+            "expires_at": time.monotonic() + float(ttl),
+            "snapshot": snapshot,
+        }
+        return True
 
     _EXPECTED_SEC_TYPES = {
         "Forex": "CASH",
@@ -1044,7 +1096,7 @@ class IBKRClient(BaseStatefulClient):
 
             qualified = False
             for attempt in range(1, self._RTH_QUALIFY_RETRIES + 1):
-                if await self._qualify_contract_async(contract):
+                if await self._qualify_contract_async(contract, symbol, market_type):
                     qualified = True
                     break
                 if attempt < self._RTH_QUALIFY_RETRIES:
@@ -1065,6 +1117,7 @@ class IBKRClient(BaseStatefulClient):
             valid, reason = self._validate_qualified_contract(contract, market_type)
             if not valid:
                 logger.warning("[RTH] post-qualify validation failed for %s: %s", symbol, reason)
+                self._invalidate_qualify_cache(symbol, market_type)
                 return False, reason
 
             server_time = await self._ib.reqCurrentTimeAsync()
@@ -1122,12 +1175,13 @@ class IBKRClient(BaseStatefulClient):
             await self._ensure_connected_async()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
-            if not await self._qualify_contract_async(contract):
+            if not await self._qualify_contract_async(contract, symbol, market_type):
                 return LiveOrderResult(success=False, message=f"Invalid {market_type} contract: {symbol}",
                                    exchange_id=self.engine_id)
 
             valid, reason = self._validate_qualified_contract(contract, market_type)
             if not valid:
+                self._invalidate_qualify_cache(symbol, market_type)
                 return LiveOrderResult(success=False, message=reason,
                                    exchange_id=self.engine_id)
 
@@ -1200,12 +1254,13 @@ class IBKRClient(BaseStatefulClient):
             await self._ensure_connected_async()
             _ensure_ib_insync()
             contract = self._create_contract(symbol, market_type)
-            if not await self._qualify_contract_async(contract):
+            if not await self._qualify_contract_async(contract, symbol, market_type):
                 return LiveOrderResult(success=False, message=f"Invalid {market_type} contract: {symbol}",
                                    exchange_id=self.engine_id)
 
             valid, reason = self._validate_qualified_contract(contract, market_type)
             if not valid:
+                self._invalidate_qualify_cache(symbol, market_type)
                 return LiveOrderResult(success=False, message=reason,
                                    exchange_id=self.engine_id)
 
@@ -1422,11 +1477,12 @@ class IBKRClient(BaseStatefulClient):
         async def _task():
             await self._ensure_connected_async()
             contract = self._create_contract(symbol, market_type)
-            if not await self._qualify_contract_async(contract):
+            if not await self._qualify_contract_async(contract, symbol, market_type):
                 return {"success": False, "error": f"Invalid {market_type} contract: {symbol}"}
 
             valid, reason = self._validate_qualified_contract(contract, market_type)
             if not valid:
+                self._invalidate_qualify_cache(symbol, market_type)
                 return {"success": False, "error": reason}
             ticker = self._ib.reqMktData(contract, "", False, False)
             await _aio.sleep(2)
