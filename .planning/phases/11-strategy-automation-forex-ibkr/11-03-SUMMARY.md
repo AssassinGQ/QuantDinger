@@ -68,7 +68,7 @@ completed: 2026-04-11
 ## Decisions Made
 
 - Followed `test_ibkr_client` helpers for mock IB and client skeleton; duplicated event wiring in smoke file for standalone clarity.
-- Did not mark requirement **RUNT-03** complete in REQUIREMENTS.md — it spans all Phase 11 plans (11-01, 11-02 remain).
+- Did not mark requirement **RUNT-03** complete in REQUIREMENTS.md — it spans Phase 11 until **11-02** (E2E) and full verification.
 
 ## Deviations from Plan
 
@@ -84,12 +84,12 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- Smoke proof for UC-SA-SMK-01–03 is in place; Phase 11 still needs 11-01 (validation) and 11-02 (E2E) for full RUNT-03 closure.
+- Smoke proof for UC-SA-SMK-01–03 is in place; Phase 11 still needs **11-02** (E2E + runbook) for full RUNT-03 closure alongside validation already delivered in 11-01.
 
 ## Self-Check: PASSED
 
 - `backend_api_python/tests/test_ibkr_forex_paper_smoke.py` exists.
-- Commits `047a773` (tests), `403c443` (planning docs) present on branch.
+- `047a773` (test module) is an ancestor of `HEAD`; planning updates in `04c7148` and follow-up docs commits.
 
 ---
 *Phase: 11-strategy-automation-forex-ibkr*

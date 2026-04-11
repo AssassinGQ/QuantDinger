@@ -72,7 +72,7 @@ Each task was committed atomically:
 1. **Task 1: BaseStatefulClient.validate_market_category_static + factory.validate_exchange_market_category** - `5fac25c` (feat)
 2. **Task 2: StrategyService save-time validation + test_strategy_exchange_validation.py** - `f33a7ed` (feat)
 
-**Plan metadata:** `751dfb5` (docs: complete plan)
+**Plan metadata:** `6d94d01` (docs: complete plan)
 
 ## Files Created/Modified
 
