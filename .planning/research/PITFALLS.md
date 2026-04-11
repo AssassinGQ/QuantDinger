@@ -1,241 +1,241 @@
-# Domain Pitfalls
+# Pitfalls Research
 
-**Domain:** IBKR Forex integration (IDEALPRO spot FX) added to an existing stock-focused IBKR client (`ib_insync`, QuantDinger)  
-**Researched:** 2026-04-09  
-**Overall confidence:** **MEDIUM–HIGH** for contract/min-size/TIF (official IB + TWS contract docs); **MEDIUM** for IOC-on-Forex and some venue edge cases (verify in paper with target pairs).
+**Domain:** v1.1 — Tech debt cleanup, limit orders, qualify caching, precious metals, TIF unification, normalize/align ordering, E2E hardening on an existing `ib_insync` / IBKR Forex + equity stack (~928 tests)  
+**Researched:** 2026-04-11  
+**Confidence:** **HIGH** for integration risks tied to this repo’s `IBKRClient` (`client.py` event path, caches, `_get_tif_for_signal`, `_create_contract`); **MEDIUM** for venue-specific metal contract details (verify in TWS / paper per symbol).
+
+---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Treating Forex like `Stock` in `_create_contract` / `normalize_symbol`
+### Pitfall 1: Treating limit orders like market orders in `_on_order_status` (partial fills and terminal states)
 
-**What goes wrong:** Orders fail qualification, wrong instrument, or silent mis-routing (e.g. interpreting `EURUSD` as a US equity symbol). IBKR spot FX uses **secType `CASH`**, **base in `symbol`**, **quote in `currency`**, **exchange `IDEALPRO`** (TWS API basic contract example). `ib_insync.Stock(...)` is never valid for FX.
+**What goes wrong:** Limit orders can remain **Submitted** / **PreSubmitted** for a long time, transition through **`PartiallyFilled`** (IBKR order status string per TWS API), then **Filled**, or end **Cancelled** / **Inactive** with a **non-zero** cumulative fill. Logic that assumes “first terminal event == full story” or that only **`Filled`** matters will mishandle PnL, pending rows, and notifications. Worse: calling **`_handle_fill`** on **every** status update with **cumulative** `filled` without deduplication **double-applies** position/trade rows.
 
-**Why it happens:** Existing code path always builds `Stock` from `normalize_symbol` and defaults unknown `market_type` to US SMART/USD (`symbols.py` else branch).
+**Why it happens:** Market-order-centric code paths fire **`_handle_fill`** only on **`Filled`** (and cancelled-with-fill). That matches fast fills. Limit orders stress **multiple** updates with increasing `filled`; developers often add “handle partial” without incremental-vs-cumulative discipline.
 
-**Consequences:** `qualifyContracts` fails; or worse, rare ambiguous cases if future code ever mixed defaults.
+**How to avoid:**
 
-**Prevention:**
+- Keep **`PartiallyFilled`** out of **`_handle_fill`** unless you implement **delta fills** (compare to last seen `filled`, or drive from **`execDetails`** / per-fill commission path only).
+- Align with existing **`OrderTracker`** FSM semantics: **`Cancelled` is not hard-terminal** in tracker (recovery paths exist); do not fork divergent meanings between sync waiters and fire-and-forget callbacks.
+- Add tests that simulate **`PartiallyFilled` → `PartiallyFilled` → `Filled`** and **`PartiallyFilled` → `Cancelled`** (partial) with asserted single apply to ledger.
 
-- Branch `market_type == "Forex"`: build `ib_insync.Forex(...)` (or explicit `Contract(secType="CASH", exchange="IDEALPRO", ...)`) after parsing pair into base/quote.
-- Remove or hard-fail the “default to US stock” branch when `market_type` is explicit but unsupported.
+**Warning signs:** Duplicate trades for one `orderId`; position size 2× expected; logs showing **`_handle_fill`** more than once per order; **`has_trade_for_pending_order`** spam.
 
-**Warning signs:** Error 200 / “No security definition”; qualification returns 0 contracts; `conId` stays 0.
-
-**Detection:** Unit tests: `Forex("EURUSD")` + `qualifyContracts` in paper; log qualified `secType` and `exchange`.
-
-**Phase:** **Contract & symbol milestone** (first implementation phase).
+**Phase to address:** **Limit order lifecycle + fill accounting** (backend execution / Phase that owns `client.py` callbacks).
 
 ---
 
-### Pitfall 2: Wrong symbol / pair encoding (EUR.USD vs EURUSD vs `symbol`/`currency` split)
+### Pitfall 2: Cache invalidation for `qualifyContractsAsync` results (`conId`, `secType`, `localSymbol`)
 
-**What goes wrong:** IB expects **base currency** as `symbol` and **quote currency** as `currency` for `CASH` (official TWS API FX example). User-facing formats (`EUR/USD`, `EUR.USD`, `EURUSD`) must be parsed **once**, consistently, before building the contract.
+**What goes wrong:** **`qualifyContractsAsync`** mutates the contract **in place** (tests already mock this). A **qualify cache** keyed by `(symbol, market_type)` or raw user string can return a **stale** `Contract` after: symbol dictionary changes, **TIF/venue** changes, IB **re-listing** / **conId** churn, or switching **paper ↔ live**. Wrong **`conId`** → wrong **`reqContractDetailsAsync`** increment, wrong RTH details, or orders sent on **stale** instrument.
 
-**Why it happens:** Stock code habits (ticker + exchange) do not transfer; a single concatenated string is easy to split incorrectly (e.g. assuming 3+3 letters only).
+**Why it happens:** Caching is added to cut latency; invalidation rules are easy to under-specify. **`ib_insync`** async calls run on the IB thread; sharing mutable **`Contract`** objects across tasks without a clear ownership model increases stale reads.
 
-**Consequences:** Wrong pair (e.g. USD/EUR inverted logic), qualification failure, or fills on an unintended pair.
+**How to avoid:**
 
-**Prevention:**
+- Key caches with **normalized canonical keys** (same as **`normalize_symbol`** output), include **`market_type`**, and version or TTL if IB data can change session-over-session.
+- Invalidate on **disconnect / reconnect** (IB session reset), and when **`_create_contract`** branch changes (new `elif` for metals).
+- Prefer storing **immutable snapshots** (`conId`, `secType`, `exchange`, `localSymbol`) rather than reusing live **`Contract`** instances across unrelated orders unless the codebase standardizes one object per order.
+- Run concurrency tests: two coroutines qualifying the same symbol should not leave **`_lot_size_cache`** or qualify cache in an inconsistent state (`conId` race).
 
-- Define a single canonical internal representation (e.g. base+quote ISO codes) and map all display formats to it.
-- After `qualifyContracts`, assert `contract.localSymbol` / `symbol`+`currency` match intent (spot-check in logs).
+**Warning signs:** Intermittent “wrong increment” alignment; RTH open/closed flipping for same symbol; first order after reconnect behaves differently from subsequent.
 
-**Warning signs:** Qualification succeeds but bid/quote or historical data don’t match expectations; PnL sign wrong.
-
-**Phase:** **Symbol parsing** (same phase as contract creation).
-
----
-
-### Pitfall 3: Assuming uniform “25,000 lot” minimum (base currency minima are pair- and currency-specific)
-
-**What goes wrong:** Rejecting valid orders or accepting sizes IBKR will reject. Official **Spot Currency Minimum/Maximum Order Sizes** list **minimums in base currency units that vary by currency** (examples from IBKR table, 2026 snapshot): USD **25,000**; EUR **20,000**; JPY **2,500,000**; some crosses use **USD-notional** minima (`USD 25,000` footnote for certain currencies). This is **not** a single global 25k rule.
-
-**Why it happens:** Community shorthand “25k min” is outdated or USD-centric; `ForexNormalizer` in-repo only floors to integer and does not encode IB minima (by design per `PROJECT.md`).
-
-**Consequences:** Repeated API rejects; `_align_qty_to_contract` may align to `sizeIncrement` but still violate **min trade size** if increment < min.
-
-**Prevention:**
-
-- Treat **`reqContractDetails` / `minSize` / `sizeIncrement`** as authoritative for alignment, but **also** enforce (or surface) **broker min notional** from IBKR tables or error messages on reject.
-- Log and handle reject reason codes explicitly when size is below minimum.
-
-**Warning signs:** Error messages referencing minimum order size; paper works only above certain qty.
-
-**Phase:** **Order sizing** (implementation); **hardening** if relying on IBKR rejects only.
+**Phase to address:** **Qualify cache** milestone phase (often early backend).
 
 ---
 
-### Pitfall 4: IOC on close signals (`_get_tif_for_signal`) without a Forex branch
+### Pitfall 3: Wrong `secType` / contract class for precious metals (spot vs futures)
 
-**What goes wrong:** For **USStock**, close signals use **`IOC`** (comment: pre/post-market). **HShare** overrides to **`DAY`** because IOC is not supported. **Forex** TIF support must be verified: if IOC is rejected for IDEALPRO MKT, orders fail on every `close_long` / `close_short`.
+**What goes wrong:** **Spot FX metals** (e.g. some **`XAUUSD` / `XAGUSD`** style pairs on **IDEALPRO**) use **`CASH`** like other FX; **exchange-traded** metals may be **`FUT`**, **`CMDTY`**, or other **`secType`** with different **exchange**, **multiplier**, and **min size**. Building **`Forex(...)`** for a symbol that IB exposes only as **futures**, or the reverse, yields qualification failure, silent wrong instrument, or fills with **different margin and PnL** semantics.
 
-**Why it happens:** Copying stock TIF rules to FX without testing.
+**Why it happens:** **`_create_contract`** uses **`elif` chains** and **`_EXPECTED_SEC_TYPES`** (`Forex` → **`CASH`**, equities → **`STK`**). New **`market_type`** or “metal” branch added without paper validation often copies the **Forex** path or **Stock** path incorrectly.
 
-**Consequences:** Systematic reject on exits; strategies stuck in positions.
+**How to avoid:**
 
-**Prevention:**
+- For each supported symbol class: **paper qualify + `reqContractDetailsAsync`**, record **`secType`**, **`exchange`**, **`currency`**, **`localSymbol`**, then encode that in **`_create_contract`** and **`_validate_qualified_contract`** (extend **`_EXPECTED_SEC_TYPES`** or per-branch validators).
+- Do not assume **precious metal == Forex** without IB confirmation for **your** account and routing.
 
-- In paper, submit MKT with `DAY` vs `IOC` for representative pairs; align code with observed behavior.
-- Add `Forex` branch: if IOC unsupported, use `DAY` (mirroring HShare workaround) or `GTC` only if product allows (confirm; do not assume GTC for all FX).
+**Warning signs:** Error 200 / empty qualify; **`secType`** mismatch vs **`_EXPECTED_SEC_TYPES`**; position shows in unexpected **asset class** in TWS.
 
-**Warning signs:** Order error immediately on submit; TWS message about TIF.
-
-**Phase:** **Order execution** (same milestone as `place_market_order`).
+**Phase to address:** **Contract / symbol** phase (same phase that touches **`_create_contract`** and normalization).
 
 ---
 
-### Pitfall 5: `map_signal_to_side` / signal model assumes long-only equities
+### Pitfall 4: TIF unification breaking existing US stock / HShare strategies
 
-**What goes wrong:** `IBKRClient.map_signal_to_side` **rejects any signal containing `"short"`** with “IBKR stock trading does not support short signals.” Spot FX is inherently **two-way**: selling EUR.USD is normal and **not** equity shorting.
+**What goes wrong:** Today **`_get_tif_for_signal`** uses **`IOC`** for **all Forex** signals; **USStock** uses **`DAY`** for opens and **`IOC`** for closes; **HShare** uses **`DAY`** even for closes (IOC not supported). **Unifying** TIF (one policy per asset class, or global enum) without preserving these **documented behaviors** changes **fill timing**: e.g. close orders filling **outside** intended session, or **immediate** IOC failures where **DAY** would rest.
 
-**Why it happens:** Equity-only product decision baked into the client.
+**Why it happens:** Refactors favor “one function, one matrix”; easy to drop **`HShare`** exception or invert **open vs close** rules.
 
-**Consequences:** Any strategy emitting `open_short` / `close_short` for Forex will fail before `place_market_order`, even after Forex contracts work.
+**How to avoid:**
 
-**Prevention:**
+- Lock behavior with **REGR** tests: parametrize **`signal_type` × `market_type`** against expected TIF string (existing pattern in **`test_ibkr_client.py`**).
+- Any change to **close** TIF for **USStock** / **HShare** requires **explicit** migration note for deployed strategies and paper re-validation.
 
-- For `market_category == "Forex"` (or `market_type`), map `open_short`→`sell`, `close_short`→`buy` (and validate with product intent), **or** use a dedicated FX signal vocabulary and map to BUY/SELL.
-- Document whether **crypto/margin stock shorting** stays out of scope vs **FX sell**.
+**Warning signs:** Spike in **Inactive** / **Cancelled** on close signals; orders not filling in extended hours when they used to.
 
-**Warning signs:** `unsupported_signal` in `StatefulClientRunner.execute` logs; no order reaches IBKR.
-
-**Phase:** **Runner + client signal mapping** (early; blocks end-to-end Forex).
+**Phase to address:** **TIF policy** phase (small, test-heavy; must run before or with execution changes).
 
 ---
 
-### Pitfall 6: Confusing **spot IDEALPRO** with **currency conversion (FXCONV / cash FX)**
+### Pitfall 5: Flaky frontend E2E (timing, selectors, IB mocks)
 
-**What goes wrong:** IBKR exposes **currency conversion** workflows (often discussed under “FXCONV” / conversion orders) that differ from **speculative spot FX** on IDEALPRO. Wrong contract or order type → unexpected fills or account cash movements vs position screen.
+**What goes wrong:** E2E tests that **assert** on **async** IBKR mock callbacks (**orderStatus** → **execDetails** → position) or **Vue** next-tick timing fail intermittently in CI. **Network** or **Gateway**-dependent tests without mocks are inherently flaky.
 
-**Why it happens:** “FX” in UIs and docs refers to both conversion and trading.
+**Why it happens:** **`ib_insync`** is **async**; UI updates follow **websocket/poll** delays; strict **timeouts** without **condition waits**; **race** between **strategy create** and **worker** pick-up.
 
-**Prevention:** Stick to **`CASH` + `IDEALPRO`** for strategy trades; use conversion APIs only when intentionally converting account balances.
+**How to avoid:**
 
-**Warning signs:** Fill posts to cash ledger differently; position line missing or labeled as conversion.
+- Prefer **deterministic mocks** at the same boundaries v1.0 used (**pending_order_worker** patches, etc. per **`STATE.md`**).
+- Use **wait-for** assertions (text/element stable) rather than fixed **`sleep`**.
+- Isolate **E2E** from real IB; keep **one** optional smoke job for paper if needed, not gating CI.
 
-**Phase:** **Architecture / contract** (initial); **ops validation** in paper.
+**Warning signs:** CI pass rate below 100% on unchanged code; failures at **screenshot** / **timeout** only.
+
+**Phase to address:** **E2E / frontend** phase; **CI** config review.
 
 ---
 
-### Pitfall 7: RTH / “market open” semantics for 24/5 Forex
+### Pitfall 6: `normalize_symbol` vs `qualify` vs `_align_qty_to_contract` ordering bugs (“normalize timing fix”)
 
-**What goes wrong:** Forex is **not** equity RTH. Weekend gaps, daily maintenance breaks, and holiday calendars differ. Reusing `is_rth_check` + `liquidHours` is correct **if** `ContractDetails` returns meaningful hours; **wrong** if code still assumes “stock session” mentally (e.g. fuse logic tuned for 30-minute post-close delays).
+**What goes wrong:** **Quantity** must be validated **after** **`normalize_symbol`** produces the IB-facing symbol, **after** **qualify** establishes **`conId`**, and **after** **`reqContractDetailsAsync`** supplies **increment** — the production order in **`place_market_order` / `place_limit_order`** is intentional. Reordering (e.g. aligning qty **before** qualify, or caching **increment** by **pre-qualify** key) can **floor qty to 0** or use **wrong increment**. A **“normalize timing fix”** that runs normalization twice with different **market_type** can split behavior between **check** and **submit**.
 
-**Why it happens:** `is_market_open` is fail-closed on qualification failure — good — but Forex may show **long multi-day sessions**; edge cases: **Friday close / Sunday open** (broker time vs UTC).
+**Why it happens:** Refactors extract “helpers” and accidentally call them in different order in **`place_limit_order`** vs **`place_market_order`** or **`is_market_open`**.
 
-**Consequences:** Blocked trades while market is tradeable, or allowed trades into illiquid windows if hours parsing fails.
+**How to avoid:**
 
-**Prevention:** Test `liquidHours` strings for major pairs across a weekend boundary; ensure server time uses `reqCurrentTimeAsync` (already in client) and timezone handling in `trading_hours.py` remains valid for FX hour strings.
+- Single **pipeline** helper or shared **internal** function for **contract build → qualify → validate → align → order**, used by market and limit paths.
+- Unit tests: **same inputs** → **same** `conId` path and **same** aligned qty for both order types.
 
-**Warning signs:** Systematic “outside RTH” on Sundays; false opens on Friday evening.
+**Warning signs:** Limit and market **disagree** on rejected qty for same inputs; **`_lot_size_cache`** hit with **`conId=0`** paths.
 
-**Phase:** **RTH / scheduling** (parallel with first Forex orders).
+**Phase to address:** **Execution refactor / tech debt** phase (normalize + align consolidation).
 
 ---
 
 ## Moderate Pitfalls
 
-### Pitfall 8: `qualifyContracts` ambiguity or stale `Forex` helper
+### Pitfall 7: Thread-pool / event-loop mismatch on cache writes
 
-**What goes wrong:** `qualifyContracts` can return multiple matches or require explicit `exchange` (`IDEALPRO`). Community reports (ib_insync issues) include qualification edge cases with FX.
+**What goes wrong:** **`_submit`** runs coroutines on the IB loop; **`_fire_submit`** uses thread pool for **`_handle_fill`**. A **non-thread-safe** `dict` for qualify cache if ever read from **event** callbacks and written from **pool** without synchronization → rare **lost updates** or **exceptions**.
 
-**Prevention:** Always set **`exchange='IDEALPRO'`** for spot; after qualification, use returned `contract` with `conId` for orders.
+**Why it happens:** Most cache access today is on the IB side; expanding cache use without auditing **call sites** risks crossing threads.
 
-**Phase:** Contract milestone.
+**How to avoid:** Keep **all** cache read/write on **one** executor (IB loop), or use **`threading.Lock`** / immutable replacements. Document **ownership** in the phase that adds caching.
 
----
+**Warning signs:** Heisenbugs only under load; `RuntimeError: dictionary changed size during iteration`.
 
-### Pitfall 9: Position / PnL / commission currency mix-ups
-
-**What goes wrong:** Executions report commission in one currency; position size is in **base**; PnL may be tracked in account currency. Downstream `records.apply_fill_to_local_position` may assume “price × qty” like stocks without FX-specific **quote currency** and **pip** semantics.
-
-**Prevention:** Store **pair**, **base qty**, **quote currency**, and **fill price** explicitly; avoid mixing with stock “shares” semantics in analytics.
-
-**Phase:** **Post-fill / ledger** (after execution works).
+**Phase to address:** Same as **qualify cache** phase.
 
 ---
 
-### Pitfall 10: Margin and leverage differ from US/HK stocks
+### Pitfall 8: `OrderTracker` vs `IBKRClient._TERMINAL_STATUSES` drift
 
-**What goes wrong:** Users expect stock margin rules; FX has **different margin tiers** and **close-out** behavior.
+**What goes wrong:** **`order_tracker.HARD_TERMINAL`** and **`IBKRClient._TERMINAL_STATUSES`** are **not identical** (e.g. **`Cancelled`** handling differs). Unification work can **merge** concepts incorrectly and break **wait-for-order** vs **callback** paths.
 
-**Prevention:** Surface IBKR margin requirements in runbooks; do not reuse stock buying-power checks for FX without validation.
+**How to avoid:** Single source of truth or explicit mapping table; test both paths for **limit** order outcomes.
 
-**Phase:** **Risk / ops** (documentation + optional pre-trade checks).
-
----
-
-### Pitfall 11: Connection / session over weekend
-
-**What goes wrong:** IB Gateway may disconnect or reset around FX week rollover; strategies assuming continuous sessions may submit blindly.
-
-**Prevention:** Rely on existing reconnect path; add explicit handling for “market closed” from `is_market_open` after reconnect.
-
-**Phase:** **Stability** (hardening).
+**Phase to address:** Limit order / tracker alignment phase.
 
 ---
 
-## Minor Pitfalls
+## Technical Debt Patterns
 
-### Pitfall 12: Logging assumes `contract.symbol` is a stock ticker
-
-**What goes wrong:** Logs remain readable, but dashboards keyed only on ticker may collide or confuse (e.g. `EUR` without quote).
-
-**Prevention:** Log `localSymbol` or `pair` string for FX.
-
-**Phase:** Observability polish.
-
----
-
-### Pitfall 13: Caching `_lot_size_cache` / `_rth_details_cache` by `conId` after contract type change
-
-**What goes wrong:** If contract objects are reused incorrectly, stale increments or hours could apply.
-
-**Prevention:** Invalidate caches when Forex branch ships or on contract mismatch.
-
-**Phase:** Implementation review.
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Global qualify cache with no TTL | Fewer IB round trips | Stale `conId`, wrong instrument after IB changes | Only with explicit invalidation rules + reconnect flush |
+| “Metals use Forex branch” without paper proof | Faster ship | Wrong secType, margin surprises | Never without qualification proof per symbol |
+| E2E `sleep(3000)` | Quick test pass | Flaky CI | Never in merge-blocking E2E |
+| Duplicate normalize/align in market vs limit | Copy-paste speed | Drift bugs | Short-term if tracked for merge into one pipeline in same milestone |
 
 ---
 
-## Codebase-specific: Stock-only assumptions that will break or block Forex
+## Integration Gotchas (ib_insync / IBKR)
 
-| Location / behavior | Risk |
-|---------------------|------|
-| `IBKRClient.supported_market_categories` — only `USStock`, `HShare` | `validate_market_category` fails for Forex until extended (`pending_order_worker` path). |
-| `_create_contract` — always `Stock` | Wrong instrument for Forex. |
-| `normalize_symbol` — unknown → US SMART/USD | Mis-resolves symbols if `market_type` missing or wrong. |
-| `map_signal_to_side` — rejects “short” | Blocks FX sell-side / short-style signals. |
-| `_get_tif_for_signal` — IOC on close for non-HShare | May break Forex exits if IOC unsupported. |
-| `quantdinger_vue` trading assistant — Forex → MT5, US/HK → IBKR | Users may not route Forex to IBKR until UI/config updated (product decision; noted even if backend-only milestone). |
-| `ForexNormalizer.check` — only `qty > 0` | Does not enforce IB min size (intentional per project; increases reliance on IB rejects). |
+| Integration | Common mistake | Correct approach |
+|-------------|----------------|------------------|
+| **`qualifyContractsAsync`** | Assuming return value replaces contract; ignoring in-place mutation | Use the **same** contract object after await; assert **`conId`** / **`secType`** in **`_validate_qualified_contract`** |
+| **Limit order status** | Treating **`PartiallyFilled`** like **`Filled`** for ledger | Only finalize ledger on **terminal** cumulative policy you define; avoid double **`_handle_fill`** |
+| **`reqContractDetailsAsync`** | Caching increment by symbol string instead of **`conId`** | Cache by **`conId`** after qualify (current **`_lot_size_cache`** pattern); invalidate if contract class changes |
+| **TIF** | Applying **Forex IOC** to equities or vice versa | Keep **`market_type`** branching tests as **golden** outputs |
+| **Reconnect** | Reusing pre-disconnect **Contract** / cache entries | Flush qualify + RTH + increment caches on session loss |
 
 ---
 
-## Phase-specific warnings
+## Performance Traps
 
-| Phase / topic | Likely pitfall | Mitigation |
-|---------------|----------------|------------|
-| Contract + symbol | Stock contract, wrong pair parsing | `CASH` + IDEALPRO; single parser; qualify in paper |
-| Orders | IOC / TIF rejects | Paper test close signals; add Forex branch |
-| Signals | Long-only map | Extend `map_signal_to_side` for Forex |
-| Sizing | Min-notional vs increment | Table + API rejects; optional explicit min check |
-| RTH | Stock mental model | Validate `liquidHours` across Fri–Sun |
-| Ledger / PnL | Stock PnL math | Explicit FX fields and quote currency |
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Unbounded qualify cache | Memory growth over days | TTL, max entries, reconnect flush | Long-running Gateway process |
+| Per-tick qualify in hot path | CPU + IB rate limits | Cache after first success; invalidate on symbol change | New automation calling qualify repeatedly |
+| RTH cache keyed by `(conId, date)` only | Wrong hours if contract details change intraday | Rare; document assumption | IB contract update mid-session (low probability) |
+
+---
+
+## Security Mistakes
+
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Logging full **Contract** / keys in client logs in production | Information leakage | Log **`symbol` / `conId`** at INFO; redact account fields if ever added |
+
+*(Domain-specific; not the main v1.1 risk.)*
+
+---
+
+## UX Pitfalls
+
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| Limit order shown “Submitted” while partially filled | Confusion about working size | Surface **filled / remaining** from **`trade.orderStatus`** in API responses when milestone exposes them |
+| Metal routed to wrong product | Unexpected margin / fill | Clear **market_type** and validation errors from **`_validate_qualified_contract`** |
+
+---
+
+## “Looks Done But Isn’t” Checklist
+
+- [ ] **Limit partials:** Ledger updated **once** per logical fill strategy; no double **`apply_fill_to_local_position`** for same order.
+- [ ] **Qualify cache:** Invalidation on **reconnect** and **symbol/market_type** change verified.
+- [ ] **Metals:** Each new symbol has **paper** qualify + **`secType`** assertion.
+- [ ] **TIF:** **`test_ibkr_client`** (or successor) locks **USStock / HShare / Forex** matrix.
+- [ ] **Normalize pipeline:** Market and limit orders share **identical** pre-submit steps.
+- [ ] **E2E:** No merge-blocking test depends on real IB latency or fixed **sleep** without wait condition.
+
+---
+
+## Recovery Strategies
+
+| Pitfall | Recovery cost | Recovery steps |
+|---------|---------------|----------------|
+| Stale qualify cache | MEDIUM | Disable cache flag / deploy flush; reconnect Gateway; verify `conId` in logs |
+| Double ledger on partials | HIGH | Reconcile DB from IB executions; add idempotency key on `orderId`+`cumQty` |
+| TIF regression | MEDIUM | Revert TIF commit; rerun golden tests; paper validate closes |
+
+---
+
+## Pitfall-to-Phase Mapping (v1.1)
+
+Suggested mapping — adjust to final **`ROADMAP.md`** phase numbers.
+
+| Pitfall | Prevention phase | Verification |
+|---------|------------------|--------------|
+| Partial fill / status handling | Limit orders + callback work | Simulated **`PartiallyFilled`** sequences; DB counts |
+| Cache invalidation | Qualify cache phase | Reconnect test; cache miss after invalidate |
+| Metals **secType** | Contract / symbol extension | Paper qualify + **`_EXPECTED_SEC_TYPES`** (or equivalent) |
+| TIF regression | TIF unification / policy | Parametrize **`_get_tif_for_signal`** REGR |
+| Flaky E2E | Frontend E2E phase | CI stability over N runs |
+| Normalize/align order | Tech debt / execution refactor | Parity tests market vs limit |
 
 ---
 
 ## Sources
 
-- [TWS API Basic Contracts — FX Pairs (CASH, IDEALPRO)](https://interactivebrokers.github.io/tws-api/basic_contracts.html#forex) — **HIGH** (official structure)
-- [Interactive Brokers — Spot Currency Minimum/Maximum Order Sizes](https://www.interactivebrokers.com/en/trading/forexOrderSize.php) — **HIGH** (official min/max table; verify current revision periodically)
-- `backend_api_python/app/services/live_trading/ibkr_trading/client.py` — `_create_contract`, `_get_tif_for_signal`, `map_signal_to_side`, `supported_market_categories`
-- `backend_api_python/app/services/live_trading/ibkr_trading/symbols.py` — `normalize_symbol` defaults
-- GitHub `ib_insync` issues on `qualifyContracts` + Forex — **LOW–MEDIUM** (anecdotal; use for test ideas, not as law)
+- **This repo:** `backend_api_python/app/services/live_trading/ibkr_trading/client.py` — **`_on_order_status`**, **`_create_contract`**, **`_get_tif_for_signal`**, **`_lot_size_cache`**, **`_rth_details_cache`**
+- **This repo:** `backend_api_python/app/services/live_trading/ibkr_trading/order_tracker.py` — **`HARD_TERMINAL`**, **`ACTIVE`**, **`Cancelled`** recovery notes
+- **Interactive Brokers:** [TWS API — Order statuses](https://interactivebrokers.github.io/tws-api/order_submission.html) (confirm **`PartiallyFilled`** and lifecycle) — verify current page revision
+- **ib_insync:** Trade / `orderStatus` updates on **`Trade`** objects — see library docs for event ordering with **`execDetails`**
 
 ---
 
-## Gaps / verify in paper
-
-- Exact **IOC** support for IDEALPRO **MKT** on your account type and target pairs (official table vs runtime can differ).
-- Whether **GTC** is desired/allowed for Forex market orders in this product (project already flags DAY vs GTC as open).
-- **IBKRATEWAY** vs **IDEALPRO**: default retail/API spot is **IDEALPRO**; only deviate with explicit IB documentation for your use case.
+*Pitfalls research for: v1.1 IBKR integration (limit orders, caching, metals, TIF, E2E)*  
+*Researched: 2026-04-11*

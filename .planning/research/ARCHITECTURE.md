@@ -1,186 +1,144 @@
-# Architecture Patterns — IBKR Forex Integration
+# Architecture Patterns — v1.1 Integration (Tech Debt + Limit Orders)
 
-**Domain:** Live trading — Interactive Brokers (ib_insync)  
-**Researched:** 2026-04-09  
-**Scope:** How Forex (IDEALPRO) should integrate with the existing `IBKRClient` and surrounding execution stack.
+**Domain:** IBKR Forex live trading (brownfield extension)  
+**Researched:** 2026-04-11  
+**Scope:** NEW work only — limit orders, precious metals, qualify caching, TIF unification, normalize timing, E2E tests  
+**Overall confidence:** **HIGH** for file/method locations (read from repo); **MEDIUM** for IBKR product rules on metals (verify against IB contract specs before shipping)
 
-## Recommended Architecture
+## Recommended Architecture (v1.1 Touchpoints)
 
-Forex is **not** a parallel subsystem: it extends the same **contract → qualify → RTH → normalize qty → MarketOrder** pipeline that US stocks and HK shares already use. The only structural fork is **`_create_contract`**: stocks use `ib_insync.Stock`; Forex uses `ib_insync.Forex` (typically `exchange='IDEALPRO'`). Everything upstream and downstream of that fork stays in the **BaseStatefulClient + StatefulClientRunner + PendingOrderWorker** pattern.
-
-```mermaid
-flowchart LR
-  subgraph signals["Strategy / DB"]
-    MC["market_category = Forex"]
-    SYM["symbol e.g. EURUSD / EUR.USD"]
-  end
-  subgraph worker["PendingOrderWorker._execute_live_order"]
-    CC["create_client → IBKRClient"]
-    VM["validate_market_category"]
-  end
-  subgraph runner["StatefulClientRunner"]
-    PC["pre_check → is_market_open"]
-    EX["execute → place_market_order"]
-  end
-  subgraph ibkr["IBKRClient"]
-    NC["get_normalizer"]
-    CCt["_create_contract"]
-    Q["_qualify_contract_async"]
-    AL["_align_qty_to_contract"]
-    PO["placeOrder MarketOrder"]
-  end
-  MC --> VM
-  SYM --> EX
-  CC --> VM
-  VM --> PC
-  PC --> EX
-  EX --> NC
-  NC --> CCt
-  CCt --> Q
-  Q --> AL
-  AL --> PO
+```
+[Flask ibkr.py POST /order] ──► IBKRClient.place_market_order | place_limit_order
+                                        │
+[PendingOrderWorker._execute_live_order] ──► get_runner → StatefulClientRunner
+                                        │         └── execute() → place_market_order ONLY (today)
+                                        │
+                                        └── records / callbacks (unchanged pattern)
 ```
 
-### Component Boundaries
+### Component Boundaries (what changes vs stays)
 
-| Component | Responsibility | Forex-specific note |
-|-----------|----------------|---------------------|
-| **`IBKRClient`** | Single entry for IB orders, RTH, quotes, limits | Branch `Forex` in `_create_contract`; extend `supported_market_categories`; adjust `_get_tif_for_signal` if Forex TIF rules differ from US/HK. |
-| **`ibkr_trading/symbols.py`** | Map system symbol → IB contract fields | New branch: parse `EURUSD` / `EUR.USD` → `(pair, IDEALPRO, …)` for `Forex()`. |
-| **`order_normalizer` (`get_normalizer`)** | Pre-flight qty check + coarse rounding | **`Forex` already maps to `ForexNormalizer`** (floor). No factory change required. |
-| **`_align_qty_to_contract`** | IBKR `sizeIncrement` / `minSize` alignment | **Stock and Forex** — same code path; Forex contracts expose increments via `reqContractDetailsAsync`. |
-| **`trading_hours.is_rth_check`** | Session test from `liquidHours` | **Unchanged** — Forex uses same `ContractDetails` path; 24/5 behavior comes from IBKR’s `liquidHours`. |
-| **`StatefulClientRunner`** | RTH pre-check (open signals), then `place_market_order` | **Unchanged** — resolves “market” string from `market_category` first (see below). |
-| **`PendingOrderWorker`** | Build `OrderContext`, `create_client`, `validate_market_category`, `get_runner` | **Unchanged logic** — must allow `market_category=Forex` with `ibkr-paper` / `ibkr-live` (not blocked by crypto-only rules). |
-| **`factory.create_client` / `get_runner`** | IBKR singleton + `StatefulClientRunner` | **Unchanged** — Forex uses same IBKR client as stocks. |
+| Component | Responsibility today | v1.1 delta |
+|-----------|------------------------|------------|
+| `IBKRClient` (`ibkr_trading/client.py`) | Contract, qualify, qty align, market/limit `placeOrder` | Caching inside qualify path; optional `normalize()` in order pipeline; TIF policy in `_get_tif_for_signal`; metals = extend `_create_contract` / `normalize_symbol` if not IDEALPRO CASH |
+| `normalize_symbol` (`ibkr_trading/symbols.py`) | Forex → 6-char pair, IDEALPRO, quote ccy | Metals already listed in `KNOWN_FOREX_PAIR`; non–Forex-style contracts need new branches |
+| `StatefulClientRunner` (`runners/stateful_runner.py`) | RTH `pre_check`; `execute` → **`place_market_order` only** | **New:** branch or sibling path for limit orders (needs price + order kind on `OrderContext` / payload) |
+| `PendingOrderWorker` (`pending_order_worker.py`) | Build `OrderContext`, `create_client`, `get_runner`, `pre_check`, `execute` | Pass through limit fields from `payload` once runner supports limits |
+| `app/routes/ibkr.py` | Dispatches market vs limit to client | Already calls `place_limit_order` when `orderType == 'limit'` |
+| Vue `trading-assistant` | Wizard UX | E2E improvements are mostly **backend** in this repo; frontend hooks via HTTP API, not Flask `test_client` |
 
-## Stock vs Forex Contract Flow
+## Integration Answers (numbered)
 
-| Stage | USStock / HShare | Forex (target) |
-|-------|------------------|----------------|
-| **Symbol input** | `AAPL`, `00700.HK` | `EURUSD`, `EUR.USD`, etc. (project convention to be fixed in `normalize_symbol`) |
-| **`normalize_symbol`** | → `(ib_symbol, SMART\|SEHK, USD\|HKD)` | → `(pair or base+quote, IDEALPRO, quote ccy)` aligned with `ib_insync.Forex` constructor |
-| **Contract object** | `Stock(symbol=…, exchange=…, currency=…)` | `Forex(pair='EURUSD')` or `Forex(symbol='EUR', currency='USD', exchange='IDEALPRO')` (choose one style and keep it consistent) |
-| **Qualify** | `qualifyContractsAsync` | Same |
-| **RTH** | `reqContractDetailsAsync` → `liquidHours` | Same |
-| **Qty meaning** | Shares | **Base currency units** on IDEALPRO (e.g. EUR notional for EUR.USD), then increment alignment |
-| **Normalizer** | `USStockNormalizer` / `HShareNormalizer` | `ForexNormalizer` — `math.floor` before IB increment alignment |
-| **TIF** | `_get_tif_for_signal`: DAY open; IOC close for US; HShare close → DAY | **Decision:** treat like US (DAY / IOC) unless IBKR rejects — document in implementation phase |
+### (1) Where `place_limit_order` fits alongside `place_market_order`
 
-## Integration Points (Major)
+**Location:** `backend_api_python/app/services/live_trading/ibkr_trading/client.py`
 
-### 1. `IBKRClient.supported_market_categories`
+Both methods are parallel implementations:
 
-- **Today:** `frozenset({"USStock", "HShare"})`  
-- **Change:** add `"Forex"`.  
-- **Why:** `PendingOrderWorker` calls `client.validate_market_category(market_category)` for every `BaseStatefulClient`. Without this, live orders with `market_category=Forex` fail before the runner runs.
+- **Shared preamble (sync):** `get_normalizer(market_type).check(quantity, symbol)` via `app.services.live_trading.ibkr_trading.order_normalizer` (re-exports `live_trading/order_normalizer`), then `_get_tif_for_signal(signal_type, market_type)`.
+- **Shared async body:** `_ensure_connected_async` → `_create_contract` → `_qualify_contract_async` → `_validate_qualified_contract` → `_align_qty_to_contract` → build order → `self._ib.placeOrder` → `_order_contexts[oid] = IBKROrderContext(...)`.
 
-### 2. `IBKRClient._create_contract` (and call sites)
+**Difference:** `place_market_order` uses `ib_insync.MarketOrder(...)`; `place_limit_order` uses `ib_insync.LimitOrder(..., lmtPrice=price, ...)`.
 
-- **Today:** always `Stock(...)`.  
-- **Change:** if `market_type == "Forex"` (the parameter name is historical — see runner note below), build `Forex` from `normalize_symbol` output.  
-- **Call sites using `_create_contract`:** `is_market_open`, `place_market_order`, `place_limit_order`, `get_quote` — all benefit from one branch.
+**API:** `backend_api_python/app/routes/ibkr.py` (`place_order`) already routes `orderType == 'limit'` to `client.place_limit_order(...)`.
 
-### 3. `normalize_symbol` / optional `parse_symbol` (`ibkr_trading/symbols.py`)
+**Gap for automated live trading:** `StatefulClientRunner.execute` only invokes `place_market_order` (see `stateful_runner.py` ~lines 76–90). Any **strategy-driven** limit flow must extend the runner (or add a dedicated runner) and plumb **limit price + order type** through `OrderContext` and `PendingOrderWorker._execute_live_order`’s `ctx` construction.
 
-- **Today:** US + HK only; unknown `market_type` falls through to US stock tuple.  
-- **Change:** explicit `Forex` branch so mis-tagged symbols do not silently become `Stock` on SMART.  
-- **`parse_symbol`:** extend if auto-detection of FX pairs is required for APIs or tooling (optional for milestone if all paths pass `market_category=Forex`).
+### (2) Where qualify caching hooks into `_qualify_contract_async`
 
-### 4. `ForexNormalizer` + `_align_qty_to_contract`
+**Primary hook:** `IBKRClient._qualify_contract_async` in `client.py` (~851–856), the single async entry that calls `self._ib.qualifyContractsAsync(contract)`.
 
-- **ForexNormalizer:** already registered in `get_normalizer("Forex")` — **no change** for basic integration.  
-- **`_align_qty_to_contract`:** already uses `sizeIncrement` / `minSize` — **no change**; ensures floor from normalizer + IB increment stay consistent.
+**Related caches (not qualify today):**
 
-### 5. `_get_tif_for_signal`
+- `_lot_size_cache` on `conId` — used in `_align_qty_to_contract` after qualification populates `conId`.
+- `is_market_open` uses `_rth_details_cache` keyed by `(conId, date_str)` for **RTH** contract details, not for qualify itself.
 
-- **Today:** IOC on close for US; HShare close forced to DAY.  
-- **Forex:** add an explicit branch (e.g. same as US, or DAY for both if IOC unsupported on IDEALPRO for your account — **verify with TWS/paper** during implementation).
+**Recommendation:** Implement a **contract-qualify cache** (e.g. keyed by stable hash of `(secType, symbol, currency, exchange, localSymbol)` or normalized `(market_type, display_symbol)` → qualified contract snapshot / `conId`) **inside or immediately wrapping** `_qualify_contract_async`, so all callers (`place_market_order`, `place_limit_order`, `get_quote`, `is_market_open`) benefit without duplicating logic.
 
-### 6. `StatefulClientRunner`
+**Confidence:** HIGH for hook point; MEDIUM for optimal cache key and invalidation policy (TTL vs session).
 
-- **pre_check:** `is_market_open(symbol, market_type)` where `market_type` is resolved as:
+### (3) How `_create_contract` must change for precious metals
 
-```32:38:backend_api_python/app/services/live_trading/runners/stateful_runner.py
-        market_type = str(
-            ctx.market_category or
-            ctx.payload.get("market_type") or
-            ctx.payload.get("market_category") or
-            ctx.exchange_config.get("market_type") or
-            ctx.exchange_config.get("market_category") or
-            ""
-        ).strip()
-```
+**Current behavior** (`client.py` ~841–849):
 
-- **Important:** **`market_category` is first** — for Forex strategies, DB/config should set `market_category=Forex`. The worker’s generic `OrderContext.market_type` (often `swap` for crypto) does **not** override this for execution.
-- **execute:** same resolution → passed to `place_market_order(..., market_type=…)` which is really “execution market category” for IBKR.
+- `normalize_symbol(symbol, market_type)` in `symbols.py` returns `(ib_symbol, exchange, currency)`.
+- For `market_type == "Forex"`, `_create_contract` returns `ib_insync.Forex(pair=ib_symbol)` (IDEALPRO CASH).
 
-### 7. `PendingOrderWorker._execute_live_order`
+**Precious metals in repo today:** `KNOWN_FOREX_PAIRS` in `symbols.py` includes `XAUUSD`, `XAGUSD`, `XAUEUR` — treated as **six-letter Forex pairs** like fiat pairs.
 
-- Loads `market_category` from strategy config (`load_strategy_configs`).  
-- Blocks only `AShare` / `Futures` for live; **Forex is not in that list**.  
-- Crypto exchanges have an `allowed` map; **IBKR is not in `_EXCHANGE_MARKET_RULES`**, so no new rule row is required for Forex.  
-- Flow: `create_client` → `validate_market_category` → `StatefulClientRunner.pre_check` → `execute`.
+**Implication:** If v1.1 “precious metal contracts” means **continuing IDEALPRO spot CASH pairs**, `_create_contract` may need **no new branch**; work may concentrate on validation (`_validate_qualified_contract`), docs, and tests.
 
-## Data Flow: Forex Orders vs Stock Orders
+**If** product requires **non-CASH** instruments (e.g. futures, CFDs, or a different exchange):
 
-**Direction:** `pending_orders` row → worker builds `OrderContext` → `IBKRClient` (same singleton as stocks) → IB Gateway.
+- Extend `normalize_symbol` with a distinct `market_type` (or detection rules).
+- Add a branch in `_create_contract` (e.g. `ib_insync.Future(...)`, `Contract(secType=...)`) per IBKR contract definitions.
+- Extend `_EXPECTED_SEC_TYPES` and any Forex-specific assumptions (`_get_tif_for_signal` currently treats all `"Forex"` as IOC).
 
-| Step | Stock | Forex |
-|------|-------|-------|
-| 1 | `market_category` = USStock / HShare | `market_category` = Forex |
-| 2 | `validate_market_category` passes | Same once `Forex` ∈ `supported_market_categories` |
-| 3 | RTH: `Stock` + `liquidHours` | `Forex` + `liquidHours` (24/5 sessions from IB) |
-| 4 | `get_normalizer` → US/HK normalizer | `get_normalizer("Forex")` → `ForexNormalizer` |
-| 5 | `_create_contract` → Stock | `_create_contract` → Forex |
-| 6 | `MarketOrder` + TIF | Same API; TIF policy may differ |
-| 7 | Async fills → `_handle_fill` / `IBKROrderContext` | Same (symbol string should match position reporting — confirm `get_positions` / DB keys if mixed portfolios) |
+**Confidence:** HIGH for current code path; **verify on paper** for each metal symbol’s actual IB `secType`/exchange.
 
-## Files Likely to Touch (Modification Points)
+### (4) Where `normalize()` should be called in the order flow
 
-| File | Change |
-|------|--------|
-| `backend_api_python/app/services/live_trading/ibkr_trading/client.py` | `supported_market_categories`; `_create_contract`; `_get_tif_for_signal` (Forex branch); optionally docstrings |
-| `backend_api_python/app/services/live_trading/ibkr_trading/symbols.py` | `normalize_symbol` (+ optional `parse_symbol`, `format_display_symbol`) for Forex |
-| `backend_api_python/tests/test_exchange_engine.py` | Expected `supported_market_categories` includes Forex |
-| `backend_api_python/tests/test_ibkr_client.py` | Contract creation / place order / RTH mocks for Forex |
-| `backend_api_python/app/services/live_trading/factory.py` | Docstring only (“US/HK stocks + Forex”) — **no factory logic change** unless new exchange id (not required) |
+**Current behavior:** `place_market_order` and `place_limit_order` call only `get_normalizer(market_type).check(quantity, symbol)`. They do **not** call `OrderNormalizer.normalize()`.
 
-**Explicitly no change for milestone:**  
-- `order_normalizer/__init__.py` — `Forex` already wired.  
-- `StatefulClientRunner`, `PendingOrderWorker` — behavior already correct once client accepts `Forex`.  
-- `ibkr_trading/order_normalizer/__init__.py` — re-exports only.
+**Forex:** `ForexNormalizer.normalize` in `order_normalizer/forex.py` is identity (`return raw_qty`) — used to satisfy the abstract API; `_align_qty_to_contract` performs IB-driven rounding.
 
-## Suggested Build Order (Dependencies)
+**Recommended pipeline (if v1.1 explicitly wires `normalize`):**
 
-1. **`symbols.py` (Forex branch)** — Pure functions, unit-testable without TWS.  
-2. **`_create_contract` + `supported_market_categories`** — Wrong contract is the highest-risk bug.  
-3. **`_get_tif_for_signal`** — Quick follow-up after first paper order attempt.  
-4. **Integration tests** — Mock `ib_insync` / contract details as in existing `test_ibkr_client.py`.  
-5. **E2E paper** — Single pair (e.g. EURUSD), open + close, verify fills and position records.  
-6. **Optional:** `parse_symbol`, API routes (`routes/ibkr.py`), portfolio display if Forex symbols need special formatting.
+1. `check(raw_qty, symbol)` — reject invalid inputs early.
+2. `normalized_qty = normalize(raw_qty, symbol)` — identity for Forex today; future-proof for other categories.
+3. `_create_contract` / qualify / validate.
+4. `await _align_qty_to_contract(contract, normalized_qty, symbol)` — final increment alignment.
+
+**Single file change surface:** the sync section at the start of `place_market_order` / `place_limit_order`, or the first line inside `_do()` before align — **after** `check` and **before** `_align_qty_to_contract`. Avoid calling `normalize` only after qualify if the intent is consistent qty semantics through the whole IB path.
+
+**Note:** Phase 8 planning docs in-repo stated “normalize() not called on purpose”; v1.1 “normalize timing fix” supersedes that product decision — document the new invariant in code comments when implemented.
+
+### (5) How E2E tests hook into Flask `test_client` and the frontend
+
+**Backend E2E (this repository):**
+
+- **`backend_api_python/tests/test_forex_ibkr_e2e.py`:** Documents chain: minimal Flask app → `register_blueprint(strategy_bp)` → `app.test_client()`; mocks JWT/psycopg2; patches `get_db_connection`; uses **real** `PendingOrderWorker`, `StatefulClientRunner`, `IBKRClient` with mocked `ib_insync`. This is the pattern to extend for limit-order or caching scenarios.
+- **`backend_api_python/tests/test_ibkr_dashboard.py`:** Registers `ibkr_bp` at `/api/ibkr`, uses `test_client` for dashboard API tests.
+
+**Frontend:** There is **no** Flask `test_client` bridge to Vue in this repo’s tests. The wizard (`quantdinger_vue/src/views/trading-assistant/index.vue`) talks to the backend over HTTP; improving E2E there implies **browser automation** (e.g. Playwright in `webapp-testing` skill) or separate Vue test stack — **out of scope** for pure Flask `test_client` tests.
+
+## Patterns to Follow
+
+### Pattern: One IBKR order pipeline
+
+Keep `place_market_order` and `place_limit_order` structurally identical except order type and limit price — any caching, TIF, or normalize behavior should apply to **both** unless product explicitly diverges.
+
+### Pattern: Runner as single execution policy
+
+`factory.get_runner(client)` returns `StatefulClientRunner` for IBKR (`factory.py`). Execution policy (market vs limit) should stay centralized here once limit orders are supported for live pending orders.
 
 ## Anti-Patterns to Avoid
 
-- **Reusing `Stock` with a pseudo-symbol for FX** — breaks qualification, RTH, and increments.  
-- **Adding a second IBKR client for Forex** — duplicates connection/state; extend the existing `IBKRClient`.  
-- **Depending on worker `market_type` alone** — runner prioritizes `market_category`; strategy config must be consistent.  
-- **Skipping `validate_market_category`** — would require bypassing `BaseStatefulClient` contract; keep the gate.
+- **Duplicating qualify** outside `_qualify_contract_async` for caching — risks inconsistent cache keys and missed callers (`get_quote`, `is_market_open`).
+- **Calling `place_limit_order` only from REST** while the worker still only knows market orders — splits behavior between manual API and automated trading unintentionally.
+
+## Suggested Build Order (dependencies)
+
+1. **Qualify caching** — isolated to `IBKRClient`, low coupling; unblocks latency for all paths.
+2. **TIF unification (`_get_tif_for_signal`)** — single method; affects both order types equally.
+3. **`normalize()` timing** — small, testable change in `place_market_order` / `place_limit_order` + unit tests in `test_order_normalizer.py`.
+4. **Precious metals contract rules** — depends on product decision (CASH vs futures); may be docs/tests only if already covered by Forex branch.
+5. **Limit orders in live pipeline** — requires `OrderContext` + payload fields + `StatefulClientRunner` + worker; depends on (1)(2) for stable behavior.
+6. **E2E** — extend `test_forex_ibkr_e2e.py` after runner supports limit or after new API surface is stable.
 
 ## Scalability Considerations
 
 | Concern | Notes |
-|---------|--------|
-| Mixed portfolio | Same client handles multiple `secType`s; ensure position/trade records use stable symbol keys for FX. |
-| Cache keys | `_lot_size_cache` / `_rth_details_cache` keyed by `conId` — Forex contracts get distinct `conId`s; no collision with stocks. |
-| Rate / load | Forex 24/5 may increase RTH check frequency; same as stocks per order. |
+|--------|--------|
+| Qualify cache growth | Bound entries (LRU/TTL) if symbol universe grows. |
+| Thread safety | `IBKRClient` uses `TaskQueue` / ib loop; cache dicts should follow same threading model as existing `_lot_size_cache`. |
 
 ## Sources
 
-- Code: `backend_api_python/app/services/live_trading/ibkr_trading/client.py`, `symbols.py`, `runners/stateful_runner.py`, `pending_order_worker.py`, `order_normalizer/__init__.py`, `base.py`  
-- Project: `.planning/PROJECT.md` (IDEALPRO, `Forex` constructor notes)  
-- **Confidence:** **HIGH** for control flow and file touch points (directly read from repo). **MEDIUM** for IBKR TIF behavior on IDEALPRO — validate in paper trading.
-
----
-
-*Architecture research for IBKR Forex milestone — 2026-04-09*
+- Code: `backend_api_python/app/services/live_trading/ibkr_trading/client.py`
+- Code: `backend_api_python/app/services/live_trading/ibkr_trading/symbols.py`
+- Code: `backend_api_python/app/services/live_trading/runners/stateful_runner.py`
+- Code: `backend_api_python/app/services/pending_order_worker.py`
+- Code: `backend_api_python/app/routes/ibkr.py`
+- Code: `backend_api_python/tests/test_forex_ibkr_e2e.py`
+- Planning (historical): `.planning/milestones/v1.0-phases/08-quantity-normalization-ib-alignment/08-CONTEXT.md` (prior decision on `normalize()` not in main chain)
