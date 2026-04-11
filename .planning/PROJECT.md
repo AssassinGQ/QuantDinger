@@ -22,7 +22,8 @@ QuantDinger 的 IBKR 交易客户端已扩展支持 Forex（外汇）交易。IB
 
 ## Current State
 
-**Shipped v1.0** (2026-04-11) — 12 phases, 15 plans, 928 backend tests passing.
+**Shipped v1.0** (2026-04-11) — 12 phases, 15 plans.
+**Phase 13 complete** (2026-04-11) — Qualify 缓存 + E2E prefix 修复, 931 backend tests passing.
 
 Tech stack: Python 3.10+ backend (Flask + ib_insync), Vue.js 2.x frontend, PostgreSQL, Docker.
 Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wizard.
@@ -48,15 +49,15 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 - ✓ Forex fills/position/PnL 事件回调（localSymbol key + metadata） — v1.0 Phase 10
 - ✓ 策略自动化（market_category=Forex + ibkr-paper/ibkr-live） — v1.0 Phase 11
 - ✓ 前端 Forex 下拉框（MT5/IBKR Paper/IBKR Live） — v1.0 Phase 12
+- ✓ Qualify 结果缓存（TTL per market, (symbol, market_type) key, 重连不清缓存） — v1.1 Phase 13
+- ✓ E2E 测试 API prefix 统一（/api/strategy/ → /api/） — v1.1 Phase 13
 
 ### Active
 
-- Qualify 结果缓存（减少 qualifyContractsAsync 重复调用）
 - USStock/HShare open 信号 → IOC（与 Forex TIF 策略对齐）
 - Forex 限价单（LimitOrder + 价格精度 + 部分成交处理）
 - 贵金属合约归类（XAUUSD/XAGUSD → CMDTY vs CASH 判定）
 - normalize() 调用时序修正（确保 normalize 和 align 顺序正确）
-- E2E 测试 API prefix 统一（/api/strategy/ → /api/）
 - 前端 HTTP E2E 测试（Vue wizard → API round-trip）
 
 ### Out of Scope
@@ -79,12 +80,13 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 | RTH 复用 IBKR 合约时间 | Forex 24/5 由 IBKR liquidHours 正确反映 | ✓ Good (Phase 9) |
 | Forex broker 平铺列表 | MT5/IBKR Paper/IBKR Live 无默认值 | ✓ Good (Phase 12) |
 | isForexMarket 替代 isMT5Market | 更清晰的语义 + isForexMT5/isForexIBKR 子检查 | ✓ Good (Phase 12) |
+| Qualify TTL 缓存 (symbol, market_type) | 减少冗余 qualifyContractsAsync，重连不清缓存 | ✓ Good (Phase 13) |
 
 ## Known Tech Debt (from v1.0 Audit)
 
 | Item | Priority | Source |
 |------|----------|--------|
-| Qualify 结果缓存 | Low | Phase 3 |
+| ~~Qualify 结果缓存~~ | ~~Low~~ | ✓ Phase 13 |
 | USStock/HShare open → IOC | Medium | Phase 6 |
 | TIF fallback (IOC→DAY 重试) | Low | Phase 6 |
 | cashQty 下单 (ADV-02) | Low | Phase 7 |
@@ -94,8 +96,8 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 ## Constraints
 
 - **Tech stack**: ib_insync，与现有 IBKR 集成一致
-- **兼容性**: USStock/HShare 交易路径不受影响（928 tests regression-free）
+- **兼容性**: USStock/HShare 交易路径不受影响（931 tests regression-free）
 - **架构**: BaseStatefulClient / StatefulClientRunner 模式
 
 ---
-*Last updated: 2026-04-11 — v1.1 milestone started*
+*Last updated: 2026-04-11 — Phase 13 complete*
