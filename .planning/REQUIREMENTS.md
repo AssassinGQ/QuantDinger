@@ -1,42 +1,25 @@
-# Requirements: QuantDinger - IBKR Data Source
+# Requirements
 
-**Defined:** 2026-04-09
-**Core Value:** 实盘交易策略使用与实际下单同一数据源，确保数据一致性
+## v1.1 IBKR策略数据源集成 + E2E测试
 
-## v2.0 Requirements
+### Runner broker_id 透传
 
-### Internal IBKRClient
+- [ ] **INT-06**: single_symbol_runner.run_tick() 从 strategy['trade_config'] 取 broker_id，传给 price_fetcher.fetch_current_price(exchange_id=broker_id)
+- [ ] **INT-07**: regime_runner.run_tick() 同上
+- [ ] **INT-08**: single_regime_weighted_runner.run_tick() 同上
 
-- [x] **INT-01**: 复用内部 IBKRClient (live_trading/ibkr_trading/client.py)
-- [x] **INT-02**: 在内部 IBKRClient 添加 get_historical_bars() 方法
-- [x] **INT-03**: 在内部 IBKRClient 添加 get_ticker_price() 方法
-- [ ] **INT-04**: 修改 IBKRDataSource 使用内部 IBKRClient
-- [ ] **INT-05**: 移除对外部 ibkr_datafetcher 库的依赖
+### E2E 测试
+
+- [ ] **INT-09**: E2E 测试 — 策略 tick 链路验证（Python 直接调用，不过 API）：strategy config → runner.run_tick() → price_fetcher.fetch_current_price(exchange_id='ibkr-paper') → DataSourceFactory.get_ticker() → IBKRDataSource → ib_insync [MOCKED]
+
+---
 
 ## Out of Scope
 
-| Feature | Reason |
-|---------|--------|
-| 港股数据获取 | v1.0 已排除 |
-| 外汇数据获取 | v1.0 已排除 |
-| 回测数据源 | 保持 yfinance |
-| 数据存储/缓存优化 | 后续优化 |
-
-## Traceability
-
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| INT-01 | Phase 2 | Complete |
-| INT-02 | Phase 2 | Complete |
-| INT-03 | Phase 2 | Complete |
-| INT-04 | Phase 2 | Pending |
-| INT-05 | Phase 2 | Pending |
-
-**Coverage:**
-- v2.0 requirements: 5 total
-- Mapped to phases: 0
-- Unmapped: 5 ⚠️
+- `/api/market/kline` 和 `/api/market/price` 的 exchange_id 参数
+- DataSourceFactory.get_kline() 修改（get_ticker 已支持 exchange_id）
+- `/api/indicator/kline` 修改
 
 ---
-*Requirements defined: 2026-04-09 for v2.0*
-*Last updated: 2026-04-09 after v2.0 milestone start*
+
+*Requirements defined: 2026-04-11 for v1.1*
