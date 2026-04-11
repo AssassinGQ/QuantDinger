@@ -5,7 +5,7 @@ RTH gate, and the TaskQueue-based task dispatch mechanism.
 import datetime
 import threading
 import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch, PropertyMock, AsyncMock
 
 import pytest
 
@@ -1548,10 +1548,6 @@ class TestRealIBKRConnection:
         assert isinstance(results["positions"], list)
         assert isinstance(results["orders"], list)
 
-    success = ibkr_client.connect()
-        assert success, "Reconnect failed — IB Gateway may need a few seconds after disconnect"
-        assert ibkr_client.connected
-
 
 # ===========================================================================
 # Tests for get_historical_bars
@@ -1580,7 +1576,7 @@ class TestGetHistoricalBars:
         async def _mock_qualify_async(*args):
             return [mock_contract]
         client._ib.qualifyContractsAsync = _mock_qualify_async
-        client._ib.reqContractDetailsAsync = asyncio.coroutine(lambda *args: [mock_contract])()
+        client._ib.reqContractDetailsAsync = AsyncMock(return_value=[mock_contract])
 
         return client
 

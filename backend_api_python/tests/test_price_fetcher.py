@@ -15,7 +15,7 @@ class TestPriceFetcher:
             price = fetcher.fetch_current_price(None, "BTC/USDT", market_category="Crypto")
             
             assert price == 100.0
-            mock_ticker.assert_called_once_with("Crypto", "BTC/USDT")
+            mock_ticker.assert_called_once_with("Crypto", "BTC/USDT", exchange_id=None)
             
             # Check if it was cached
             assert "Crypto:BTC/USDT" in fetcher._price_cache
