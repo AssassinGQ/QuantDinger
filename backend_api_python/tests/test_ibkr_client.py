@@ -769,29 +769,65 @@ class TestFireAndForgetOrder:
 
 
 # ===========================================================================
-# TIF policy: USStock non-close uses DAY; Forex uses IOC (TestTifForexPolicy)
+# TIF policy (Phase 14): Forex, USStock, HShare use IOC for all signals; matrix in TestTifMatrix
 # ===========================================================================
 
+_TIF_MATRIX_SIGNALS = (
+    "open_long",
+    "add_long",
+    "close_long",
+    "reduce_long",
+    "open_short",
+    "add_short",
+    "close_short",
+    "reduce_short",
+)
+_TIF_MATRIX_MARKETS = ("Forex", "USStock", "HShare")
+
+
+class TestTifMatrix:
+    """8×3 matrix: every signal × (Forex, USStock, HShare) → IOC; unknown market → DAY."""
+
+    @pytest.mark.parametrize(
+        "signal_type, market_type",
+        [
+            (sig, mkt)
+            for mkt in _TIF_MATRIX_MARKETS
+            for sig in _TIF_MATRIX_SIGNALS
+        ],
+        ids=[
+            f"{mkt.lower()}_{sig}"
+            for mkt in _TIF_MATRIX_MARKETS
+            for sig in _TIF_MATRIX_SIGNALS
+        ],
+    )
+    def test_tif_matrix(self, signal_type, market_type):
+        assert IBKRClient._get_tif_for_signal(signal_type, market_type) == "IOC"
+
+    def test_unknown_market_returns_day(self):
+        assert IBKRClient._get_tif_for_signal("open_long", "CryptoFuture") == "DAY"
+
+
 class TestTifDay:
-    """USStock: non-close paths use tif='DAY' on market/limit orders (Error 10349)."""
+    """USStock default paths: market/limit orders use tif='IOC' (unified with Forex/HShare)."""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_sets_tif_day(self):
+    def test_market_order_sets_tif_ioc(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=400)
         client._ib.placeOrder.return_value = trade_mock
         client.place_market_order("AAPL", "buy", 10, "USStock")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "DAY"
+        assert placed_order.tif == "IOC"
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_limit_order_sets_tif_day(self):
+    def test_limit_order_sets_tif_ioc(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=401)
         client._ib.placeOrder.return_value = trade_mock
         client.place_limit_order("GOOGL", "buy", 5, 180.0, "USStock")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "DAY"
+        assert placed_order.tif == "IOC"
 
 
 class TestTifForexPolicy:
@@ -814,14 +850,14 @@ class TestTifForexPolicy:
     def test_forex_signal_returns_ioc(self, signal_type):
         assert IBKRClient._get_tif_for_signal(signal_type, "Forex") == "IOC"
 
-    def test_uc_e1_usstock_open_uses_day(self):
-        assert IBKRClient._get_tif_for_signal("open_long", "USStock") == "DAY"
+    def test_uc_e1_usstock_open_uses_ioc(self):
+        assert IBKRClient._get_tif_for_signal("open_long", "USStock") == "IOC"
 
     def test_uc_e2_usstock_close_uses_ioc(self):
         assert IBKRClient._get_tif_for_signal("close_long", "USStock") == "IOC"
 
-    def test_uc_e3_hshare_close_uses_day(self):
-        assert IBKRClient._get_tif_for_signal("close_long", "HShare") == "DAY"
+    def test_uc_e3_hshare_close_uses_ioc(self):
+        assert IBKRClient._get_tif_for_signal("close_long", "HShare") == "IOC"
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_forex_market_order_passes_tif_ioc(self):
@@ -951,24 +987,24 @@ class TestPlaceMarketOrderForex:
         assert client._ib.placeOrder.call_count == 0
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_uc_r1_usstock_open_long_uses_day_tif(self):
-        """UC-R1: USStock open_long market order uses tif DAY."""
+    def test_uc_r1_usstock_open_long_uses_ioc_tif(self):
+        """UC-R1: USStock open_long market order uses tif IOC."""
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=605)
         client._ib.placeOrder.return_value = trade_mock
         client.place_market_order("AAPL", "buy", 100.0, "USStock", signal_type="open_long")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "DAY"
+        assert placed_order.tif == "IOC"
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_uc_r2_hshare_open_long_uses_day_tif(self):
-        """UC-R2: HShare open_long market order uses tif DAY."""
+    def test_uc_r2_hshare_open_long_uses_ioc_tif(self):
+        """UC-R2: HShare open_long market order uses tif IOC."""
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=606)
         client._ib.placeOrder.return_value = trade_mock
         client.place_market_order("00005", "buy", 400.0, "HShare", signal_type="open_long")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "DAY"
+        assert placed_order.tif == "IOC"
 
 
 # ===========================================================================

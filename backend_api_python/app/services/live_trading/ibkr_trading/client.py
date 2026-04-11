@@ -165,21 +165,18 @@ class IBKRClient(BaseStatefulClient):
     def _get_tif_for_signal(signal_type: str, market_type: str = "USStock") -> str:
         """Get TIF (Time in Force) based on signal type and market type.
 
-        For ``market_type == "Forex"``, all signals return ``"IOC"`` (no open/close
-        distinction; aligns with IDEALPRO automation expectations).
+        For ``market_type`` in ``("Forex", "USStock", "HShare")``, all eight
+        signal types use ``"IOC"`` (unified policy; ``signal_type`` is ignored
+        for these categories). IBKR lists IOC for the relevant venues including
+        Hong Kong Stock Exchange (SEHK); see
+        https://www.interactivebrokers.com/en/trading/order-type-exchanges.php?ot=ioc
 
-        For non-Forex markets: non-close signals use ``"DAY"``; for close signals,
-        ``"HShare"`` uses ``"DAY"`` (Hong Kong stocks do not support IOC orders);
-        otherwise close uses ``"IOC"`` for pre/post-market execution.
+        For any other ``market_type`` not explicitly handled here, returns
+        ``"DAY"`` as a conservative default until support is added.
         """
-        if market_type == "Forex":
+        if market_type in ("Forex", "USStock", "HShare"):
             return "IOC"
-        is_close = signal_type in ("close_long", "close_short")
-        if not is_close:
-            return "DAY"
-        if market_type == "HShare":
-            return "DAY"
-        return "IOC"
+        return "DAY"
 
     def __init__(self, config: Optional[IBKRConfig] = None, mode: str = "paper"):
         self.config = config or IBKRConfig()
