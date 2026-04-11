@@ -64,7 +64,6 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   2. `_get_tif_for_signal` docstring cites IBKR IOC exchange list (including SEHK); no unsourced claim that Hong Kong stocks cannot use IOC.
   3. Full backend pytest suite remains green (regression gate).
 **Plans:** 1 plan
-Plans:
 - [ ] `14-01-PLAN.md` — IOC for Forex/USStock/HShare + `TestTifMatrix` + ROADMAP alignment (INFRA-02)
 
 ### Phase 15: Normalize pipeline ordering
