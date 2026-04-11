@@ -70,7 +70,7 @@ Each task was committed atomically:
 3. **Task 3: get_positions DB-backed metadata** — `55ce2dd` (feat)
 4. **Task 4: Integration tests FP3/FP7** — `0db5ce4` (test)
 
-**Plan metadata:** `14d8cfa` (docs: complete plan)
+**Plan metadata:** `f4ef841` (docs: complete plan)
 
 ## Files Created/Modified
 
@@ -106,4 +106,4 @@ None - no external service configuration required.
 ## Self-Check: PASSED
 
 - `10-01-SUMMARY.md` present at `.planning/phases/10-fills-position-pnl-events/10-01-SUMMARY.md`
-- Commits `244a6b6`, `ea715ec`, `55ce2dd`, `0db5ce4`, `14d8cfa` on branch
+- Commits `244a6b6`, `ea715ec`, `55ce2dd`, `0db5ce4`, `f4ef841` on branch
