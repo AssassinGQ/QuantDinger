@@ -1758,6 +1758,100 @@ class TestForexFillsPositionPnLCallbacks:
         assert kwargs["currency"] == "USD"
 
 
+class TestForexPositionPnLEvents:
+    """UC-FP3, UC-FP7 — pnlSingle uses _conid_to_symbol; Forex round-trip to get_positions."""
+
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_uc_fp3_pnl_single_uses_conid_map_symbol(self, mock_save_position):
+        """UC-FP3: After map is filled with EUR.USD, _on_pnl_single passes that symbol to save."""
+        mock_save_position.return_value = True
+        client = _make_client_with_mock_ib()
+        client._conid_to_symbol[4242] = "EUR.USD"
+
+        pnl_single = MagicMock()
+        pnl_single.account = "DU123456"
+        pnl_single.conId = 4242
+        pnl_single.dailyPnL = 1.0
+        pnl_single.unrealizedPnL = 2.0
+        pnl_single.realizedPnL = 3.0
+        pnl_single.position = 10000.0
+        pnl_single.value = 10500.0
+
+        client._on_pnl_single(pnl_single)
+
+        mock_save_position.assert_called_once()
+        kwargs = mock_save_position.call_args[1]
+        assert kwargs["symbol"] == "EUR.USD"
+
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    @patch("app.services.live_trading.records.ibkr_save_position")
+    def test_uc_fp7_forex_round_trip_position_pnl_get_positions(
+        self, mock_save_position, mock_get_positions
+    ):
+        """UC-FP7: Forex mocks — _on_position → _on_pnl_single → get_positions (CASH / IDEALPRO / USD)."""
+        mock_save_position.return_value = True
+        mock_get_positions.return_value = [
+            {
+                "account": "DU123456",
+                "con_id": 4242,
+                "symbol": "EUR.USD",
+                "sec_type": "CASH",
+                "exchange": "IDEALPRO",
+                "currency": "USD",
+                "position": 10000.0,
+                "avg_cost": 1.05,
+                "unrealized_pnl": 1.0,
+                "daily_pnl": 0.5,
+                "realized_pnl": 0.0,
+                "value": 10500.0,
+                "updated_at": None,
+            },
+        ]
+
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        position = MagicMock()
+        position.account = "DU123456"
+        position.contract.conId = 4242
+        position.contract.symbol = "EUR"
+        position.contract.localSymbol = "EUR.USD"
+        position.contract.secType = "CASH"
+        position.contract.exchange = "IDEALPRO"
+        position.contract.currency = "USD"
+        position.position = 10000.0
+        position.avgCost = 1.05
+
+        client._on_position(position)
+        assert client._conid_to_symbol[4242] == "EUR.USD"
+        pos_kw = mock_save_position.call_args_list[0][1]
+        assert pos_kw["symbol"] == "EUR.USD"
+        assert pos_kw["sec_type"] == "CASH"
+
+        pnl_single = MagicMock()
+        pnl_single.account = "DU123456"
+        pnl_single.conId = 4242
+        pnl_single.dailyPnL = 0.5
+        pnl_single.unrealizedPnL = 1.0
+        pnl_single.realizedPnL = 0.0
+        pnl_single.position = 10000.0
+        pnl_single.value = 10500.0
+
+        client._on_pnl_single(pnl_single)
+        pnl_kw = mock_save_position.call_args_list[-1][1]
+        assert pnl_kw["symbol"] == "EUR.USD"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        out = client.get_positions()
+        assert out[0]["symbol"] == "EUR.USD"
+        assert out[0]["secType"] == "CASH"
+        assert out[0]["exchange"] == "IDEALPRO"
+        assert out[0]["currency"] == "USD"
+
+
 # ===========================================================================
 # get_pnl database read tests
 # ===========================================================================
