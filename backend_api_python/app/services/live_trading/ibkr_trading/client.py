@@ -1045,7 +1045,13 @@ class IBKRClient(BaseStatefulClient):
 
             sym = getattr(contract, "symbol", symbol)
             if not is_rth_check(details, server_time, con_id=con_id, symbol=sym):
-                return False, f"{sym} is outside RTH (market closed)"
+                reason = f"{sym} is outside RTH (market closed)"
+                if market_type == "Forex":
+                    reason += (
+                        " — Forex 24/5: closed outside liquid hours (weekend or "
+                        "daily maintenance window)."
+                    )
+                return False, reason
             return True, ""
 
         try:
