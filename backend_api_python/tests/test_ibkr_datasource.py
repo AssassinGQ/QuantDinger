@@ -159,7 +159,10 @@ class TestGetKline:
         mock_client.get_historical_bars.return_value = []
         ds._client = mock_client
 
-        result = ds.get_kline(symbol="AAPL", timeframe="1m", limit=100)
+        # Mock kline_fetcher to return insufficient items (cache miss)
+        with patch('app.data_sources.ibkr.kline_fetcher') as mock_fetcher:
+            mock_fetcher.get_kline.return_value = []
+            result = ds.get_kline(symbol="AAPL", timeframe="1m", limit=100)
 
         assert isinstance(result, list)
         assert len(result) == 0
@@ -171,7 +174,6 @@ class TestGetKlineCache:
     def test_get_kline_uses_kline_fetcher_cache(self):
         """get_kline should check kline_fetcher cache before network call."""
         from unittest.mock import MagicMock, patch
-        from ibkr_datafetcher.types import KlineBar, resolve_timeframe
         from datetime import datetime, timezone
 
         ds = IBKRDataSource()
