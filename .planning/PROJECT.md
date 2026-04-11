@@ -8,6 +8,18 @@ QuantDinger 的 IBKR 交易客户端已扩展支持 Forex（外汇）交易。IB
 
 策略系统发出的 Forex 交易信号能正确通过 IBKRClient 在 IDEALPRO 上执行，从信号到成交的完整链路畅通。
 
+## Current Milestone: v1.1 Tech Debt Cleanup + Limit Orders
+
+**Goal:** 清理 v1.0 遗留的技术债务，增加 Forex 限价单能力，补全 E2E 测试覆盖。
+
+**Target features:**
+- Qualify 结果缓存（减少重复 IBKR API 调用）
+- USStock/HShare open 信号统一 IOC（与 Forex 对齐）
+- Forex 限价单（LimitOrder）
+- 贵金属合约归类（XAUUSD/XAGUSD → 正确 secType）
+- normalize() 调用时序修正
+- E2E 测试 prefix 修复 + 前端 HTTP E2E
+
 ## Current State
 
 **Shipped v1.0** (2026-04-11) — 12 phases, 15 plans, 928 backend tests passing.
@@ -39,11 +51,18 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 
 ### Active
 
-(None — next milestone requirements TBD)
+- Qualify 结果缓存（减少 qualifyContractsAsync 重复调用）
+- USStock/HShare open 信号 → IOC（与 Forex TIF 策略对齐）
+- Forex 限价单（LimitOrder + 价格精度 + 部分成交处理）
+- 贵金属合约归类（XAUUSD/XAGUSD → CMDTY vs CASH 判定）
+- normalize() 调用时序修正（确保 normalize 和 align 顺序正确）
+- E2E 测试 API prefix 统一（/api/strategy/ → /api/）
+- 前端 HTTP E2E 测试（Vue wizard → API round-trip）
 
 ### Out of Scope
 
-- 限价单 — v1 仅市价单
+- TIF fallback (IOC→DAY 自动重试) — 留给后续
+- cashQty 下单方式 — 留给后续
 - Forex 专用策略类型 — 复用现有策略框架
 - ForexNormalizer 最小下单量检查 — IBKR 拒单兜底
 - MT5 Forex 改动 — MT5 独立实现
@@ -79,4 +98,4 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 - **架构**: BaseStatefulClient / StatefulClientRunner 模式
 
 ---
-*Last updated: 2026-04-11 after v1.0 milestone*
+*Last updated: 2026-04-11 — v1.1 milestone started*

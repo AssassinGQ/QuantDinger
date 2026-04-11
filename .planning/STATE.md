@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: milestone_complete
-stopped_at: v1.0 milestone shipped
-last_updated: "2026-04-11T13:18:28.365Z"
+milestone: v1.1
+milestone_name: "Tech Debt Cleanup + Limit Orders"
+status: defining_requirements
+stopped_at: Milestone v1.1 started
+last_updated: "2026-04-11T21:30:00.000Z"
 progress:
-  total_phases: 12
-  completed_phases: 12
-  total_plans: 15
-  completed_plans: 15
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
@@ -18,13 +18,16 @@ progress:
 
 See: `.planning/PROJECT.md` (updated 2026-04-11)
 
-**Core value:** 策略系统发出的 Forex 交易信号能正确通过 IBKRClient 在 IDEALPRO 上执行，从信号到成交的完整链路畅通。
+**Core value:** 清理 v1.0 遗留技术债务，增加 Forex 限价单，补全 E2E 测试覆盖。
 
-**Current focus:** Planning next milestone
+**Current focus:** Defining requirements for v1.1
 
 ## Current Position
 
-Milestone v1.0 complete (12 phases, 15 plans). Ready for `/gsd:new-milestone`.
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-11 — Milestone v1.1 started
 
 ## Performance Metrics
 
