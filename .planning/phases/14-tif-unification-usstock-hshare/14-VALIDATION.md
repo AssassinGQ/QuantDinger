@@ -2,8 +2,8 @@
 phase: 14
 slug: tif-unification-usstock-hshare
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-11
 ---
 
@@ -20,7 +20,7 @@ created: 2026-04-11
 | **Framework** | pytest (project standard) |
 | **Config file** | `backend_api_python/tests/conftest.py` (shared fixtures; no root pytest.ini) |
 | **Quick run command** | `cd backend_api_python && python -m pytest tests/test_ibkr_client.py -k "Tif" -q` |
-| **Full suite command** | `cd backend_api_python && python -m pytest -q` |
+| **Full suite command** | `cd backend_api_python && python -m pytest -q --tb=line` |
 | **Estimated runtime** | ~180 seconds (full suite ~931 tests) |
 
 ---
@@ -28,7 +28,7 @@ created: 2026-04-11
 ## Sampling Rate
 
 - **After every task commit:** Run `cd backend_api_python && python -m pytest tests/test_ibkr_client.py -k "Tif" -q`
-- **After every plan wave:** Run `cd backend_api_python && python -m pytest -q`
+- **After every plan wave:** Run `cd backend_api_python && python -m pytest -q --tb=line`
 - **Before `/gsd:verify-work`:** Full suite must be green
 - **Max feedback latency:** 180 seconds
 
@@ -38,9 +38,7 @@ created: 2026-04-11
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 14-01-01 | 01 | 1 | INFRA-02 | unit | `pytest tests/test_ibkr_client.py -k "_get_tif" -q` | ✅ (update) | ⬜ pending |
-| 14-01-02 | 01 | 1 | INFRA-02 | unit | `pytest tests/test_ibkr_client.py::TestTifMatrix -q` | ❌ W0 | ⬜ pending |
-| 14-01-03 | 01 | 1 | INFRA-02 | unit | `pytest tests/test_ibkr_client.py -k "Tif" -q` | ✅ (update) | ⬜ pending |
+| 14-01-T1 | 01 | 1 | INFRA-02 | unit | `pytest tests/test_ibkr_client.py::TestTifMatrix -q && pytest -q --tb=line` | ❌ W0 (TestTifMatrix new) + ✅ (existing tests updated) | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -48,11 +46,11 @@ created: 2026-04-11
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_ibkr_client.py` — add `TestTifMatrix` class with 24-combination parametrize
-- [ ] Update `TestTifDay` assertions (DAY → IOC for USStock open)
-- [ ] Existing pytest framework — no install gap
+- [x] `tests/test_ibkr_client.py` — add `TestTifMatrix` class with 24+1 parametrize (24 IOC + 1 unknown→DAY)
+- [x] Update `TestTifDay`, `TestTifForexPolicy`, `TestPlaceMarketOrderForex` assertions (DAY → IOC)
+- [x] Existing pytest framework — no install gap
 
-*Existing infrastructure covers framework requirements.*
+*All Wave 0 items are covered by Plan 14-01 Task 1.*
 
 ---
 
@@ -66,11 +64,11 @@ created: 2026-04-11
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 180s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify (no pipe exit-code bug; full pytest propagates failure)
+- [x] Sampling continuity: single task with full automated verify
+- [x] Wave 0 covers all MISSING references (TestTifMatrix created in task)
+- [x] No watch-mode flags
+- [x] Feedback latency < 180s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** ready
