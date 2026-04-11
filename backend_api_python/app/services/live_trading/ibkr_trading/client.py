@@ -1337,12 +1337,16 @@ class IBKRClient(BaseStatefulClient):
                 if market_value == 0.0:
                     market_value = position * avg_cost
 
+                st_raw = (row.get("sec_type") or "").strip()
+                ex_raw = (row.get("exchange") or "").strip()
+                cc_raw = (row.get("currency") or "").strip()
+
                 result.append({
                     "symbol": row.get("symbol") or "",
                     "ib_symbol": row.get("symbol") or "",
-                    "secType": "STK",
-                    "exchange": "SMART",
-                    "currency": "USD",
+                    "secType": st_raw or "STK",
+                    "exchange": ex_raw or "SMART",
+                    "currency": cc_raw or "USD",
                     "quantity": position,
                     "avgCost": avg_cost,
                     "marketValue": market_value,

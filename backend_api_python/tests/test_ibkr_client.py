@@ -1957,6 +1957,75 @@ class TestGetPositionsFromDatabase:
         assert len(result) == 1
         assert result[0]["marketValue"] == 15000.0
 
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    def test_uc_fp4_get_positions_forex_metadata_from_db(self, mock_get_positions):
+        """UC-FP4: Forex row exposes CASH / IDEALPRO / USD from DB-backed sec_type/exchange/currency."""
+        mock_get_positions.return_value = [
+            {
+                "account": "DU123456",
+                "con_id": 4242,
+                "symbol": "EUR.USD",
+                "sec_type": "CASH",
+                "exchange": "IDEALPRO",
+                "currency": "USD",
+                "position": 10000.0,
+                "avg_cost": 1.05,
+                "unrealized_pnl": 5.0,
+                "daily_pnl": 0.0,
+                "realized_pnl": 0.0,
+                "value": 10000.0,
+                "updated_at": None,
+            },
+        ]
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_positions()
+        assert len(result) == 1
+        r = result[0]
+        assert r["secType"] == "CASH"
+        assert r["exchange"] == "IDEALPRO"
+        assert r["currency"] == "USD"
+        assert r["quantity"] == 10000.0
+
+    @patch("app.services.live_trading.records.ibkr_get_positions")
+    def test_uc_fp5_get_positions_stock_regression(self, mock_get_positions):
+        """UC-FP5: US stock row still yields STK/SMART/USD when DB holds equity metadata (no accidental CASH)."""
+        mock_get_positions.return_value = [
+            {
+                "account": "DU123456",
+                "con_id": 123,
+                "symbol": "AAPL",
+                "sec_type": "STK",
+                "exchange": "SMART",
+                "currency": "USD",
+                "position": 10.0,
+                "avg_cost": 150.0,
+                "unrealized_pnl": 0.0,
+                "daily_pnl": 0.0,
+                "realized_pnl": 0.0,
+                "value": 1500.0,
+                "updated_at": None,
+            },
+        ]
+        client = _make_client_with_mock_ib()
+        client._account = "DU123456"
+
+        def _sync_submit(fn, timeout=60.0, is_blocking=False):
+            return fn()
+        client._submit = _sync_submit
+
+        result = client.get_positions()
+        assert len(result) == 1
+        assert result[0]["secType"] == "STK"
+        assert result[0]["exchange"] == "SMART"
+        assert result[0]["currency"] == "USD"
+        assert result[0]["symbol"] == "AAPL"
+
 
 # ===========================================================================
 # IBKROrderContext lifecycle tests
