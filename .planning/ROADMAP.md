@@ -18,7 +18,7 @@ This milestone extends the existing IBKR stack from US stocks and HK shares to I
 - [ ] **Phase 8: Quantity normalization & IB alignment** — ForexNormalizer + `_align_qty_to_contract` on Forex path
 - [x] **Phase 9: Forex trading hours (liquidHours)** — `is_market_open` uses IBKR contract hours for 24/5 FX (completed 2026-04-11)
 - [x] **Phase 10: Fills, position & PnL events** — Callbacks and keys correct for Forex symbols and currencies (completed 2026-04-11)
-- [ ] **Phase 11: Strategy automation (Forex + IBKR)** — Config `market_category=Forex` + ibkr-paper/live drives auto-trade
+- [x] **Phase 11: Strategy automation (Forex + IBKR)** — Config `market_category=Forex` + ibkr-paper/live drives auto-trade (completed 2026-04-11)
 - [ ] **Phase 12: Frontend IBKR exchanges for Forex** — Strategy UI offers ibkr-paper / ibkr-live when Forex is selected
 
 ## Phase Details
@@ -162,11 +162,11 @@ Plans:
   1. A strategy configured with `market_category=Forex` and `exchange_id` of `ibkr-paper` or `ibkr-live` is accepted by the runner and reaches `IBKRClient` for Forex.
   2. End-to-end integration tests (mocked or recorded IB) prove signal → pending → order for Forex.
   3. Paper trading runbook: at least one liquid pair (e.g. EURUSD) open/close with reconciled fills/positions; **verify** runs all defined use cases plus full existing test suite.
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 11-01-PLAN.md — `validate_exchange_market_category` + strategy save validation + `test_strategy_exchange_validation.py` (UC-SA-VAL-*)
-- [ ] 11-02-PLAN.md — `test_forex_ibkr_e2e.py` (Flask + worker chain) + `11-PAPER-RUNBOOK.md`
+- [x] 11-02-PLAN.md — `test_forex_ibkr_e2e.py` (Flask + worker chain) + `11-PAPER-RUNBOOK.md`
 - [x] 11-03-PLAN.md — `test_ibkr_forex_paper_smoke.py` (three pairs, mocked IBKR Paper callbacks)
 
 ### Phase 12: Frontend IBKR exchanges for Forex
@@ -198,7 +198,7 @@ Plans:
 | 8. Quantity normalization & IB alignment | 1/2 | In Progress   | - |
 | 9. Forex trading hours (liquidHours) | 1/1 | Complete   | 2026-04-11 |
 | 10. Fills, position & PnL events | 1/1 | Complete   | 2026-04-11 |
-| 11. Strategy automation (Forex + IBKR) | 2/3 | In Progress|  |
+| 11. Strategy automation (Forex + IBKR) | 3/3 | Complete   | 2026-04-11 |
 | 12. Frontend IBKR exchanges for Forex | 0/1 | Not started | - |
 
 ---
