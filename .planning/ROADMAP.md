@@ -29,7 +29,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 ### v1.1 — Tech Debt Cleanup + Limit Orders
 
-- [ ] **Phase 13: Qualify result caching + E2E prefix fix** — TTL cache for `qualifyContractsAsync`, invalidate on reconnect; fix E2E test API prefix
+- [ ] **Phase 13: Qualify result caching + E2E prefix fix** — TTL cache for `qualifyContractsAsync` with per-market TTL and targeted invalidation (qualify/validation failures); IBKR reconnect does **not** flush the cache; fix E2E test API prefix drift
 - [ ] **Phase 14: TIF unification (USStock/HShare)** — Open signals IOC-aligned with Forex policy where supported; matrix tests (depends on 13)
 - [ ] **Phase 15: Normalize pipeline ordering** — `check` → `normalize` → qualify → `align` with no duplicate steps (depends on 13)
 - [ ] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex (depends on 13)
@@ -43,7 +43,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 ## Phase Details
 
 ### Phase 13: Qualify result caching + E2E prefix fix
-**Goal**: Reduce redundant IB qualify traffic while keeping contract data fresh after reconnects. Fix E2E test API prefix drift.
+**Goal**: Reduce redundant IB qualify traffic via in-memory TTL cache and targeted invalidation; IBKR reconnect does not flush the cache (TTL + failure/validation invalidation only). Fix E2E test API prefix drift.
 **Depends on**: Phase 12 (v1.0 complete)
 **Requirements**: INFRA-01, TEST-01
 **Success Criteria** (what must be TRUE):
