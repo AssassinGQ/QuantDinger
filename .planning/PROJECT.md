@@ -17,8 +17,8 @@
 - ✓ ib_insync 连接管理（自动重连、paper/live 单例） — existing
 - ✓ 事件驱动的成交/仓位/PnL 追踪 — existing
 - ✓ PendingOrderWorker 完整的下单流程（信号→pending→执行→成交） — existing
-- ✓ ForexNormalizer 数量取整逻辑 — existing
-- ✓ _align_qty_to_contract 从 IBKR ContractDetails 获取 sizeIncrement 对齐 — existing
+- ✓ ForexNormalizer 数量透传（raw_qty passthrough） — Validated in Phase 8: normalize passthrough + UC-N1–UC-N6
+- ✓ _align_qty_to_contract 从 IBKR ContractDetails 获取 sizeIncrement 对齐 — Validated in Phase 8: UC-A1–UC-A5 alignment tests
 - ✓ RTH 检查基于 IBKR 合约交易时间 — existing
 - ✓ StatefulClientRunner 统一调度 IBKR 下单 — existing
 
@@ -32,7 +32,7 @@
 - ✓ map_signal_to_side 支持 Forex 双向交易信号（八信号映射，与 MT5 对齐） — Validated in Phase 5: Signal-to-side mapping (two-way FX)
 - ✓ Forex TIF 策略：所有信号统一使用 IOC — Validated in Phase 6: TIF policy for Forex (paper trading verified on DUQ123679)
 - [ ] Forex RTH 使用 IBKR 合约交易时间（与现有逻辑一致）
-- [ ] Lot size 复用现有两层机制（ForexNormalizer + _align_qty_to_contract）
+- ✓ Lot size 两层机制（ForexNormalizer passthrough + _align_qty_to_contract IB对齐） — Validated in Phase 8
 - [ ] 策略系统可配置 market_category=Forex 执行自动交易
 - [ ] 前端策略创建/编辑时 Forex 可选 ibkr-paper/ibkr-live 交易所
 
@@ -49,7 +49,7 @@
 - `normalize_symbol` 当前仅处理 USStock 和 HShare，需要新增 Forex 解析逻辑
 - `supported_market_categories` 当前为 `{"USStock", "HShare"}`，需要加入 `"Forex"`
 - IBKR IDEALPRO Forex 以基础货币单位下单（如 25000 EUR），不是标准手
-- `ForexNormalizer` 和 `_align_qty_to_contract` 已有，无需改动数量处理逻辑
+- `ForexNormalizer.normalize` 透传原始数量（Phase 8 改为 passthrough），`_align_qty_to_contract` 负责 IB sizeIncrement 对齐
 - ib_insync.Forex 合约构造：`Forex(pair='EURUSD')` 或 `Forex(symbol='EUR', currency='USD', exchange='IDEALPRO')`
 - TIF 已确认：Forex 所有信号统一使用 IOC（Phase 6 决策，paper trading 验证通过）
 
@@ -66,8 +66,8 @@
 | Forex TIF = IOC | IDEALPRO 市价单需要 IOC（避免 DAY 挂单残留），paper trading 验证通过 | ✓ Decided (Phase 6) |
 | 市价单优先 | 外汇流动性好，市价单滑点可控，简化实现 | ✓ Decided (Phase 7) |
 | Forex qty=0 after alignment 提示 IDEALPRO 最小量 | 用户可读性优化，区分 Forex 与股票的 qty=0 原因 | ✓ Decided (Phase 7) |
-| 复用 ForexNormalizer | 已有取整逻辑 + IBKR sizeIncrement 对齐，无需额外最小量检查 | — Pending |
+| ForexNormalizer passthrough + IB 对齐 | normalize 透传原始数量，_align_qty_to_contract 负责 sizeIncrement 对齐 | ✓ Decided (Phase 8) |
 | RTH 复用 IBKR 合约时间 | 与股票路径一致，IBKR 返回的 liquidHours 能正确反映 Forex 24/5 特性 | — Pending |
 
 ---
-*Last updated: 2026-04-10 — Phase 7 complete: Forex market orders (integration tests + qty=0 IDEALPRO hint)*
+*Last updated: 2026-04-11 — Phase 8 complete: Quantity normalization passthrough + IB alignment tests (UC-N1–N6, UC-A1–A5)*
