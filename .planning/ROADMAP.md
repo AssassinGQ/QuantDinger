@@ -30,7 +30,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 ### v1.1 — Tech Debt Cleanup + Limit Orders
 
 - [x] **Phase 13: Qualify result caching + E2E prefix fix** — TTL cache for `qualifyContractsAsync` with per-market TTL and targeted invalidation (qualify/validation failures); IBKR reconnect does **not** flush the cache; fix E2E test API prefix drift
-- [ ] **Phase 14: TIF unification (USStock/HShare)** — Open signals IOC-aligned with Forex policy where supported; matrix tests (depends on 13)
+- [x] **Phase 14: TIF unification (USStock/HShare)** — IOC for Forex, USStock, HShare (all signals); `TestTifMatrix`; SEHK/IBKR doc (depends on 13) — **complete 2026-04-11**
 - [ ] **Phase 15: Normalize pipeline ordering** — `check` → `normalize` → qualify → `align` with no duplicate steps (depends on 13)
 - [ ] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex (depends on 13)
 - [ ] **Phase 17: Forex limit orders & automation** — LimitOrder + partial fills + runner/worker limit price (depends on 14, 15, 16)
@@ -63,8 +63,8 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   1. All eight signal types for Forex, USStock, and HShare use **IOC**; behavior matches the 8×3 matrix (`TestTifMatrix`, 24 combinations).
   2. `_get_tif_for_signal` docstring cites IBKR IOC exchange list (including SEHK); no unsourced claim that Hong Kong stocks cannot use IOC.
   3. Full backend pytest suite remains green (regression gate).
-**Plans:** 1 plan
-- [ ] `14-01-PLAN.md` — IOC for Forex/USStock/HShare + `TestTifMatrix` + ROADMAP alignment (INFRA-02)
+**Plans:** 1/1 plans complete
+- [x] `14-01-PLAN.md` — IOC for Forex/USStock/HShare + `TestTifMatrix` + ROADMAP alignment (INFRA-02)
 
 ### Phase 15: Normalize pipeline ordering
 **Goal**: One consistent order pipeline: normalize after checks, align only after qualify, no duplicate normalize/align.
@@ -125,7 +125,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 11. Strategy automation (Forex + IBKR) | v1.0 | 3/3 | Complete | 2026-04-11 |
 | 12. Frontend IBKR exchanges for Forex | v1.0 | 1/1 | Complete | 2026-04-11 |
 | 13. Qualify result caching + E2E prefix fix | 2/2 | Complete    | 2026-04-11 | 2026-04-11 |
-| 14. TIF unification (USStock/HShare) | v1.1 | 0/1 | Not started | — |
+| 14. TIF unification (USStock/HShare) | 1/1 | Complete   | 2026-04-11 | 2026-04-11 |
 | 15. Normalize pipeline ordering | v1.1 | 0/? | Not started | — |
 | 16. Precious metals classification | v1.1 | 0/? | Not started | — |
 | 17. Forex limit orders & automation | v1.1 | 0/? | Not started | — |

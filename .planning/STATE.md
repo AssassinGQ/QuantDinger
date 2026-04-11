@@ -2,17 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
-current_phase: 14
-current_plan: Not started
-status: planned
-stopped_at: Phase 14 planned — 1 plan ready for execution
-last_updated: "2026-04-11T15:06:23.468Z"
-last_activity: 2026-04-11
+status: unknown
+stopped_at: Completed 14-01-PLAN.md — Phase 14 single-plan wave done
+last_updated: "2026-04-12T14:00:00.000Z"
 progress:
   total_phases: 6
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 2
+  total_plans: 4
+  completed_plans: 3
 ---
 
 # Project State
@@ -23,21 +20,14 @@ See: `.planning/PROJECT.md`
 
 **Core value:** 清理 v1.0 遗留技术债务，增加 Forex 限价单，补全 E2E 测试覆盖。
 
-**Current focus:** Phase 14 — TIF unification (USStock/HShare)
+**Current focus:** Phase 15+ — next v1.1 phase (Phase 14 complete)
 
-**Verification:** use-case-driven (`.planning/config.json`). **Regression gate:** ~928 existing backend tests must stay green.
+**Verification:** use-case-driven (`.planning/config.json`). **Regression gate:** backend pytest suite must stay green.
 
 ## Current Position
 
-**Current Phase:** 14
-**Status:** Planned — ready to execute
-**Current Plan:** 14-01-PLAN.md (pending)
-**Total Plans in Phase:** 1
-**Last Activity:** 2026-04-11
-
-Phase 13 complete: `13-01-PLAN.md` (qualify TTL cache + docs) and `13-02-PLAN.md` (E2E `/api` prefix) both delivered.
-
-**Progress:** (phase 14 not started)
+Phase: 14 (tif-unification-usstock-hshare) — COMPLETE (1/1 plan)
+Plan: `14-01-PLAN.md` executed
 
 ## Performance Metrics
 
@@ -49,6 +39,7 @@ Phase 13 complete: `13-01-PLAN.md` (qualify TTL cache + docs) and `13-02-PLAN.md
 *(v1.0 metrics retained in git history / prior STATE revisions.)*
 
 | Phase 13-qualify-result-caching-e2e-prefix-fix P01 | 25min | 3 tasks | 6 files |
+| Phase 14-tif-unification-usstock-hshare P01 | ~20min | 1 task | 2 files |
 
 ## Accumulated Context
 
@@ -69,6 +60,6 @@ Phase 13 complete: `13-01-PLAN.md` (qualify TTL cache + docs) and `13-02-PLAN.md
 
 ## Session Continuity
 
-**Last session:** 2026-04-11T15:06:23.465Z
-**Stopped At:** Phase 14 planned — 1 plan, 1 wave, ready to execute
-**Resume File:** .planning/phases/14-tif-unification-usstock-hshare/14-01-PLAN.md
+**Last session:** 2026-04-12T12:00:00.000Z
+**Stopped At:** Completed `14-01-SUMMARY.md` — Phase 14 plan 01 (TIF IOC unification + tests + planning docs)
+**Resume File:** Next v1.1 work — Phase 15 (normalize pipeline) per ROADMAP when planned

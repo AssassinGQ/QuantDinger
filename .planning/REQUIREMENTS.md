@@ -17,7 +17,7 @@
 ### 基础设施优化 (INFRA)
 
 - [x] **INFRA-01**: `qualifyContractsAsync` 结果按 `(symbol, market_type)` 缓存；Forex / USStock / HShare 各自 TTL 可配（`IBKR_QUALIFY_TTL_*_SEC`，默认 600 秒）；在 qualify 失败、qualify 异常、或该 symbol 的 post-qualify 校验失败时使对应缓存项失效；**IBKR reconnect does not clear the cache**（与按重连清空缓存的早期表述不一致时以 Phase 13 CONTEXT 为准）
-- [ ] **INFRA-02**: USStock open 信号 TIF → IOC（与 Forex 对齐），HShare 保持现有策略或明确记录例外，TIF 矩阵全面测试覆盖
+- [x] **INFRA-02**: USStock / HShare / Forex 统一为 IOC（八种信号类型）；未知 `market_type` 使用 DAY；TIF 矩阵与 IBKR IOC/SEHK 文档引用（Phase 14）
 - [ ] **INFRA-03**: order pipeline 中 normalize 在 check 之后、qualify 之前调用，align 在 qualify 之后调用，两者不重复执行
 
 ### 测试质量 (TEST)
@@ -55,7 +55,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TRADE-05 | Phase 18 | Pending |
 | TRADE-06 | Phase 18 | Pending |
 | INFRA-01 | Phase 13 | Complete |
-| INFRA-02 | Phase 14 | Pending |
+| INFRA-02 | Phase 14 | Complete |
 | INFRA-03 | Phase 15 | Pending |
 | TEST-01 | Phase 13 | Complete |
 | TEST-02 | Phase 18 | Pending |
@@ -67,4 +67,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-11*
-*Last updated: 2026-04-11 — roadmap v1.1 (phases 13-18)*
+*Last updated: 2026-04-11 — INFRA-02 complete (Phase 14-01)*
