@@ -50,7 +50,7 @@ created: 2026-04-11
 
 ## Wave 0 Requirements
 
-- [ ] `quantdinger_vue/tests/unit/forex-ibkr-broker.spec.js` — stubs for FRNT-01 (Forex broker list, payload shape, computed renames)
+- [ ] `quantdinger_vue/tests/unit/frnt-01-forex-ibkr-options.spec.js` — stubs for FRNT-01 (Forex broker list, payload shape, computed renames); same filename as `12-01-PLAN.md` Task 3
 - [ ] Confirm `npm run test:unit` works in current project state
 
 *Backend: existing `test_strategy_exchange_validation.py` covers Forex + ibkr-paper/ibkr-live API acceptance.*
