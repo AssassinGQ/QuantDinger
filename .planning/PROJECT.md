@@ -31,7 +31,7 @@
 - ✓ IBKRClient.supported_market_categories 包含 "Forex" — Validated in Phase 4: Market category & worker gate
 - ✓ map_signal_to_side 支持 Forex 双向交易信号（八信号映射，与 MT5 对齐） — Validated in Phase 5: Signal-to-side mapping (two-way FX)
 - ✓ Forex TIF 策略：所有信号统一使用 IOC — Validated in Phase 6: TIF policy for Forex (paper trading verified on DUQ123679)
-- [ ] Forex RTH 使用 IBKR 合约交易时间（与现有逻辑一致）
+- ✓ Forex RTH 使用 IBKR 合约交易时间（liquidHours 24/5） — Validated in Phase 9: UC-FX-L01–L09 + UC-FX-I01–I05; Forex 关市消息含 24/5 提示
 - ✓ Lot size 两层机制（ForexNormalizer passthrough + _align_qty_to_contract IB对齐） — Validated in Phase 8
 - [ ] 策略系统可配置 market_category=Forex 执行自动交易
 - [ ] 前端策略创建/编辑时 Forex 可选 ibkr-paper/ibkr-live 交易所
@@ -67,7 +67,7 @@
 | 市价单优先 | 外汇流动性好，市价单滑点可控，简化实现 | ✓ Decided (Phase 7) |
 | Forex qty=0 after alignment 提示 IDEALPRO 最小量 | 用户可读性优化，区分 Forex 与股票的 qty=0 原因 | ✓ Decided (Phase 7) |
 | ForexNormalizer passthrough + IB 对齐 | normalize 透传原始数量，_align_qty_to_contract 负责 sizeIncrement 对齐 | ✓ Decided (Phase 8) |
-| RTH 复用 IBKR 合约时间 | 与股票路径一致，IBKR 返回的 liquidHours 能正确反映 Forex 24/5 特性 | — Pending |
+| RTH 复用 IBKR 合约时间 | 与股票路径一致，IBKR 返回的 liquidHours 能正确反映 Forex 24/5 特性 | ✓ Decided (Phase 9) |
 
 ---
-*Last updated: 2026-04-11 — Phase 8 complete: Quantity normalization passthrough + IB alignment tests (UC-N1–N6, UC-A1–A5)*
+*Last updated: 2026-04-11 — Phase 9 complete: Forex trading hours (liquidHours) — UC-FX-L01–L09 + UC-FX-I01–I05, Forex 24/5 关市提示*
