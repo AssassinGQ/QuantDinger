@@ -177,10 +177,10 @@ Plans:
   1. On strategy create/edit, when `market_category` is Forex, the exchange dropdown (or equivalent) lists **ibkr-paper** and **ibkr-live**.
   2. Selecting those options persists and reloads correctly.
   3. UI-level or E2E tests (per project norms) cover Forex + IBKR selection; **verify** includes frontend cases plus full backend regression.
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 12-01: UI use cases; implement exchange list branch for Forex; tests
+- [ ] 12-01-PLAN.md — Forex broker list (MT5 + IBKR paper/live), submit/test/backfill, i18n, Jest guard + pytest regression
 
 ## Progress
 
@@ -199,7 +199,7 @@ Plans:
 | 9. Forex trading hours (liquidHours) | 1/1 | Complete   | 2026-04-11 |
 | 10. Fills, position & PnL events | 1/1 | Complete   | 2026-04-11 |
 | 11. Strategy automation (Forex + IBKR) | 3/3 | Complete   | 2026-04-11 |
-| 12. Frontend IBKR exchanges for Forex | 0/1 | Not started | - |
+| 12. Frontend IBKR exchanges for Forex | 0/1 | Planned | - |
 
 ---
 *Roadmap created: 2026-04-09 · Granularity: fine (12 phases) · Coverage: 12/12 v1 requirements*
