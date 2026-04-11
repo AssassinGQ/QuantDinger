@@ -95,6 +95,16 @@ curl http://localhost:5000/api/ibkr/positions
 | US Stock | Ticker symbol | `AAPL`, `TSLA`, `GOOGL` |
 | HK Stock | `XXXX.HK` or digits | `0700.HK`, `00700`, `700` |
 
+## Contract qualification cache
+
+Successful `qualifyContractsAsync` results are cached per `IBKRClient` instance, keyed by `(symbol, market_type)` (the same logical symbol strings used in order APIs). TTL is in **seconds** (monotonic clock); **IBKR reconnect does not clear this cache** — entries expire by TTL or are removed when qualification fails, an exception occurs during qualify, or post-qualify validation fails for that symbol/market.
+
+| Environment variable | Default (seconds) | Market category |
+|---------------------|-------------------|-----------------|
+| `IBKR_QUALIFY_TTL_FOREX_SEC` | 600 | Forex (IDEALPRO) |
+| `IBKR_QUALIFY_TTL_USSTOCK_SEC` | 600 | US stocks |
+| `IBKR_QUALIFY_TTL_HSHARE_SEC` | 600 | Hong Kong stocks |
+
 ## Important Notes
 
 1. **TWS/Gateway must be running**: Ensure TWS or IB Gateway is started and logged in before using the API

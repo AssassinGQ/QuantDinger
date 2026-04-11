@@ -16,7 +16,7 @@
 
 ### 基础设施优化 (INFRA)
 
-- [ ] **INFRA-01**: qualifyContractsAsync 结果按 symbol 缓存（TTL 可配），IBKR 重连时自动失效全部缓存
+- [x] **INFRA-01**: `qualifyContractsAsync` 结果按 `(symbol, market_type)` 缓存；Forex / USStock / HShare 各自 TTL 可配（`IBKR_QUALIFY_TTL_*_SEC`，默认 600 秒）；在 qualify 失败、qualify 异常、或该 symbol 的 post-qualify 校验失败时使对应缓存项失效；**IBKR reconnect does not clear the cache**（与按重连清空缓存的早期表述不一致时以 Phase 13 CONTEXT 为准）
 - [ ] **INFRA-02**: USStock open 信号 TIF → IOC（与 Forex 对齐），HShare 保持现有策略或明确记录例外，TIF 矩阵全面测试覆盖
 - [ ] **INFRA-03**: order pipeline 中 normalize 在 check 之后、qualify 之前调用，align 在 qualify 之后调用，两者不重复执行
 
@@ -54,7 +54,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TRADE-04 | Phase 16 | Pending |
 | TRADE-05 | Phase 18 | Pending |
 | TRADE-06 | Phase 18 | Pending |
-| INFRA-01 | Phase 13 | Pending |
+| INFRA-01 | Phase 13 | Complete |
 | INFRA-02 | Phase 14 | Pending |
 | INFRA-03 | Phase 15 | Pending |
 | TEST-01 | Phase 13 | Complete |
