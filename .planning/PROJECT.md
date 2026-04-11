@@ -17,9 +17,14 @@
 - ✓ DataSourceFactory 支持 exchange_id — v1.0
 - ✓ trading_executor 传递 exchange_id — v1.0
 - ✓ exchange_id="ibkr-live" 使用 IBKRDataSource — v1.0
+- ✓ 内部 IBKRClient 添加 get_historical_bars() — v2.0
+- ✓ 内部 IBKRClient 添加 get_quote() — v2.0
+- ✓ IBKRDataSource 从 ibkr_datafetcher 迁移到内部 IBKRClient — v2.0
+- ✓ 移除 ibkr_datafetcher 外部依赖 — v2.0
 
 ### Active
 
+- [ ] IBKR策略数据源集成（999.1）— single_symbol_runner 需要传 exchange_id 才能触发 IBKRDataSource
 - [ ] 支持港股数据获取
 - [ ] 支持外汇数据获取
 - [ ] 优化连接复用和重连机制
@@ -34,10 +39,10 @@
 
 - **现有代码库**: QuantDinger 交易平台
 - **参考实现**: `/home/workspace/ws/ibkr-datafetcher/` 使用 ib_insync
-- **当前 USStock 数据源**: IBKR 原生数据源 (v1.0)
+- **当前 USStock 数据源**: IBKR 原生数据源 (v2.0)
 - **目标 exchange_id**: `ibkr-live`
 - **技术栈**: ib_insync, Python, Flask
-- **里程碑**: v1.0 shipped 2026-04-09
+- **里程碑**: v2.0 shipped 2026-04-11
 
 ## Constraints
 
@@ -50,8 +55,10 @@
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | 基于 exchange_id 选择数据源 | 与 trading executor 的 exchange_id 一致，支持多数据源 | ✓ Good - 已通过 DataSourceFactory 实现 |
-| 优先美股，后续港股外汇 | ibkr-live 当前只有美股策略 | ✓ Good - v1.0 专注美股，v2.0 规划港股外汇 |
+| 优先美股，后续港股外汇 | ibkr-live 当前只有美股策略 | ✓ Good - v1.0 专注美股，v2.0 迁移内部 Client |
+| 内部 IBKRClient 复用 ib_insync | 避免外部库依赖，统一连接管理 | ✓ Good - v2.0 完成 |
+| v2.0 迁移后 E2E 测试覆盖 | 验证 DataSourceFactory → IBKRDataSource → ib_insync 完整链路 | ✓ Good |
 
 ---
 
-*Last updated: 2026-04-09 after v1.0 milestone*
+*Last updated: 2026-04-11 after v2.0 milestone*
