@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Phase 12 context gathered
-last_updated: "2026-04-11T08:46:09.546Z"
+status: complete
+stopped_at: Completed 12-01-PLAN.md
+last_updated: "2026-04-11T09:16:53.093Z"
 progress:
   total_phases: 12
-  completed_phases: 11
-  total_plans: 14
-  completed_plans: 14
+  completed_phases: 12
+  total_plans: 15
+  completed_plans: 15
 ---
 
 # Project State
@@ -20,12 +20,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-09)
 
 **Core value:** 策略系统发出的 Forex 交易信号能正确通过 IBKRClient 在 IDEALPRO 上执行，从信号到成交的完整链路畅通。
 
-**Current focus:** Phase 11 — strategy-automation-forex-ibkr
+**Current focus:** Phase 12 — frontend-ibkr-exchanges-for-forex
 
 ## Current Position
 
-Phase: 11 (strategy-automation-forex-ibkr) — complete (all 3 plans)
-Plan: **11-01**, **11-02**, **11-03** complete
+Phase: 12 (frontend-ibkr-exchanges-for-forex) — COMPLETE
+Plan: 1 of 1 (12-01 done)
 
 ## Performance Metrics
 
@@ -44,6 +44,7 @@ Plan: **11-01**, **11-02**, **11-03** complete
 | Phase 11-strategy-automation-forex-ibkr P03 | 12min | 1 tasks | 1 files |
 | Phase 11-strategy-automation-forex-ibkr P01 | 25min | 2 tasks | 8 files |
 | Phase 11-strategy-automation-forex-ibkr P02 | 25min | 2 tasks | 2 files |
+| Phase 12-frontend-ibkr-exchanges-for-forex P01 | 28min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,8 @@ Logged in PROJECT.md Key Decisions. Roadmap follows research build order (symbol
 - [Phase 11-strategy-automation-forex-ibkr]: Mock IBKR Paper smoke: test_ibkr_forex_paper_smoke.py uses _FakeEvent for handler registration, pair-specific qualify (EURUSD 12087792, GBPJPY 12345678, XAGUSD 87654321), and orderStatus→execDetails→position→pnlSingle after each fill; DB saves patched.
 - [Phase 11-strategy-automation-forex-ibkr P01]: `validate_exchange_market_category` in factory + static `validate_market_category_static` on stateful clients; `StrategyService` validates non-empty `exchange_id` against `market_category` before INSERT/UPDATE; UC-SA-VAL-01–08 in `test_strategy_exchange_validation.py`.
 - [Phase 11-strategy-automation-forex-ibkr]: E2E tests mock worker imports at pending_order_worker; API test uses mocked DB insert for real StrategyService.create_strategy path.
+- [Phase 12-frontend-ibkr-exchanges-for-forex]: Vault save after strategy create only for crypto (isCryptoMarket); Forex MT5/IBKR excluded.
+- [Phase 12-frontend-ibkr-exchanges-for-forex]: Jest uses @vue/vue2-jest transform for Vue 2 SFCs (CLI 5 peer).
 
 ### Pending Todos
 
@@ -79,6 +82,6 @@ None yet.
 
 ## Session Continuity
 
-**Last session:** 2026-04-11T08:46:09.543Z
-**Stopped At:** Phase 12 context gathered
-**Resume File:** .planning/phases/12-frontend-ibkr-exchanges-for-forex/12-CONTEXT.md
+**Last session:** 2026-04-11T09:16:53.090Z
+**Stopped At:** Completed 12-01-PLAN.md
+**Resume File:** None

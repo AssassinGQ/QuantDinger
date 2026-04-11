@@ -29,7 +29,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### 前端适配 (Frontend)
 
-- [ ] **FRNT-01**: 策略创建/编辑页面，当 market_category=Forex 时，交易所选择列表包含 ibkr-paper 和 ibkr-live（不仅限于 MT5）
+- [x] **FRNT-01**: 策略创建/编辑页面，当 market_category=Forex 时，交易所选择列表包含 ibkr-paper 和 ibkr-live（不仅限于 MT5）
 
 ## v2 Requirements
 
@@ -79,7 +79,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RUNT-01 | Phase 9 | Complete |
 | RUNT-02 | Phase 10 | Complete |
 | RUNT-03 | Phase 11 | Complete |
-| FRNT-01 | Phase 12 | Pending |
+| FRNT-01 | Phase 12 | Complete |
 
 **Coverage:**
 - v1 requirements: 12 total
