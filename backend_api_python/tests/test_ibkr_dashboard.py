@@ -170,12 +170,17 @@ class TestComputeTradeStats:
 
 def _make_flask_app():
     """Create a minimal Flask app with ibkr_bp registered."""
-    from flask import Flask
+    from flask import Flask, g
     from app.routes.ibkr import ibkr_bp
 
     app = Flask(__name__)
     app.config["TESTING"] = True
     app.register_blueprint(ibkr_bp, url_prefix="/api/ibkr")
+
+    @app.before_request
+    def _set_test_user():
+        g.user_id = 1
+
     return app
 
 
