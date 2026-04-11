@@ -30,6 +30,9 @@ def _make_client():
     client._event_map = []
     client._reconnect_thread = None
     client._reconnect_stop = threading.Event()
+    client._conid_to_symbol = {}
+    client._subscribed_conids = set()
+    client._qualify_cache = {}
     client._tq = MagicMock()
     client._ib_executor = MagicMock()
     client._io_executor = MagicMock()

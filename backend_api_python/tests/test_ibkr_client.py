@@ -8,7 +8,7 @@ import logging
 import types
 import threading
 import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
 import pytz
@@ -156,6 +156,7 @@ def _make_client_with_mock_ib():
     # conid to symbol mapping for PnL
     client._conid_to_symbol = {}
     client._subscribed_conids = set()
+    client._qualify_cache = {}
 
     import asyncio
 
@@ -285,7 +286,9 @@ class TestQualifyContractForex:
 
         loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(client._qualify_contract_async(contract))
+            result = loop.run_until_complete(
+                client._qualify_contract_async(contract, "EURUSD", "Forex"),
+            )
         finally:
             loop.close()
 
@@ -309,7 +312,9 @@ class TestQualifyContractForex:
 
         loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(client._qualify_contract_async(contract))
+            result = loop.run_until_complete(
+                client._qualify_contract_async(contract, "EURUSD", "Forex"),
+            )
         finally:
             loop.close()
 
@@ -330,7 +335,9 @@ class TestQualifyContractForex:
         loop = asyncio.new_event_loop()
         try:
             with caplog.at_level(logging.WARNING):
-                result = loop.run_until_complete(client._qualify_contract_async(contract))
+                result = loop.run_until_complete(
+                    client._qualify_contract_async(contract, "EURUSD", "Forex"),
+                )
         finally:
             loop.close()
 
@@ -351,6 +358,103 @@ class TestQualifyContractForex:
         result = client.place_market_order("EURUSD", "buy", 20000, "Forex")
         assert result.success is False
         assert "Forex" in result.message
+
+
+class TestQualifyContractCache:
+    """TTL cache for qualifyContractsAsync: hit, empty-qualify invalidation, validation invalidation."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_qualify_cache_second_call_skips_ib(self):
+        client = _make_client_with_mock_ib()
+
+        async def _qualify_side_effect(*contracts):
+            for c in contracts:
+                c.conId = 12087792
+                c.secType = "CASH"
+                c.localSymbol = "EUR.USD"
+            return list(contracts)
+
+        mock_q = AsyncMock(side_effect=_qualify_side_effect)
+        client._ib.qualifyContractsAsync = mock_q
+
+        mock_trade = MagicMock()
+        mock_trade.order.orderId = 42
+        client._ib.placeOrder = MagicMock(return_value=mock_trade)
+
+        r1 = client.place_market_order("EURUSD", "buy", 20000, "Forex")
+        r2 = client.place_market_order("EURUSD", "buy", 20000, "Forex")
+        assert r1.success is True
+        assert r2.success is True
+        assert mock_q.await_count == 1
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_qualify_cache_invalidated_on_empty_qualify(self):
+        client = _make_client_with_mock_ib()
+        mock_ib = _make_mock_ib_insync()
+        contract = mock_ib.Forex(pair="EURUSD")
+
+        calls = {"n": 0}
+
+        async def _qualify_seq(*contracts):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                for c in contracts:
+                    c.conId = 1
+                    c.secType = "CASH"
+                return list(contracts)
+            return []
+
+        client._ib.qualifyContractsAsync = AsyncMock(side_effect=_qualify_seq)
+        loop = asyncio.new_event_loop()
+        try:
+            r1 = loop.run_until_complete(
+                client._qualify_contract_async(contract, "EURUSD", "Forex"),
+            )
+            assert r1 is True
+            assert ("EURUSD", "Forex") in client._qualify_cache
+            # Expire entry so the next call misses cache and hits IB (empty → invalidates).
+            client._qualify_cache[("EURUSD", "Forex")]["expires_at"] = 0.0
+            contract2 = mock_ib.Forex(pair="EURUSD")
+            r2 = loop.run_until_complete(
+                client._qualify_contract_async(contract2, "EURUSD", "Forex"),
+            )
+            assert r2 is False
+            assert ("EURUSD", "Forex") not in client._qualify_cache
+        finally:
+            loop.close()
+        assert client._ib.qualifyContractsAsync.await_count == 2
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_validate_failure_invalidates_cache(self):
+        client = _make_client_with_mock_ib()
+        real_validate = client._validate_qualified_contract
+        n = [0]
+
+        def _wrap(c, mt):
+            n[0] += 1
+            if n[0] == 1:
+                return (False, "forced fail")
+            return real_validate(c, mt)
+
+        client._validate_qualified_contract = _wrap
+
+        async def _qualify_ok(*contracts):
+            for c in contracts:
+                c.conId = 12087792
+                c.secType = "CASH"
+            return list(contracts)
+
+        mock_q = AsyncMock(side_effect=_qualify_ok)
+        client._ib.qualifyContractsAsync = mock_q
+        mock_trade = MagicMock()
+        mock_trade.order.orderId = 1
+        client._ib.placeOrder = MagicMock(return_value=mock_trade)
+
+        r1 = client.place_market_order("EURUSD", "buy", 20000, "Forex")
+        assert r1.success is False
+        r2 = client.place_market_order("EURUSD", "buy", 20000, "Forex")
+        assert r2.success is True
+        assert mock_q.await_count == 2
 
 
 class TestValidateQualifiedContract:
