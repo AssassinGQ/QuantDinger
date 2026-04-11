@@ -1447,6 +1447,8 @@ const locale = {
   'trading-assistant.placeholders.selectBroker': 'Select broker',
   'trading-assistant.brokerNames': {
     'ibkr': 'Interactive Brokers (IBKR)',
+    'ibkr-paper': 'IBKR Paper',
+    'ibkr-live': 'IBKR Live',
     'mt5': 'MetaTrader 5 (MT5)',
     'mt4': 'MetaTrader 4 (MT4)',
     'futu': 'Futu Securities',

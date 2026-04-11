@@ -1324,6 +1324,8 @@ const locale = {
   'trading-assistant.placeholders.selectBroker': '选择券商',
   'trading-assistant.brokerNames': {
     'ibkr': '盈透证券 (Interactive Brokers)',
+    'ibkr-paper': 'IBKR 模拟',
+    'ibkr-live': 'IBKR 实盘',
     'mt5': 'MetaTrader 5 (MT5)',
     'mt4': 'MetaTrader 4 (MT4)',
     'futu': '富途证券 (Futu)',
