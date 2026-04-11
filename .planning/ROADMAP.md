@@ -162,10 +162,12 @@ Plans:
   1. A strategy configured with `market_category=Forex` and `exchange_id` of `ibkr-paper` or `ibkr-live` is accepted by the runner and reaches `IBKRClient` for Forex.
   2. End-to-end integration tests (mocked or recorded IB) prove signal → pending → order for Forex.
   3. Paper trading runbook: at least one liquid pair (e.g. EURUSD) open/close with reconciled fills/positions; **verify** runs all defined use cases plus full existing test suite.
-**Plans**: TBD
+**Plans:** 3 plans
 
 Plans:
-- [ ] 11-01: Config + runner wiring use cases; integration test suite; paper E2E checklist; run-all verification
+- [ ] 11-01-PLAN.md — `validate_exchange_market_category` + strategy save validation + `test_strategy_exchange_validation.py` (UC-SA-VAL-*)
+- [ ] 11-02-PLAN.md — `test_forex_ibkr_e2e.py` (Flask + worker chain) + `11-PAPER-RUNBOOK.md`
+- [ ] 11-03-PLAN.md — `test_ibkr_forex_paper_smoke.py` (three pairs, mocked IBKR Paper callbacks)
 
 ### Phase 12: Frontend IBKR exchanges for Forex
 **Goal**: Strategy authors pick IBKR paper/live for Forex in the UI, not only MT5.
@@ -196,7 +198,7 @@ Plans:
 | 8. Quantity normalization & IB alignment | 1/2 | In Progress   | - |
 | 9. Forex trading hours (liquidHours) | 1/1 | Complete   | 2026-04-11 |
 | 10. Fills, position & PnL events | 1/1 | Complete   | 2026-04-11 |
-| 11. Strategy automation (Forex + IBKR) | 0/1 | Not started | - |
+| 11. Strategy automation (Forex + IBKR) | 0/3 | Planned | - |
 | 12. Frontend IBKR exchanges for Forex | 0/1 | Not started | - |
 
 ---
