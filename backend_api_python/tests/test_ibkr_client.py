@@ -11,13 +11,18 @@ import time
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
+import pytz
 
+from app.services.live_trading.ibkr_trading import trading_hours as _trading_hours_mod
+from app.services.live_trading.ibkr_trading.trading_hours import clear_cache as _clear_trading_hours_cache
 from app.services.live_trading.ibkr_trading.client import (
     IBKRClient,
     IBKRConfig,
     IBKROrderContext,
 )
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
+
+_REAL_IS_RTH_CHECK_FN = _trading_hours_mod.is_rth_check
 
 @pytest.fixture(autouse=True)
 def _always_rth():
@@ -173,6 +178,25 @@ def _make_client_with_mock_ib():
     client._submit = _submit
     client._ensure_connected_async = _noop_ensure
 
+    return client
+
+
+def _make_forex_rth_client(liquid_hours: str, time_zone_id: str, server_time_utc: datetime.datetime):
+    """IBKRClient with mock IB: fixed ContractDetails liquid hours and reqCurrentTimeAsync UTC."""
+    client = _make_client_with_mock_ib()
+    det = MagicMock()
+    det.liquidHours = liquid_hours
+    det.timeZoneId = time_zone_id
+
+    async def _mock_req_details_async(*args, **kwargs):
+        return [det]
+
+    client._ib.reqContractDetailsAsync = _mock_req_details_async
+
+    async def _mock_req_current_time_async():
+        return server_time_utc
+
+    client._ib.reqCurrentTimeAsync = _mock_req_current_time_async
     return client
 
 
@@ -1177,6 +1201,87 @@ class TestRTHGate:
         result = client.place_market_order("AAPL", "buy", 10, "USStock")
         assert result.success is True
         client._ib.placeOrder.assert_called_once()
+
+
+@pytest.mark.ForexRTH
+class TestForexRTHGate:
+    """UC-FX-I01–I05: is_market_open Forex path with real is_rth_check (overrides autouse mock)."""
+
+    @pytest.fixture(autouse=True)
+    def _use_real_is_rth_check(self):
+        with patch(
+            "app.services.live_trading.ibkr_trading.trading_hours.is_rth_check",
+            wraps=_REAL_IS_RTH_CHECK_FN,
+        ):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def _patch_ib_insync_forex_rth(self):
+        with patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync()):
+            yield
+
+    def setup_method(self):
+        IBKRClient._rth_details_cache.clear()
+        _clear_trading_hours_cache()
+
+    def test_UC_FX_I01_eurusd_cross_day_inside(self):
+        """UC-FX-I01: EURUSD cross-day liquidHours; server time inside segment."""
+        tz = pytz.timezone("US/Eastern")
+        local = tz.localize(datetime.datetime(2026, 3, 9, 14, 0, 0))
+        server_utc = local.astimezone(pytz.UTC)
+        client = _make_forex_rth_client(
+            "20260308:1715-20260309:1700",
+            "EST",
+            server_utc,
+        )
+        open_ok, reason = client.is_market_open("EURUSD", "Forex")
+        assert open_ok is True
+        assert reason == ""
+
+    def test_UC_FX_I02_saturday_closed(self):
+        """UC-FX-I02: Saturday with CLOSED schedule → not open."""
+        tz = pytz.timezone("US/Eastern")
+        local = tz.localize(datetime.datetime(2026, 3, 7, 12, 0, 0))
+        server_utc = local.astimezone(pytz.UTC)
+        client = _make_forex_rth_client("20260307:CLOSED", "EST", server_utc)
+        open_ok, reason = client.is_market_open("EURUSD", "Forex")
+        assert open_ok is False
+        assert "closed" in reason.lower()
+
+    def test_UC_FX_I03_gbpjpy_jst(self):
+        """UC-FX-I03: GBPJPY with JST liquidHours; server UTC matches local session."""
+        tz = pytz.timezone("Asia/Tokyo")
+        local = tz.localize(datetime.datetime(2026, 3, 10, 14, 0, 0))
+        server_utc = local.astimezone(pytz.UTC)
+        client = _make_forex_rth_client("20260310:0900-20260310:1800", "JST", server_utc)
+        open_ok, reason = client.is_market_open("GBPJPY", "Forex")
+        assert open_ok is True
+        assert reason == ""
+
+    def test_UC_FX_I04_xagusd_window(self):
+        """UC-FX-I04: XAGUSD with dedicated EST day window."""
+        tz = pytz.timezone("US/Eastern")
+        local = tz.localize(datetime.datetime(2026, 3, 12, 14, 0, 0))
+        server_utc = local.astimezone(pytz.UTC)
+        client = _make_forex_rth_client(
+            "20260312:0800-20260312:2000",
+            "EST",
+            server_utc,
+        )
+        open_ok, reason = client.is_market_open("XAGUSD", "Forex")
+        assert open_ok is True
+        assert reason == ""
+
+    def test_UC_FX_I05_forex_closed_message(self):
+        """UC-FX-I05: Forex closed reason includes 24/5 and weekend/maintenance context."""
+        tz = pytz.timezone("US/Eastern")
+        local = tz.localize(datetime.datetime(2026, 3, 7, 12, 0, 0))
+        server_utc = local.astimezone(pytz.UTC)
+        client = _make_forex_rth_client("20260307:CLOSED", "EST", server_utc)
+        open_ok, reason = client.is_market_open("EURUSD", "Forex")
+        assert open_ok is False
+        assert "Forex 24/5" in reason
+        assert "weekend" in reason.lower() or "maintenance" in reason.lower()
 
 
 # ===========================================================================
