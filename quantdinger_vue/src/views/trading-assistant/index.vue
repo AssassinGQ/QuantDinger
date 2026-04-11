@@ -1370,12 +1370,11 @@
                   <!-- <template v-else-if="currentBrokerId === 'futu'">...</template> -->
                 </template>
 
-                <!-- ========== MT5/Forex Broker Configuration ========== -->
-                <template v-else-if="isMT5Market">
+                <!-- ========== Forex broker configuration (MT5 / IBKR) ========== -->
+                <template v-else-if="isForexMarket">
                   <a-form-item :label="$t('trading-assistant.form.forexBroker')">
                     <a-select
                       v-decorator="['forex_broker_id', {
-                        initialValue: 'mt5',
                         rules: [{ required: true, message: $t('trading-assistant.validation.brokerRequired') }]
                       }]"
                       :placeholder="$t('trading-assistant.placeholders.selectBroker')"
@@ -1387,8 +1386,17 @@
                     </a-select>
                   </a-form-item>
 
+                  <template v-if="isForexIBKR">
+                    <a-alert
+                      type="info"
+                      show-icon
+                      style="margin-bottom: 16px;"
+                      :message="$t('trading-assistant.form.ibkrGatewayManagedTitle')"
+                      :description="$t('trading-assistant.form.ibkrGatewayManagedHint')" />
+                  </template>
+
                   <!-- MT5 specific configuration -->
-                  <template v-if="currentBrokerId === 'mt5'">
+                  <template v-if="isForexMT5">
                     <a-alert
                       type="warning"
                       show-icon
@@ -1718,7 +1726,9 @@ const BROKER_OPTIONS = [
 
 // Forex broker options
 const FOREX_BROKER_OPTIONS = [
-  { value: 'mt5', labelKey: 'mt5', name: 'MetaTrader 5' }
+  { value: 'mt5', labelKey: 'mt5', name: 'MetaTrader 5' },
+  { value: 'ibkr-paper', labelKey: 'ibkr-paper', name: 'IBKR Paper' },
+  { value: 'ibkr-live', labelKey: 'ibkr-live', name: 'IBKR Live' }
   // Future forex brokers can be added here:
   // { value: 'mt4', labelKey: 'mt4', name: 'MetaTrader 4' },
   // { value: 'ctrader', labelKey: 'ctrader', name: 'cTrader' },
@@ -1747,13 +1757,19 @@ export default {
     isIBKRBroker () {
       return this.currentBrokerId && this.currentBrokerId.startsWith('ibkr-')
     },
-    // Check if current market uses MT5 (Forex)
-    isMT5Market () {
+    // Check if current market is Forex (MT5 and/or IBKR IDEALPRO)
+    isForexMarket () {
       return this.selectedMarketCategory === 'Forex'
+    },
+    isForexMT5 () {
+      return this.selectedMarketCategory === 'Forex' && this.currentBrokerId === 'mt5'
+    },
+    isForexIBKR () {
+      return this.selectedMarketCategory === 'Forex' && this.currentBrokerId && this.currentBrokerId.startsWith('ibkr-')
     },
     // Check if current market uses any broker (not crypto exchange)
     isBrokerMarket () {
-      return this.isIBKRMarket || this.isMT5Market
+      return this.isIBKRMarket || this.isForexMarket
     },
     // 预处理交易所列表，包含显示名称，提升性能
     formattedExchangeOptions () {
@@ -1856,9 +1872,9 @@ export default {
       if (['USStock', 'HShare'].includes(cat)) {
         return this.currentBrokerId === 'ibkr'
       }
-      // Forex uses MT5
+      // Forex: MT5 or IBKR paper/live
       if (cat === 'Forex') {
-        return this.currentBrokerId === 'mt5'
+        return this.currentBrokerId === 'mt5' || (this.currentBrokerId && String(this.currentBrokerId).startsWith('ibkr-'))
       }
       return false
     },
@@ -2538,11 +2554,11 @@ export default {
       // Keep selection reactive for Step 3 execution gating
       this.selectedMarketCategory = market || 'Crypto'
 
-      // Auto-set broker ID based on market category
+      // Auto-set broker ID based on market category (Forex: user must choose broker — no MT5 default)
       if (this.selectedMarketCategory === 'Forex') {
-        this.currentBrokerId = 'mt5'
+        this.currentBrokerId = ''
         try {
-          this.form && this.form.setFieldsValue && this.form.setFieldsValue({ forex_broker_id: 'mt5' })
+          this.form && this.form.setFieldsValue && this.form.setFieldsValue({ forex_broker_id: undefined })
         } catch (e) { }
       } else if (['USStock', 'HShare'].includes(this.selectedMarketCategory)) {
         this.currentBrokerId = 'ibkr'
@@ -2581,11 +2597,11 @@ export default {
         }
       }
 
-      // Auto-set broker ID based on market category
+      // Auto-set broker ID based on market category (Forex: user must choose broker — no MT5 default)
       if (this.selectedMarketCategory === 'Forex') {
-        this.currentBrokerId = 'mt5'
+        this.currentBrokerId = ''
         try {
-          this.form && this.form.setFieldsValue && this.form.setFieldsValue({ forex_broker_id: 'mt5' })
+          this.form && this.form.setFieldsValue && this.form.setFieldsValue({ forex_broker_id: undefined })
         } catch (e) { }
       } else if (['USStock', 'HShare'].includes(this.selectedMarketCategory)) {
         this.currentBrokerId = 'ibkr'
@@ -2957,15 +2973,25 @@ export default {
               broker_id: exchangeId || 'ibkr'
             })
           } else if (isForexMarket) {
-            // MT5 configuration (Forex)
-            this.currentBrokerId = exchangeId || 'mt5'
-            this.form.setFieldsValue({
-              forex_broker_id: exchangeId || 'mt5',
-              mt5_server: strategy.exchange_config.mt5_server || '',
-              mt5_login: strategy.exchange_config.mt5_login || '',
-              mt5_password: strategy.exchange_config.mt5_password || '',
-              mt5_terminal_path: strategy.exchange_config.mt5_terminal_path || ''
-            })
+            if (exchangeId === 'ibkr-paper' || exchangeId === 'ibkr-live') {
+              this.currentBrokerId = exchangeId
+              this.form.setFieldsValue({
+                forex_broker_id: exchangeId,
+                mt5_server: '',
+                mt5_login: undefined,
+                mt5_password: undefined,
+                mt5_terminal_path: ''
+              })
+            } else if (exchangeId === 'mt5') {
+              this.currentBrokerId = 'mt5'
+              this.form.setFieldsValue({
+                forex_broker_id: 'mt5',
+                mt5_server: strategy.exchange_config.mt5_server || '',
+                mt5_login: strategy.exchange_config.mt5_login || '',
+                mt5_password: strategy.exchange_config.mt5_password || '',
+                mt5_terminal_path: strategy.exchange_config.mt5_terminal_path || ''
+              })
+            }
           } else {
             // Crypto exchange configuration
             this.currentExchangeId = exchangeId
@@ -2988,7 +3014,7 @@ export default {
 
         // Update UI state
         if (isBrokerMarket || isForexMarket) {
-          this.currentBrokerId = exchangeId || (isForexMarket ? 'mt5' : 'ibkr')
+          this.currentBrokerId = exchangeId || (isForexMarket ? '' : 'ibkr')
         } else {
           this.currentExchangeId = exchangeId
         }
@@ -3844,7 +3870,7 @@ export default {
       this.connectionTestResult = null
     },
     handleForexBrokerSelectChange (value) {
-      this.currentBrokerId = value || 'mt5'
+      this.currentBrokerId = value
       this.testResult = null
       this.connectionTestResult = null
     },
@@ -3944,8 +3970,8 @@ export default {
       this.testing = true
 
       try {
-        // IBKR uses backend-managed connection (env vars)
-        if (this.isIBKRMarket) {
+        // IBKR uses backend-managed connection (env vars) — US/HK stocks or Forex on IBKR
+        if (this.isIBKRMarket || (this.isForexMarket && this.isIBKRBroker)) {
           try {
             // Call IBKR connect API with broker_id
             const res = await this.$http.post('/api/ibkr/connect', {
@@ -3979,8 +4005,8 @@ export default {
           return
         }
 
-        // MT5 uses different connection test (server/login/password)
-        if (this.isMT5Market) {
+        // MT5 uses different connection test (server/login/password) — Forex + MT5 only
+        if (this.isForexMarket && this.isForexMT5) {
           const values = this.form.getFieldsValue(['mt5_server', 'mt5_login', 'mt5_password', 'mt5_terminal_path'])
           const server = values.mt5_server || ''
           const login = values.mt5_login || ''
@@ -4279,25 +4305,36 @@ export default {
                 indicator_name: indicator.name,
                 indicator_code: indicator.code || ''
               },
-              exchange_config: isLive ? (this.isIBKRMarket ? {
-                exchange_id: values.broker_id || this.currentBrokerId || 'ibkr'
-              } : this.isMT5Market ? {
-                // MT5/Forex broker configuration
-                exchange_id: values.forex_broker_id || this.currentBrokerId || 'mt5',
-                // MT5 specific fields
-                mt5_server: values.mt5_server || '',
-                mt5_login: values.mt5_login || '',
-                mt5_password: values.mt5_password || '',
-                mt5_terminal_path: values.mt5_terminal_path || ''
-              } : {
-                // Crypto exchange configuration
-                exchange_id: values.exchange_id,
-                credential_id: values.credential_id,
-                api_key: values.api_key,
-                secret_key: values.secret_key,
-                enableDemoTrading: !!values.enable_demo_trading,
-                passphrase: this.needsPassphrase ? values.passphrase : undefined
-              }) : undefined,
+              exchange_config: isLive ? (() => {
+                if (this.isIBKRMarket) {
+                  return {
+                    exchange_id: values.broker_id || this.currentBrokerId || 'ibkr'
+                  }
+                }
+                const forexId = (values.forex_broker_id || this.currentBrokerId || '').toString()
+                if (this.isForexMarket && forexId.startsWith('ibkr-')) {
+                  return {
+                    exchange_id: values.forex_broker_id || this.currentBrokerId || 'ibkr-paper'
+                  }
+                }
+                if (this.isForexMarket) {
+                  return {
+                    exchange_id: values.forex_broker_id || this.currentBrokerId || 'mt5',
+                    mt5_server: values.mt5_server || '',
+                    mt5_login: values.mt5_login || '',
+                    mt5_password: values.mt5_password || '',
+                    mt5_terminal_path: values.mt5_terminal_path || ''
+                  }
+                }
+                return {
+                  exchange_id: values.exchange_id,
+                  credential_id: values.credential_id,
+                  api_key: values.api_key,
+                  secret_key: values.secret_key,
+                  enableDemoTrading: !!values.enable_demo_trading,
+                  passphrase: this.needsPassphrase ? values.passphrase : undefined
+                }
+              })() : undefined,
               trading_config: {
                 initial_capital: values.initial_capital,
                 leverage: leverage,
@@ -4420,8 +4457,8 @@ export default {
                 const totalCreated = res.data?.total_created || symbolCount
                 this.$message.success(this.$t('trading-assistant.messages.batchCreateSuccess', { count: totalCreated }))
               }
-              // Save credential to vault (crypto exchanges only, IBKR/MT5 don't need this)
-              if (isLive && values.save_credential && !this.isIBKRMarket && !this.isMT5Market) {
+              // Save credential to vault (crypto exchanges only; Forex MT5/IBKR use backend-managed or MT5 local)
+              if (isLive && values.save_credential && this.isCryptoMarket) {
                 try {
                   await createExchangeCredential({
                     user_id: 1,
