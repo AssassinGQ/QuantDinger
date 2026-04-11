@@ -149,10 +149,10 @@ Plans:
   1. Fill and position updates for Forex use stable identifiers consistent with qualified symbols (e.g. `localSymbol` / internal key scheme).
   2. PnL or notional displays use quote/base currency context appropriate to Forex, not equity “shares” assumptions.
   3. Automated tests or harness assertions cover at least one round-trip position lifecycle for Forex mocks.
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 10-01: Event/callback use cases; implement parity fixes; tests + existing callback suite
+- [ ] 10-01-PLAN.md — DB columns + records (`ibkr_save_position`, `ibkr_get_positions`, `ibkr_save_pnl` fix); `localSymbol` + metadata in callbacks; `get_positions` DB-backed secType/exchange/currency; tests UC-FP1–FP7; RUNT-02
 
 ### Phase 11: Strategy automation (Forex + IBKR)
 **Goal**: Operators can turn on automated Forex trading via strategy config and IBKR paper/live exchanges; backend integration and paper E2E validate the full chain.
@@ -195,7 +195,7 @@ Plans:
 | 7. Forex market orders | 1/1 | Complete   | 2026-04-10 |
 | 8. Quantity normalization & IB alignment | 1/2 | In Progress   | - |
 | 9. Forex trading hours (liquidHours) | 1/1 | Complete   | 2026-04-11 |
-| 10. Fills, position & PnL events | 0/1 | Not started | - |
+| 10. Fills, position & PnL events | 0/1 | Planned | - |
 | 11. Strategy automation (Forex + IBKR) | 0/1 | Not started | - |
 | 12. Frontend IBKR exchanges for Forex | 0/1 | Not started | - |
 
