@@ -199,7 +199,7 @@ Plans:
 | 9. Forex trading hours (liquidHours) | 1/1 | Complete   | 2026-04-11 |
 | 10. Fills, position & PnL events | 1/1 | Complete   | 2026-04-11 |
 | 11. Strategy automation (Forex + IBKR) | 3/3 | Complete   | 2026-04-11 |
-| 12. Frontend IBKR exchanges for Forex | 1/1 | Complete   | 2026-04-11 |
+| 12. Frontend IBKR exchanges for Forex | 1/1 | Complete    | 2026-04-11 |
 
 ---
 *Roadmap created: 2026-04-09 · Granularity: fine (12 phases) · Coverage: 12/12 v1 requirements*
