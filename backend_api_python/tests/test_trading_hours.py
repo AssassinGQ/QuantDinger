@@ -232,3 +232,98 @@ class TestFuse:
         fuse_deadline = _fuse_until[40008]
         fuse_duration = fuse_deadline - before
         assert 1790 < fuse_duration < 1810  # ~30 min
+
+
+# ── Forex liquidHours (UC-FX-L01–L09) ─────────────────────────────────
+
+@pytest.mark.Forex
+class TestForexLiquidHours:
+    """UC-FX-L01–L09: IBKR Forex-style liquidHours via parse_liquid_hours / is_rth_check."""
+
+    tz_ny = pytz.timezone("US/Eastern")
+    tz_tokyo = pytz.timezone("Asia/Tokyo")
+
+    def test_UC_FX_L01_cross_day_single_segment_parse(self):
+        """UC-FX-L01: One session spanning two calendar dates (EST)."""
+        raw = "20260308:1715-20260309:1700"
+        sessions = parse_liquid_hours(raw, self.tz_ny)
+        assert len(sessions) == 1
+        start, end = sessions[0]
+        assert start.date() != end.date()
+        assert start == self.tz_ny.localize(datetime.datetime(2026, 3, 8, 17, 15))
+        assert end == self.tz_ny.localize(datetime.datetime(2026, 3, 9, 17, 0))
+
+    def test_UC_FX_L02_weekday_mid_session_tuesday(self):
+        """UC-FX-L02: Tuesday afternoon inside a same-calendar-day window (EST)."""
+        details = _make_details("20260310:0100-20260310:2300", "EST")
+        server_utc = datetime.datetime(2026, 3, 10, 19, 0, 0, tzinfo=pytz.UTC)
+        now = self.tz_ny.localize(datetime.datetime(2026, 3, 10, 14, 0))
+        assert is_rth_check(details, server_utc, con_id=91001, now=now) is True
+
+    def test_UC_FX_L03_friday_after_week_close(self):
+        """UC-FX-L03: After last Friday segment end (17:01); 17:00 inclusive edge."""
+        details = _make_details("20260306:0100-20260306:1700", "EST")
+        server_utc = datetime.datetime(2026, 3, 6, 22, 0, 0, tzinfo=pytz.UTC)
+        at_close = self.tz_ny.localize(datetime.datetime(2026, 3, 6, 17, 0, 0))
+        assert is_rth_check(details, server_utc, con_id=91002, now=at_close) is True
+        after = self.tz_ny.localize(datetime.datetime(2026, 3, 6, 17, 1, 0))
+        assert is_rth_check(details, server_utc, con_id=91003, now=after) is False
+
+    def test_UC_FX_L04_saturday_closed(self):
+        """UC-FX-L04: Saturday with only CLOSED / no session."""
+        details = _make_details("20260307:CLOSED", "EST")
+        server_utc = datetime.datetime(2026, 3, 7, 17, 0, 0, tzinfo=pytz.UTC)
+        now = self.tz_ny.localize(datetime.datetime(2026, 3, 7, 12, 0))
+        assert is_rth_check(details, server_utc, con_id=91004, now=now) is False
+
+    def test_UC_FX_L05_sunday_week_open_boundary(self):
+        """UC-FX-L05: Sunday 17:15 open; 17:14 still closed (cross-day segment)."""
+        details = _make_details("20260308:1715-20260309:1700", "EST")
+        server_utc = datetime.datetime(2026, 3, 8, 22, 0, 0, tzinfo=pytz.UTC)
+        open_sun = self.tz_ny.localize(datetime.datetime(2026, 3, 8, 17, 15))
+        assert is_rth_check(details, server_utc, con_id=91005, now=open_sun) is True
+        before = self.tz_ny.localize(datetime.datetime(2026, 3, 8, 17, 14))
+        assert is_rth_check(details, server_utc, con_id=91006, now=before) is False
+
+    def test_UC_FX_L06_daily_maintenance_gap(self):
+        """UC-FX-L06: Gap 17:00–17:15 between two segments (Mon 2026-03-09)."""
+        lh = (
+            "20260308:1715-20260309:1700;"
+            "20260309:1715-20260310:1700"
+        )
+        details = _make_details(lh, "EST")
+        server_utc = datetime.datetime(2026, 3, 9, 22, 0, 0, tzinfo=pytz.UTC)
+        in_gap = self.tz_ny.localize(datetime.datetime(2026, 3, 9, 17, 5))
+        assert is_rth_check(details, server_utc, con_id=91007, now=in_gap) is False
+
+    def test_UC_FX_L07_holiday_closed_skipped(self):
+        """UC-FX-L07: CLOSED segment skipped; midday on that day has no session."""
+        lh = (
+            "20260324:0930-20260324:1700;"
+            "20260325:CLOSED;"
+            "20260326:0930-20260326:1700"
+        )
+        details = _make_details(lh, "EST")
+        assert "CLOSED" in lh.upper()
+        closed_seg_skipped = parse_liquid_hours(lh, self.tz_ny)
+        assert len(closed_seg_skipped) == 2
+        server_utc = datetime.datetime(2026, 3, 25, 16, 0, 0, tzinfo=pytz.UTC)
+        now = self.tz_ny.localize(datetime.datetime(2026, 3, 25, 12, 0))
+        assert is_rth_check(details, server_utc, con_id=91008, now=now) is False
+
+    def test_UC_FX_L08_gbpjpy_jst(self):
+        """UC-FX-L08: JST timeZoneId; Tokyo-local liquidHours; in/out of window."""
+        lh = "20260310:0900-20260310:1800"
+        details = _make_details(lh, "JST")
+        server_utc = datetime.datetime(2026, 3, 10, 5, 0, 0, tzinfo=pytz.UTC)
+        inside = self.tz_tokyo.localize(datetime.datetime(2026, 3, 10, 14, 0))
+        assert is_rth_check(details, server_utc, con_id=91009, now=inside) is True
+        outside = self.tz_tokyo.localize(datetime.datetime(2026, 3, 10, 19, 0))
+        assert is_rth_check(details, server_utc, con_id=91010, now=outside) is False
+
+    def test_UC_FX_L09_xagusd_distinct_window(self):
+        """UC-FX-L09: XAGUSD-style shorter EST window vs L02; inside window → True."""
+        details = _make_details("20260311:0800-20260311:2000", "EST")
+        server_utc = datetime.datetime(2026, 3, 11, 19, 0, 0, tzinfo=pytz.UTC)
+        now = self.tz_ny.localize(datetime.datetime(2026, 3, 11, 14, 0))
+        assert is_rth_check(details, server_utc, con_id=91011, now=now) is True

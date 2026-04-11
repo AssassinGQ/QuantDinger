@@ -2,6 +2,11 @@
 pytest 配置与共享 fixtures。
 """
 import pytest
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "Forex: Forex liquidHours unit tests (phase 09)")
+    config.addinivalue_line("markers", "ForexRTH: Forex is_market_open integration tests (phase 09)")
 from unittest.mock import MagicMock
 from app.services.signal_processor import get_signal_deduplicator
 
