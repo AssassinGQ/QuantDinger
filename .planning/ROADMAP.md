@@ -40,6 +40,8 @@
 
 **Requirements**: INT-06, INT-07, INT-08
 
+**Plans**:
+- [ ] 03-01-PLAN.md — 3 runners pass broker_id to price_fetcher
 **Tasks**:
 1. single_symbol_runner 透传 broker_id
 2. regime_runner 透传 broker_id
