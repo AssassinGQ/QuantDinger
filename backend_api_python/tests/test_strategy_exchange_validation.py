@@ -56,6 +56,19 @@ def _forex_payload(strategy_name: str, exchange_id: str, **extra):
     }
 
 
+def _metals_payload(strategy_name: str, exchange_id: str, **extra):
+    return {
+        "user_id": 1,
+        "strategy_name": strategy_name,
+        "market_category": "Metals",
+        "exchange_config": {"exchange_id": exchange_id},
+        "indicator_config": {},
+        "trading_config": {"symbol": "XAUUSD"},
+        "notification_config": {},
+        **extra,
+    }
+
+
 class TestUcSaValCreate:
     def test_uc_sa_val_01_ibkr_paper_forex_ok(self):
         """UC-SA-VAL-01: ibkr-paper + Forex succeeds."""
@@ -78,6 +91,17 @@ class TestUcSaValCreate:
             svc = StrategyService()
             sid = svc.create_strategy(_forex_payload("UC-SA-VAL-03-mt5", "mt5"))
         assert sid == 103
+
+    def test_uc_16_t5_03_ibkr_paper_metals_xauusd_ok(self):
+        """UC-16-T5-03: ibkr-paper + Metals + XAUUSD create_strategy succeeds (mirrors Forex path)."""
+        with _mock_db(insert_rowid=301) as mock_cur:
+            svc = StrategyService()
+            sid = svc.create_strategy(
+                _metals_payload("UC-16-T5-03-ibkr-paper-metals", "ibkr-paper")
+            )
+        assert sid == 301
+        assert isinstance(sid, int)
+        assert mock_cur.execute.called
 
     def test_uc_sa_val_04_binance_forex_raises(self):
         """UC-SA-VAL-04: binance + Forex rejected."""

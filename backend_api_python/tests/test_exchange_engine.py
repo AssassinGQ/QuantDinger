@@ -64,11 +64,28 @@ class TestBaseStatefulClientABC:
         assert MT5Client.engine_id == "mt5"
 
     def test_ibkr_supported_categories(self):
-        assert IBKRClient.supported_market_categories == frozenset({"USStock", "HShare", "Forex"})
+        assert IBKRClient.supported_market_categories == frozenset(
+            {"USStock", "HShare", "Forex", "Metals"}
+        )
         assert "Forex" in IBKRClient.supported_market_categories
+        assert "Metals" in IBKRClient.supported_market_categories
 
     def test_mt5_supported_categories(self):
         assert MT5Client.supported_market_categories == frozenset({"Forex"})
+
+
+class TestUc16T5MetalsEngine:
+    """UC-16-T5: IBKR engine advertises and validates Metals (TRADE-04 integration)."""
+
+    def test_uc_16_t5_01_supported_set_includes_metals(self):
+        """UC-16-T5-01: IBKRClient.supported_market_categories contains Metals."""
+        assert "Metals" in IBKRClient.supported_market_categories
+
+    def test_uc_16_t5_02_validate_market_category_static_metals_ok(self):
+        """UC-16-T5-02: validate_market_category_static('Metals') succeeds."""
+        ok, msg = IBKRClient.validate_market_category_static("Metals")
+        assert ok is True
+        assert msg == ""
 
 
 class TestValidateMarketCategory:
