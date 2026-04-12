@@ -650,6 +650,7 @@ class TestUC16T3Client:
     def test_uc_16_t3_08_place_market_metals_align_zero_message(self):
         """UC-16-T3-08: aligned<=0 Metals message documents troy oz, increments, sample notionals."""
         IBKRClient._lot_size_cache.clear()
+        IBKRClient._mintick_cache.clear()
         try:
             client = _make_client_with_mock_ib()
 
@@ -676,6 +677,7 @@ class TestUC16T3Client:
             assert client._ib.placeOrder.call_count == 0
         finally:
             IBKRClient._lot_size_cache.clear()
+            IBKRClient._mintick_cache.clear()
 
 
 # ===========================================================================
@@ -1039,7 +1041,7 @@ class TestTifMatrix:
 
 
 class TestTifDay:
-    """USStock default paths: market/limit orders use tif='IOC' (unified with Forex/HShare)."""
+    """USStock: market orders IOC; limit orders DAY (TRADE-01 / Phase 17)."""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_sets_tif_ioc(self):
@@ -1051,13 +1053,13 @@ class TestTifDay:
         assert placed_order.tif == "IOC"
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_limit_order_sets_tif_ioc(self):
+    def test_limit_order_sets_tif_day_default(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=401)
         client._ib.placeOrder.return_value = trade_mock
         client.place_limit_order("GOOGL", "buy", 5, 180.0, "USStock")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "IOC"
+        assert placed_order.tif == "DAY"
 
 
 class TestTifForexPolicy:
@@ -1099,13 +1101,107 @@ class TestTifForexPolicy:
         assert placed_order.tif == "IOC"
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_forex_limit_order_passes_tif_ioc(self):
+    def test_forex_limit_order_passes_tif_day_uc_01a(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=501)
         client._ib.placeOrder.return_value = trade_mock
         client.place_limit_order("EURUSD", "buy", 10000.0, 1.10, "Forex", signal_type="close_long")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "IOC"
+        assert placed_order.tif == "DAY"
+
+
+class TestTrade01LimitMintickTif:
+    """TRADE-01 / UC-01a–g: limit DAY default, minTick snap, time_in_force whitelist."""
+
+    @pytest.mark.parametrize("market_type", ["Forex", "USStock", "HShare", "Metals"])
+    def test_uc_01a_automation_limit_tif_day_all_markets(self, market_type):
+        assert IBKRClient._get_tif_for_signal("open_long", market_type, order_type="limit") == "DAY"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_01c_mintick_snap_buy_floor(self):
+        IBKRClient._lot_size_cache.clear()
+        IBKRClient._mintick_cache.clear()
+        try:
+            client = _make_client_with_mock_ib()
+
+            async def _mock_details(*args, **kwargs):
+                return [types.SimpleNamespace(sizeIncrement=1.0, minSize=1.0, minTick=0.0001)]
+
+            client._ib.reqContractDetailsAsync = _mock_details
+            trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=950)
+            client._ib.placeOrder.return_value = trade_mock
+            result = client.place_limit_order("EURUSD", "buy", 10000.0, 1.23456, "Forex")
+            assert result.success is True
+            placed_order = client._ib.placeOrder.call_args[0][1]
+            assert abs(placed_order.lmtPrice - 1.2345) < 1e-9
+        finally:
+            IBKRClient._lot_size_cache.clear()
+            IBKRClient._mintick_cache.clear()
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_01d_mintick_snap_sell_ceil(self):
+        IBKRClient._lot_size_cache.clear()
+        IBKRClient._mintick_cache.clear()
+        try:
+            client = _make_client_with_mock_ib()
+
+            async def _mock_details(*args, **kwargs):
+                return [types.SimpleNamespace(sizeIncrement=1.0, minSize=1.0, minTick=0.0001)]
+
+            client._ib.reqContractDetailsAsync = _mock_details
+            trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=951)
+            client._ib.placeOrder.return_value = trade_mock
+            result = client.place_limit_order("EURUSD", "sell", 10000.0, 1.23456, "Forex")
+            assert result.success is True
+            placed_order = client._ib.placeOrder.call_args[0][1]
+            assert abs(placed_order.lmtPrice - 1.2346) < 1e-9
+        finally:
+            IBKRClient._lot_size_cache.clear()
+            IBKRClient._mintick_cache.clear()
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_01_snap_rejects_nonpositive_lmt_price(self):
+        IBKRClient._lot_size_cache.clear()
+        IBKRClient._mintick_cache.clear()
+        try:
+            client = _make_client_with_mock_ib()
+
+            async def _mock_details(*args, **kwargs):
+                return [types.SimpleNamespace(sizeIncrement=1.0, minSize=1.0, minTick=0.01)]
+
+            client._ib.reqContractDetailsAsync = _mock_details
+            result = client.place_limit_order("EURUSD", "buy", 10000.0, 0.005, "Forex")
+            assert result.success is False
+            assert "non-positive" in result.message.lower()
+            client._ib.placeOrder.assert_not_called()
+        finally:
+            IBKRClient._lot_size_cache.clear()
+            IBKRClient._mintick_cache.clear()
+
+    def test_uc_01g_invalid_time_in_force_no_place_order(self):
+        client = _make_client_with_mock_ib()
+        result = client.place_limit_order(
+            "EURUSD", "buy", 10000.0, 1.10, "Forex", time_in_force="FOK",
+        )
+        assert result.success is False
+        assert "invalid_time_in_force" in (result.message or "").lower()
+        client._ib.placeOrder.assert_not_called()
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_01f_limit_tif_gtc(self):
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=952)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_limit_order("AAPL", "buy", 10, 150.0, "USStock", time_in_force="gtc")
+        assert client._ib.placeOrder.call_args[0][1].tif == "GTC"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_01f_limit_tif_ioc_explicit(self):
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=953)
+        client._ib.placeOrder.return_value = trade_mock
+        client.place_limit_order("AAPL", "buy", 10, 150.0, "USStock", time_in_force="IOC")
+        assert client._ib.placeOrder.call_args[0][1].tif == "IOC"
 
 
 class TestPlaceMarketOrderForex:
@@ -1185,6 +1281,7 @@ class TestPlaceMarketOrderForex:
     def test_uc_e2_alignment_yields_zero_forex_hint(self):
         """UC-E2: sizeIncrement 25000 with qty 10000 → 0; Forex IDEALPRO hint; no placeOrder."""
         IBKRClient._lot_size_cache.clear()
+        IBKRClient._mintick_cache.clear()
         try:
             client = _make_client_with_mock_ib()
 
@@ -1206,6 +1303,7 @@ class TestPlaceMarketOrderForex:
             assert client._ib.placeOrder.call_count == 0
         finally:
             IBKRClient._lot_size_cache.clear()
+            IBKRClient._mintick_cache.clear()
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_uc_e3_zero_qty_rejected_before_place_order(self):

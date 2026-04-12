@@ -224,11 +224,16 @@ def place_order():
             price = data.get('price')
             if not price or float(price) <= 0:
                 return jsonify({"success": False, "error": "Limit order requires price"}), 400
-            result = client.place_limit_order(
-                symbol=symbol, side=side,
-                quantity=float(quantity), price=float(price),
+            limit_kw: Dict[str, Any] = dict(
+                symbol=symbol,
+                side=side,
+                quantity=float(quantity),
+                price=float(price),
                 market_type=market_type,
             )
+            if 'timeInForce' in data:
+                limit_kw['time_in_force'] = data.get('timeInForce')
+            result = client.place_limit_order(**limit_kw)
         else:
             result = client.place_market_order(
                 symbol=symbol, side=side,

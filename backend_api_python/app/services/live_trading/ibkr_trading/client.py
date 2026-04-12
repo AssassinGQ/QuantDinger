@@ -162,18 +162,25 @@ class IBKRClient(BaseStatefulClient):
     _RECONNECT_DELAYS = [2, 5, 10, 30, 60]
 
     @staticmethod
-    def _get_tif_for_signal(signal_type: str, market_type: str = "USStock") -> str:
-        """Get TIF (Time in Force) based on signal type and market type.
+    def _get_tif_for_signal(
+        signal_type: str, market_type: str = "USStock", order_type: str = "market",
+    ) -> str:
+        """Get TIF (Time in Force) based on signal type, market type, and order kind.
 
-        For ``market_type`` in ``("Forex", "USStock", "HShare", "Metals")``, all eight
-        signal types use ``"IOC"`` (unified policy; ``signal_type`` is ignored
-        for these categories). IBKR lists IOC for the relevant venues including
-        Hong Kong Stock Exchange (SEHK); see
+        **Limit orders (automation / default REST):** ``order_type=="limit"`` → ``"DAY"``
+        for every market (resting until session end or fill); ``signal_type`` and
+        ``market_type`` do not change TIF for limits.
+
+        **Market orders:** For ``market_type`` in ``("Forex", "USStock", "HShare", "Metals")``,
+        all signal types use ``"IOC"`` (unified policy; ``signal_type`` is ignored).
+        IBKR lists IOC for the relevant venues including SEHK; see
         https://www.interactivebrokers.com/en/trading/order-type-exchanges.php?ot=ioc
 
-        For any other ``market_type`` not explicitly handled here, returns
-        ``"DAY"`` as a conservative default until support is added.
+        For any other ``market_type`` not explicitly handled here, returns ``"DAY"``
+        as a conservative default until support is added.
         """
+        if (order_type or "").lower() == "limit":
+            return "DAY"
         if market_type in ("Forex", "USStock", "HShare", "Metals"):
             return "IOC"
         return "DAY"
@@ -929,24 +936,59 @@ class IBKRClient(BaseStatefulClient):
         return (True, "")
 
     _lot_size_cache: Dict[int, float] = {}
+    _mintick_cache: Dict[int, float] = {}
+
+    async def _contract_increment_and_mintick(
+        self, contract, symbol: str, *, need_mintick: bool = False,
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Single ``reqContractDetailsAsync`` path: lot increment and optional minTick (cached per conId)."""
+        con_id = getattr(contract, "conId", 0) or 0
+        cached_inc = self._lot_size_cache.get(con_id) if con_id else None
+        cached_mt = self._mintick_cache.get(con_id) if con_id else None
+
+        if cached_inc and cached_inc > 0:
+            if not need_mintick:
+                return cached_inc, None
+            if cached_mt and cached_mt > 0:
+                return cached_inc, cached_mt
+
+        try:
+            details_list = await self._ib.reqContractDetailsAsync(contract)
+            if not details_list:
+                return (cached_inc if cached_inc and cached_inc > 0 else None), None
+            d = details_list[0]
+
+            def _detail_float(name: str) -> float:
+                try:
+                    v = float(getattr(d, name, 0) or 0)
+                    if math.isnan(v) or math.isinf(v):
+                        return 0.0
+                    return v
+                except (TypeError, ValueError):
+                    return 0.0
+
+            increment = _detail_float("sizeIncrement")
+            if increment <= 0:
+                increment = _detail_float("minSize")
+            min_tick = _detail_float("minTick")
+            if increment > 0 and con_id:
+                self._lot_size_cache[con_id] = increment
+            if min_tick > 0 and con_id:
+                self._mintick_cache[con_id] = min_tick
+            inc_out = increment if increment > 0 else (cached_inc if cached_inc and cached_inc > 0 else None)
+            mt_out = min_tick if min_tick > 0 else (cached_mt if cached_mt and cached_mt > 0 else None)
+            return inc_out, mt_out
+        except Exception as e:
+            logger.warning("[IBKR] reqContractDetails failed for %s: %s", symbol, e)
+            return (cached_inc if cached_inc and cached_inc > 0 else None), (
+                cached_mt if cached_mt and cached_mt > 0 else None
+            )
 
     async def _align_qty_to_contract(self, contract, quantity: float, symbol: str) -> float:
         """Query IBKR ContractDetails for sizeIncrement and floor-align quantity."""
-        con_id = getattr(contract, "conId", 0) or 0
-        increment = self._lot_size_cache.get(con_id)
-        if increment is None:
-            try:
-                details_list = await self._ib.reqContractDetailsAsync(contract)
-                if details_list:
-                    d = details_list[0]
-                    increment = float(getattr(d, "sizeIncrement", 0) or 0)
-                    if increment <= 0:
-                        increment = float(getattr(d, "minSize", 0) or 0)
-                    if increment > 0 and con_id:
-                        self._lot_size_cache[con_id] = increment
-            except Exception as e:
-                logger.warning("[IBKR] reqContractDetails failed for %s: %s", symbol, e)
-                increment = None
+        increment, _ = await self._contract_increment_and_mintick(
+            contract, symbol, need_mintick=False,
+        )
 
         if not increment or increment <= 0:
             return quantity
@@ -958,6 +1000,14 @@ class IBKRClient(BaseStatefulClient):
                 quantity, aligned, increment, symbol,
             )
         return aligned
+
+    @staticmethod
+    def _snap_limit_price_to_mintick(side: str, raw: float, min_tick: float) -> float:
+        """BUY: floor to tick; SELL: ceil to tick."""
+        s = (side or "").lower()
+        if s == "buy":
+            return math.floor(raw / min_tick) * min_tick
+        return math.ceil(raw / min_tick) * min_tick
 
     # ── fire-and-forget order handlers ──────────────────────────────
 
@@ -1183,7 +1233,7 @@ class IBKRClient(BaseStatefulClient):
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
         signal_type = str(kwargs.get("signal_type", ""))
-        tif = self._get_tif_for_signal(signal_type, market_type)
+        tif = self._get_tif_for_signal(signal_type, market_type, order_type="market")
 
         async def _do():
             await self._ensure_connected_async()
@@ -1261,7 +1311,9 @@ class IBKRClient(BaseStatefulClient):
 
     def place_limit_order(
         self, symbol: str, side: str, quantity: float, price: float,
-        market_type: str = "USStock", **kwargs,
+        market_type: str = "USStock",
+        time_in_force: Optional[str] = None,
+        **kwargs,
     ) -> LiveOrderResult:
         from app.services.live_trading.order_normalizer import get_market_pre_normalizer
 
@@ -1272,7 +1324,18 @@ class IBKRClient(BaseStatefulClient):
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
         signal_type = str(kwargs.get("signal_type", ""))
-        tif = self._get_tif_for_signal(signal_type, market_type)
+        if time_in_force is None:
+            tif = self._get_tif_for_signal(signal_type, market_type, order_type="limit")
+        else:
+            u = (time_in_force or "").strip().upper()
+            allowed = ("IOC", "DAY", "GTC")
+            if u not in allowed:
+                return LiveOrderResult(
+                    success=False,
+                    message=f"invalid_time_in_force:{time_in_force!r} (allowed: {', '.join(allowed)})",
+                    exchange_id=self.engine_id,
+                )
+            tif = u
 
         async def _do():
             await self._ensure_connected_async()
@@ -1288,7 +1351,17 @@ class IBKRClient(BaseStatefulClient):
                 return LiveOrderResult(success=False, message=reason,
                                    exchange_id=self.engine_id)
 
-            aligned = await self._align_qty_to_contract(contract, qty, symbol)
+            increment, min_tick = await self._contract_increment_and_mintick(
+                contract, symbol, need_mintick=True,
+            )
+            aligned = qty
+            if increment and increment > 0:
+                aligned = math.floor(qty / increment) * increment
+                if aligned != qty:
+                    logger.info(
+                        "[IBKR] Quantity aligned to contract sizeIncrement: %.2f -> %.0f (increment=%s, symbol=%s)",
+                        qty, aligned, increment, symbol,
+                    )
             if aligned <= 0:
                 msg = (
                     f"Quantity {aligned} rounds to 0 after lot-size alignment for {symbol}"
@@ -1311,9 +1384,25 @@ class IBKRClient(BaseStatefulClient):
                     exchange_id=self.engine_id,
                 )
 
+            snap_price = float(price)
+            if min_tick and min_tick > 0:
+                snap_price = self._snap_limit_price_to_mintick(side, snap_price, min_tick)
+            else:
+                logger.warning(
+                    "[IBKR] minTick missing or invalid for %s; limit price not snapped to tick grid",
+                    symbol,
+                )
+
+            if snap_price <= 0:
+                return LiveOrderResult(
+                    success=False,
+                    message=f"Limit price after minTick alignment is non-positive for {symbol}",
+                    exchange_id=self.engine_id,
+                )
+
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
-                totalQuantity=aligned, lmtPrice=price, account=self._account,
+                totalQuantity=aligned, lmtPrice=snap_price, account=self._account,
                 tif=tif,
             )
             trade = self._ib.placeOrder(contract, order)
