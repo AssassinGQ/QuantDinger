@@ -111,7 +111,9 @@ def _make_ibkr_client_for_e2e(
     if sec_type == "STK":
         client._ib.qualifyContractsAsync = _make_qualify_for_stock(symbol, con_id)
     else:
-        client._ib.qualifyContractsAsync = _make_qualify_for_pair(symbol, con_id, local_symbol)
+        client._ib.qualifyContractsAsync = _make_qualify_for_pair(
+            symbol, con_id, local_symbol, sec_type=sec_type
+        )
     client._events_registered = False
     client._register_events()
 
@@ -263,14 +265,16 @@ def test_uc_sa_e2e_xagusd_open_close_full_chain(
     _mock_notify,
     patched_records,
 ):
-    """UC-SA-E2E-XAGUSD: Worker → real runner → real IBKRClient open_long then close_long with full IBKR callbacks."""
+    """UC-SA-E2E-XAGUSD / UC-16-T7-01: Metals + CMDTY; Worker → runner → placeOrder XAGUSD SMART."""
     mock_load_cfg.return_value = {
-        "market_category": "Forex",
+        "market_category": "Metals",
         "exchange_config": {"exchange_id": "ibkr-paper"},
-        "market_type": "forex",
+        "market_type": "metals",
     }
 
-    ibkr_client, place_calls = _make_ibkr_client_for_e2e("XAGUSD", 87654321, "XAGUSD")
+    ibkr_client, place_calls = _make_ibkr_client_for_e2e(
+        "XAGUSD", 77124483, "XAGUSD", sec_type="CMDTY"
+    )
 
     with patch(
         "app.services.pending_order_worker.create_client",
@@ -301,6 +305,9 @@ def test_uc_sa_e2e_xagusd_open_close_full_chain(
     assert len(place_calls) == 1
 
     t_open = place_calls[0]
+    assert t_open.contract.secType == "CMDTY"
+    assert getattr(t_open.contract, "symbol", None) == "XAGUSD"
+    assert getattr(t_open.contract, "exchange", None) == "SMART"
     assert t_open.order.action == "BUY"
     _fire_callbacks_after_fill(
         ibkr_client, t_open, 5000.0, position_after=5000.0, fill_tag="xag_open"
@@ -337,6 +344,9 @@ def test_uc_sa_e2e_xagusd_open_close_full_chain(
     assert len(place_calls) == 2
 
     t_close = place_calls[1]
+    assert t_close.contract.secType == "CMDTY"
+    assert getattr(t_close.contract, "symbol", None) == "XAGUSD"
+    assert getattr(t_close.contract, "exchange", None) == "SMART"
     assert t_close.order.action == "SELL"
     _fire_callbacks_after_fill(
         ibkr_client, t_close, 5000.0, position_after=0.0, fill_tag="xag_close"
