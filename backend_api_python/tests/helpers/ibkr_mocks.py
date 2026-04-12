@@ -7,7 +7,9 @@ helpers used by smoke and forex E2E tests.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.services.live_trading.ibkr_trading.client import IBKRClient
 
@@ -22,10 +24,13 @@ __all__ = [
     "_fill_mock_exec",
     "_fire_callbacks_after_fill",
     "_make_client_with_mock_ib",
+    "_make_ibkr_client_for_e2e",
     "_make_mock_ib_insync",
     "_make_qualify_for_pair",
+    "_make_qualify_for_stock",
     "_make_trade_mock",
     "_wire_ib_events",
+    "patched_records",
 ]
 
 
@@ -148,3 +153,93 @@ def _fire_callbacks_after_fill(
     ent.position = position_after
     ent.value = abs(position_after) * price
     client._on_pnl_single(ent)
+
+
+def _make_qualify_for_stock(symbol: str, con_id: int):
+    """qualifyContractsAsync for equity: sets secType=STK."""
+
+    async def _mock_qualify(*contracts):
+        for c in contracts:
+            c.conId = con_id
+            c.localSymbol = symbol
+            c.secType = "STK"
+        return list(contracts)
+
+    return _mock_qualify
+
+
+def _make_ibkr_client_for_e2e(
+    symbol: str,
+    con_id: int,
+    local_symbol: str,
+    *,
+    sec_type: str = "CASH",
+    size_increment: float = 1.0,
+    min_tick: float = 0.0,
+):
+    """Real IBKRClient with mock ib_insync; wired events + qualify stub.
+
+    When *min_tick* > 0 the reqContractDetailsAsync stub returns real
+    sizeIncrement/minTick so limit-order minTick-snap works correctly.
+    """
+    import types as _t
+
+    client = _make_client_with_mock_ib()
+    _wire_ib_events(client._ib)
+    if sec_type == "STK":
+        client._ib.qualifyContractsAsync = _make_qualify_for_stock(symbol, con_id)
+    else:
+        client._ib.qualifyContractsAsync = _make_qualify_for_pair(
+            symbol, con_id, local_symbol, sec_type=sec_type
+        )
+
+    if min_tick > 0:
+        IBKRClient._lot_size_cache.pop(con_id, None)
+        IBKRClient._mintick_cache.pop(con_id, None)
+
+        async def _mock_details(*_a, **_kw):
+            return [
+                _t.SimpleNamespace(
+                    sizeIncrement=size_increment,
+                    minSize=1.0,
+                    minTick=min_tick,
+                    liquidHours="20260305:0930-20260305:1600",
+                    timeZoneId="EST",
+                )
+            ]
+
+        client._ib.reqContractDetailsAsync = _mock_details
+
+    client._events_registered = False
+    client._register_events()
+
+    place_calls: list[MagicMock] = []
+
+    def _place_side_effect(contract, order):
+        oid = 60000 + len(place_calls)
+        t = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=oid)
+        t.contract = contract
+        t.order.action = order.action
+        t.order.totalQuantity = order.totalQuantity
+        if hasattr(order, "lmtPrice"):
+            t.order.lmtPrice = order.lmtPrice
+        if hasattr(order, "tif"):
+            t.order.tif = order.tif
+        place_calls.append(t)
+        return t
+
+    client._ib.placeOrder.side_effect = _place_side_effect
+    return client, place_calls
+
+
+@pytest.fixture
+def patched_records():
+    """Mock DB persistence for position/pnl so callbacks don't hit real DB."""
+    with patch(
+        "app.services.live_trading.records.ibkr_save_position",
+        return_value=True,
+    ), patch(
+        "app.services.live_trading.records.ibkr_save_pnl",
+        return_value=True,
+    ):
+        yield

@@ -9,12 +9,10 @@ Only ib_insync, DB and notification are mocked; runner and client are REAL.
 
 from __future__ import annotations
 
-import importlib
 import sys
 import types
 import uuid
 from contextlib import contextmanager
-from functools import wraps
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,41 +20,15 @@ import pytest
 for mod in ("jwt", "psycopg2", "psycopg2.pool", "psycopg2.extras"):
     sys.modules.setdefault(mod, types.ModuleType(mod))
 
-
-def _noop_decorator(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        return f(*args, **kwargs)
-
-    return decorated
-
-
-import app.utils.auth as _auth_mod
-
-_auth_mod.login_required = _noop_decorator
-
-import app.routes.strategy as strategy_mod
-
-importlib.reload(strategy_mod)
-
-from flask import Flask, g
-
 from app.services.live_trading.ibkr_trading.client import IBKRClient
 from app.services.pending_order_worker import PendingOrderWorker
 
-from tests.test_ibkr_client import (
-    _make_client_with_mock_ib,
+from tests.helpers.ibkr_mocks import (
+    _fire_callbacks_after_fill,
+    _make_ibkr_client_for_e2e,
     _make_mock_ib_insync,
     _make_trade_mock,
 )
-from tests.test_ibkr_forex_paper_smoke import (
-    _FakeEvent,
-    _fire_callbacks_after_fill,
-    _make_qualify_for_pair,
-    _wire_ib_events,
-)
-
-strategy_bp = strategy_mod.strategy_bp
 
 
 # ---------------------------------------------------------------------------
@@ -75,105 +47,12 @@ def _mock_db(insert_rowid: int = 1):
         yield mock_cur
 
 
-@pytest.fixture
-def client_fixture():
-    """Minimal Flask app with strategy routes; g.user_id set for UC-SA-E2E API tests."""
-    app = Flask(__name__)
-    app.register_blueprint(strategy_bp, url_prefix="/api")
-
-    @app.before_request
-    def set_g():
-        g.user_id = 1
-
-    with app.test_client() as c:
-        yield c
-
-
-def _make_qualify_for_stock(symbol: str, con_id: int):
-    """qualifyContractsAsync for equity: sets secType=STK."""
-
-    async def _mock_qualify(*contracts):
-        for c in contracts:
-            c.conId = con_id
-            c.localSymbol = symbol
-            c.secType = "STK"
-        return list(contracts)
-
-    return _mock_qualify
-
-
-def _make_ibkr_client_for_e2e(
-    symbol: str, con_id: int, local_symbol: str, *, sec_type: str = "CASH",
-    size_increment: float = 1.0, min_tick: float = 0.0,
-):
-    """Real IBKRClient with mock ib_insync; wired events + qualify stub.
-
-    When *min_tick* > 0 the reqContractDetailsAsync stub returns real
-    sizeIncrement/minTick so limit-order minTick-snap works correctly.
-    """
-    import types as _t
-
-    client = _make_client_with_mock_ib()
-    _wire_ib_events(client._ib)
-    if sec_type == "STK":
-        client._ib.qualifyContractsAsync = _make_qualify_for_stock(symbol, con_id)
-    else:
-        client._ib.qualifyContractsAsync = _make_qualify_for_pair(
-            symbol, con_id, local_symbol, sec_type=sec_type
-        )
-
-    if min_tick > 0:
-        IBKRClient._lot_size_cache.pop(con_id, None)
-        IBKRClient._mintick_cache.pop(con_id, None)
-
-        async def _mock_details(*_a, **_kw):
-            return [_t.SimpleNamespace(
-                sizeIncrement=size_increment, minSize=1.0, minTick=min_tick,
-                liquidHours="20260305:0930-20260305:1600", timeZoneId="EST",
-            )]
-        client._ib.reqContractDetailsAsync = _mock_details
-
-    client._events_registered = False
-    client._register_events()
-
-    place_calls: list[MagicMock] = []
-
-    def _place_side_effect(contract, order):
-        oid = 60000 + len(place_calls)
-        t = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=oid)
-        t.contract = contract
-        t.order.action = order.action
-        t.order.totalQuantity = order.totalQuantity
-        if hasattr(order, "lmtPrice"):
-            t.order.lmtPrice = order.lmtPrice
-        if hasattr(order, "tif"):
-            t.order.tif = order.tif
-        place_calls.append(t)
-        return t
-
-    client._ib.placeOrder.side_effect = _place_side_effect
-    return client, place_calls
-
-
-@pytest.fixture
-def patched_records():
-    """Mock DB persistence for position/pnl so callbacks don't hit real DB."""
-    with patch(
-        "app.services.live_trading.records.ibkr_save_position",
-        return_value=True,
-    ), patch(
-        "app.services.live_trading.records.ibkr_save_pnl",
-        return_value=True,
-    ):
-        yield
-
-
 # ---------------------------------------------------------------------------
 # 1. Flask API — strategy creation (unchanged)
 # ---------------------------------------------------------------------------
 
 
-def test_uc_sa_e2e_api_forex_create_returns_200(client_fixture):
+def test_uc_sa_e2e_api_forex_create_returns_200(strategy_client):
     """UC-SA-E2E: POST /api/strategies/create — Forex + ibkr-paper + EURUSD."""
     unique = uuid.uuid4().hex[:10]
     payload = {
@@ -185,7 +64,7 @@ def test_uc_sa_e2e_api_forex_create_returns_200(client_fixture):
         "notification_config": {},
     }
     with _mock_db(insert_rowid=501) as mock_cur:
-        res = client_fixture.post("/api/strategies/create", json=payload)
+        res = strategy_client.post("/api/strategies/create", json=payload)
     assert res.status_code == 200
     body = res.get_json()
     assert body["code"] == 1

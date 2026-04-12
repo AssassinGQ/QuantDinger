@@ -80,18 +80,6 @@ def _run_open_close_cycle(
     return r_open, r_close, place_calls
 
 
-@pytest.fixture
-def patched_records():
-    with patch(
-        "app.services.live_trading.records.ibkr_save_position",
-        return_value=True,
-    ), patch(
-        "app.services.live_trading.records.ibkr_save_pnl",
-        return_value=True,
-    ):
-        yield
-
-
 @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
 def test_forex_paper_smoke_eurusd_uc_sa_smk_01(patched_records):
     """UC-SA-SMK-01: EURUSD mock Paper open+close; qualify uses conId 12087792 / EUR.USD."""

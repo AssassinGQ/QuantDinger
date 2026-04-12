@@ -3,6 +3,9 @@ pytest 配置与共享 fixtures。
 """
 import pytest
 
+from tests.helpers.flask_strategy_app import make_strategy_test_app
+from tests.helpers.ibkr_mocks import patched_records  # noqa: F401 — register for all tests
+
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "Forex: Forex liquidHours unit tests (phase 09)")
@@ -36,4 +39,12 @@ def make_db_ctx(
 def reset_signal_deduplicator():
     """每个测试前清空内存去重缓存，避免互相干扰。"""
     get_signal_deduplicator().clear()
+
+
+@pytest.fixture
+def strategy_client():
+    """Flask test client for strategy_bp at /api with g.user_id=1 (same as legacy client_fixture)."""
+    app = make_strategy_test_app()
+    with app.test_client() as c:
+        yield c
 
