@@ -68,7 +68,7 @@ Each task was committed atomically:
 2. **Task 2: client.py — Metals routing, validation, messages, TIF** — `867c717` (feat)
 3. **Task 3: test_ibkr_client.py — Metals tests + UC matrix** — `04ad67e` (test)
 
-**Plan metadata:** _(see docs commit including SUMMARY/STATE/ROADMAP/REQUIREMENTS)_
+**Plan metadata:** `a54781c` (docs: SUMMARY, STATE, ROADMAP, REQUIREMENTS)
 
 ## Files Created/Modified
 
