@@ -370,6 +370,31 @@ class PendingOrderWorker:
                 )
                 return
 
+        row_price = float(order_row.get("price") or 0.0)
+        lim_px = float(
+            payload.get("limit_price")
+            or payload.get("price")
+            or row_price
+            or 0.0
+        )
+        ot_live = str(
+            payload.get("order_type") or order_row.get("order_type") or "market"
+        ).strip().lower()
+        if "order_type" not in payload:
+            payload["order_type"] = ot_live
+
+        notification_config_live = payload.get("notification_config") or {}
+        if not notification_config_live and strategy_id:
+            notification_config_live = records.load_notification_config(int(strategy_id))
+        if not isinstance(notification_config_live, dict):
+            notification_config_live = {}
+
+        strategy_name_live = str(payload.get("strategy_name") or "").strip()
+        if not strategy_name_live:
+            strategy_name_live = records.load_strategy_name(strategy_id) or f"Strategy_{strategy_id}"
+
+        direction_live = "short" if "short" in str(signal_type or "").lower() else "long"
+
         runner = get_runner(client)
         ctx = OrderContext(
             order_id=order_id,
@@ -382,6 +407,10 @@ class PendingOrderWorker:
             exchange_config=exchange_config,
             payload=payload,
             order_row=order_row,
+            notification_config=notification_config_live,
+            strategy_name=strategy_name_live,
+            direction=direction_live,
+            price=lim_px,
         )
 
         pc = runner.pre_check(client=client, order_context=ctx)
