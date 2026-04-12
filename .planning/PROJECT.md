@@ -25,6 +25,7 @@ QuantDinger 的 IBKR 交易客户端已扩展支持 Forex（外汇）交易。IB
 **Shipped v1.0** (2026-04-11) — 12 phases, 15 plans.
 **Phase 13 complete** (2026-04-11) — Qualify 缓存 + E2E prefix 修复, 931 backend tests passing.
 **Phase 14 complete** (2026-04-11) — TIF 统一（Forex/USStock/HShare → IOC），956 backend tests passing.
+**Phase 15 complete** (2026-04-12) — Normalize pipeline ordering (MarketPreNormalizer + pre_normalize → pre_check → qualify → align)，958 backend tests passing.
 
 Tech stack: Python 3.10+ backend (Flask + ib_insync), Vue.js 2.x frontend, PostgreSQL, Docker.
 Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wizard.
@@ -53,12 +54,12 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 - ✓ Qualify 结果缓存（TTL per market, (symbol, market_type) key, 重连不清缓存） — v1.1 Phase 13
 - ✓ E2E 测试 API prefix 统一（/api/strategy/ → /api/） — v1.1 Phase 13
 - ✓ TIF 统一 Forex/USStock/HShare → IOC（IBKR SEHK 支持 IOC 确认） — v1.1 Phase 14
+- ✓ Normalize pipeline ordering（MarketPreNormalizer: pre_normalize → pre_check → qualify → align，无重复） — v1.1 Phase 15
 
 ### Active
 
 - Forex 限价单（LimitOrder + 价格精度 + 部分成交处理）
 - 贵金属合约归类（XAUUSD/XAGUSD → CMDTY vs CASH 判定）
-- normalize() 调用时序修正（确保 normalize 和 align 顺序正确）
 - 前端 HTTP E2E 测试（Vue wizard → API round-trip）
 
 ### Out of Scope
@@ -83,6 +84,7 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 | isForexMarket 替代 isMT5Market | 更清晰的语义 + isForexMT5/isForexIBKR 子检查 | ✓ Good (Phase 12) |
 | Qualify TTL 缓存 (symbol, market_type) | 减少冗余 qualifyContractsAsync，重连不清缓存 | ✓ Good (Phase 13) |
 | TIF 统一 IOC (Forex/USStock/HShare) | 与 Forex 自动化一致；IBKR 确认 SEHK 支持 IOC | ✓ Good (Phase 14) |
+| MarketPreNormalizer 两层架构 | 市场层 pre_normalize+pre_check（同步） vs 券商层 qualify+align（异步） | ✓ Good (Phase 15) |
 
 ## Known Tech Debt (from v1.0 Audit)
 
@@ -98,8 +100,8 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 ## Constraints
 
 - **Tech stack**: ib_insync，与现有 IBKR 集成一致
-- **兼容性**: USStock/HShare 交易路径不受影响（956 tests regression-free）
+- **兼容性**: USStock/HShare 交易路径不受影响（958 tests regression-free）
 - **架构**: BaseStatefulClient / StatefulClientRunner 模式
 
 ---
-*Last updated: 2026-04-11 — Phase 14 complete*
+*Last updated: 2026-04-12 — Phase 15 complete*
