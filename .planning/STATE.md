@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
 status: unknown
-stopped_at: Phase 18 context gathered
-last_updated: "2026-04-12T08:02:56.580Z"
+stopped_at: Completed 18-01-PLAN.md
+last_updated: "2026-04-12T08:35:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 13
-  completed_plans: 13
+  total_plans: 19
+  completed_plans: 14
 ---
 
 # Project State
@@ -20,14 +20,14 @@ See: `.planning/PROJECT.md`
 
 **Core value:** 清理 v1.0 遗留技术债务，增加 Forex 限价单，补全 E2E 测试覆盖。
 
-**Current focus:** Phase 17 — forex-limit-orders-automation
+**Current focus:** Phase 18 — e2e-integration-testing
 
 **Verification:** use-case-driven (`.planning/config.json`). **Regression gate:** backend pytest suite must stay green.
 
 ## Current Position
 
-Phase: 17 (forex-limit-orders-automation) — EXECUTING
-Plan: 2 of 3
+Phase: 18 (e2e-integration-testing) — EXECUTING
+Plan: 2 of 6
 
 ## Performance Metrics
 
@@ -47,6 +47,7 @@ Plan: 2 of 3
 | Phase 16-precious-metals-contract-classification P01 | 12min | 1 tasks | 2 files |
 | Phase 16-precious-metals-contract-classification P03 | 18min | 3 tasks | 4 files |
 | Phase 17-forex-limit-orders-automation P01 | 25min | 1 tasks | 3 files |
+| Phase 18-e2e-integration-testing P01 | 8min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -64,10 +65,11 @@ Plan: 2 of 3
 - [Phase 16-precious-metals-contract-classification]: 16-02: IBKRClient `Metals` uses `Contract` CMDTY/SMART; `ForexPreNormalizer` for factory; IOC + Forex signal map; qualify TTL shares `IBKR_QUALIFY_TTL_FOREX_SEC`; TRADE-04 satisfied at client layer.
 - [Phase 16-precious-metals-contract-classification]: 16-03: Integration tests — engine/strategy Metals; smoke/E2E XAGUSD with `market_category` Metals, qualify CMDTY, conId 77124483; TRADE-04 closed with full pytest gate.
 - **[Phase 17-forex-limit-orders-automation]:** 17-01: `_get_tif_for_signal(..., order_type)` — limit→DAY; `place_limit_order` minTick snap (BUY floor/SELL ceil); optional `time_in_force` IOC/DAY/GTC; REST `timeInForce` when key present; TRADE-01 satisfied at client + route + tests.
+- **[Phase 18-e2e-integration-testing]:** 18-01: Shared `tests/helpers/ibkr_mocks` + `flask_strategy_app` + `conftest` `strategy_client` / `patched_records`; smoke and `test_forex_ibkr_e2e` refactored to shared imports (foundation for TRADE-05/06 + TEST-02 work in 18-02+).
 
 ### Pending Todos
 
-- Continue v1.1 roadmap: Phase 17 (Forex limit orders), then 18 as dependencies allow.
+- Continue Phase 18: execute plans 18-02 through 18-06 (qualify-cache E2E, limit cancel/errors, cross-market, strategy HTTP, Vue Jest).
 
 ### Blockers/Concerns
 
@@ -75,6 +77,6 @@ Plan: 2 of 3
 
 ## Session Continuity
 
-**Last session:** 2026-04-12T08:02:56.577Z
-**Stopped At:** Phase 18 context gathered
-**Resume File:** .planning/phases/18-e2e-integration-testing/18-CONTEXT.md
+**Last session:** 2026-04-12T08:35:00.000Z
+**Stopped At:** Completed 18-01-PLAN.md
+**Resume File:** .planning/phases/18-e2e-integration-testing/18-02-PLAN.md
