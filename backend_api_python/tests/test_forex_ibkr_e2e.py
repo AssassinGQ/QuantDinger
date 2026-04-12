@@ -103,9 +103,16 @@ def _make_qualify_for_stock(symbol: str, con_id: int):
 
 
 def _make_ibkr_client_for_e2e(
-    symbol: str, con_id: int, local_symbol: str, *, sec_type: str = "CASH"
+    symbol: str, con_id: int, local_symbol: str, *, sec_type: str = "CASH",
+    size_increment: float = 1.0, min_tick: float = 0.0,
 ):
-    """Real IBKRClient with mock ib_insync; wired events + qualify stub."""
+    """Real IBKRClient with mock ib_insync; wired events + qualify stub.
+
+    When *min_tick* > 0 the reqContractDetailsAsync stub returns real
+    sizeIncrement/minTick so limit-order minTick-snap works correctly.
+    """
+    import types as _t
+
     client = _make_client_with_mock_ib()
     _wire_ib_events(client._ib)
     if sec_type == "STK":
@@ -114,6 +121,18 @@ def _make_ibkr_client_for_e2e(
         client._ib.qualifyContractsAsync = _make_qualify_for_pair(
             symbol, con_id, local_symbol, sec_type=sec_type
         )
+
+    if min_tick > 0:
+        IBKRClient._lot_size_cache.pop(con_id, None)
+        IBKRClient._mintick_cache.pop(con_id, None)
+
+        async def _mock_details(*_a, **_kw):
+            return [_t.SimpleNamespace(
+                sizeIncrement=size_increment, minSize=1.0, minTick=min_tick,
+                liquidHours="20260305:0930-20260305:1600", timeZoneId="EST",
+            )]
+        client._ib.reqContractDetailsAsync = _mock_details
+
     client._events_registered = False
     client._register_events()
 
@@ -125,6 +144,10 @@ def _make_ibkr_client_for_e2e(
         t.contract = contract
         t.order.action = order.action
         t.order.totalQuantity = order.totalQuantity
+        if hasattr(order, "lmtPrice"):
+            t.order.lmtPrice = order.lmtPrice
+        if hasattr(order, "tif"):
+            t.order.tif = order.tif
         place_calls.append(t)
         return t
 
@@ -411,3 +434,381 @@ def test_uc_sa_e2e_regr_usstock_full_chain(
     _fire_callbacks_after_fill(
         ibkr_client, t, 10.0, position_after=10.0, fill_tag="aapl_open"
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. Forex LIMIT order E2E — full chain with minTick snap + DAY TIF
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+@patch("app.services.pending_order_worker.PendingOrderWorker._notify_live_best_effort")
+@patch("app.services.pending_order_worker.records.mark_order_sent")
+@patch("app.services.pending_order_worker.records.mark_order_failed")
+@patch("app.services.pending_order_worker.load_strategy_configs")
+def test_e2e_forex_limit_buy_full_chain(
+    mock_load_cfg,
+    mock_failed,
+    mock_sent,
+    _mock_notify,
+    patched_records,
+):
+    """E2E: Forex limit BUY — Worker → runner (order_type=limit) → IBKRClient.place_limit_order
+    → minTick snap (BUY floor) → LimitOrder DAY TIF → placeOrder + Filled callback."""
+    mock_load_cfg.return_value = {
+        "market_category": "Forex",
+        "exchange_config": {"exchange_id": "ibkr-paper"},
+        "market_type": "forex",
+    }
+
+    ibkr_client, place_calls = _make_ibkr_client_for_e2e(
+        "EURUSD", 12087792, "EUR.USD", min_tick=0.00005,
+    )
+
+    with patch(
+        "app.services.pending_order_worker.create_client",
+        return_value=ibkr_client,
+    ):
+        w = PendingOrderWorker()
+        w._execute_live_order(
+            order_id=501,
+            order_row={
+                "strategy_id": 1,
+                "symbol": "EURUSD",
+                "signal_type": "open_long",
+                "amount": 20000.0,
+                "price": 1.13456,
+                "order_type": "limit",
+            },
+            payload={
+                "strategy_id": 1,
+                "symbol": "EURUSD",
+                "signal_type": "open_long",
+                "amount": 20000.0,
+                "price": 1.13456,
+                "order_type": "limit",
+                "limit_price": 1.13456,
+            },
+        )
+
+    mock_failed.assert_not_called()
+    mock_sent.assert_called_once()
+    assert len(place_calls) == 1
+
+    t = place_calls[0]
+    assert t.order.action == "BUY"
+    placed_order = ibkr_client._ib.placeOrder.call_args[0][1]
+    assert placed_order.tif == "DAY"
+    import math
+    expected_snap = math.floor(1.13456 / 0.00005) * 0.00005
+    assert abs(placed_order.lmtPrice - expected_snap) < 1e-9
+
+    _fire_callbacks_after_fill(
+        ibkr_client, t, 20000.0, position_after=20000.0, fill_tag="eur_limit_buy"
+    )
+
+
+@patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+@patch("app.services.pending_order_worker.PendingOrderWorker._notify_live_best_effort")
+@patch("app.services.pending_order_worker.records.mark_order_sent")
+@patch("app.services.pending_order_worker.records.mark_order_failed")
+@patch("app.services.pending_order_worker.load_strategy_configs")
+def test_e2e_forex_limit_sell_full_chain(
+    mock_load_cfg,
+    mock_failed,
+    mock_sent,
+    _mock_notify,
+    patched_records,
+):
+    """E2E: Forex limit SELL — minTick snap uses SELL ceil; TIF = DAY."""
+    mock_load_cfg.return_value = {
+        "market_category": "Forex",
+        "exchange_config": {"exchange_id": "ibkr-paper"},
+        "market_type": "forex",
+    }
+
+    ibkr_client, place_calls = _make_ibkr_client_for_e2e(
+        "GBPJPY", 12345678, "GBP.JPY", min_tick=0.005,
+    )
+
+    with patch(
+        "app.services.pending_order_worker.create_client",
+        return_value=ibkr_client,
+    ):
+        w = PendingOrderWorker()
+        w._execute_live_order(
+            order_id=502,
+            order_row={
+                "strategy_id": 1,
+                "symbol": "GBPJPY",
+                "signal_type": "close_long",
+                "amount": 10000.0,
+                "price": 192.123,
+                "order_type": "limit",
+            },
+            payload={
+                "strategy_id": 1,
+                "symbol": "GBPJPY",
+                "signal_type": "close_long",
+                "amount": 10000.0,
+                "price": 192.123,
+                "order_type": "limit",
+                "limit_price": 192.123,
+            },
+        )
+
+    mock_failed.assert_not_called()
+    mock_sent.assert_called_once()
+    assert len(place_calls) == 1
+
+    t = place_calls[0]
+    assert t.order.action == "SELL"
+    placed_order = ibkr_client._ib.placeOrder.call_args[0][1]
+    assert placed_order.tif == "DAY"
+    import math
+    expected_snap = math.ceil(192.123 / 0.005) * 0.005
+    assert abs(placed_order.lmtPrice - expected_snap) < 1e-9
+
+    _fire_callbacks_after_fill(
+        ibkr_client, t, 10000.0, position_after=0.0, fill_tag="gbpjpy_limit_sell"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Limit order with PartiallyFilled → Filled lifecycle
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+@patch("app.services.live_trading.records.update_pending_order_fill_snapshot")
+@patch("app.services.pending_order_worker.PendingOrderWorker._notify_live_best_effort")
+@patch("app.services.pending_order_worker.records.mark_order_sent")
+@patch("app.services.pending_order_worker.records.mark_order_failed")
+@patch("app.services.pending_order_worker.load_strategy_configs")
+def test_e2e_limit_partial_fill_then_filled(
+    mock_load_cfg,
+    mock_failed,
+    mock_sent,
+    _mock_notify,
+    mock_snapshot,
+    patched_records,
+):
+    """E2E: Limit order lifecycle — Submitted → PartiallyFilled(3000) → PartiallyFilled(7000) → Filled(10000).
+    Verifies cumulative overwrite on partials and _handle_fill only on terminal Filled."""
+    mock_load_cfg.return_value = {
+        "market_category": "Forex",
+        "exchange_config": {"exchange_id": "ibkr-paper"},
+        "market_type": "forex",
+    }
+
+    ibkr_client, place_calls = _make_ibkr_client_for_e2e(
+        "EURUSD", 12087792, "EUR.USD", min_tick=0.00005,
+    )
+
+    with patch(
+        "app.services.pending_order_worker.create_client",
+        return_value=ibkr_client,
+    ):
+        w = PendingOrderWorker()
+        w._execute_live_order(
+            order_id=503,
+            order_row={
+                "strategy_id": 5,
+                "symbol": "EURUSD",
+                "signal_type": "open_long",
+                "amount": 10000.0,
+                "price": 1.135,
+                "order_type": "limit",
+            },
+            payload={
+                "strategy_id": 5,
+                "symbol": "EURUSD",
+                "signal_type": "open_long",
+                "amount": 10000.0,
+                "price": 1.135,
+                "order_type": "limit",
+                "limit_price": 1.135,
+            },
+        )
+
+    mock_failed.assert_not_called()
+    mock_sent.assert_called_once()
+    assert len(place_calls) == 1
+
+    trade = place_calls[0]
+    order_id = trade.order.orderId
+
+    # --- PartiallyFilled #1: 3000 of 10000 ---
+    trade.orderStatus.status = "PartiallyFilled"
+    trade.orderStatus.filled = 3000.0
+    trade.orderStatus.remaining = 7000.0
+    trade.orderStatus.avgFillPrice = 1.135
+    trade.order.totalQuantity = 10000.0
+    ibkr_client._on_order_status(trade)
+
+    assert mock_snapshot.call_count == 1
+    call_kw = mock_snapshot.call_args
+    assert call_kw[1]["filled"] == 3000.0
+    assert call_kw[1]["remaining"] == 7000.0
+
+    # --- PartiallyFilled #2: 7000 of 10000 ---
+    trade.orderStatus.filled = 7000.0
+    trade.orderStatus.remaining = 3000.0
+    ibkr_client._on_order_status(trade)
+
+    assert mock_snapshot.call_count == 2
+    call_kw2 = mock_snapshot.call_args
+    assert call_kw2[1]["filled"] == 7000.0
+    assert call_kw2[1]["remaining"] == 3000.0
+
+    # --- Terminal Filled: 10000 ---
+    trade.orderStatus.status = "Filled"
+    trade.orderStatus.filled = 10000.0
+    trade.orderStatus.remaining = 0.0
+    trade.orderStatus.avgFillPrice = 1.1348
+
+    with patch.object(ibkr_client, "_handle_fill") as mock_handle_fill:
+        ibkr_client._on_order_status(trade)
+        mock_handle_fill.assert_called_once()
+        args = mock_handle_fill.call_args[0]
+        assert args[1] == 10000.0  # filled qty
+        assert abs(args[2] - 1.1348) < 1e-9  # avg price
+
+    # snapshot NOT called again on terminal Filled
+    assert mock_snapshot.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# 7. Metals limit order E2E (XAUUSD CMDTY/SMART)
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+@patch("app.services.pending_order_worker.PendingOrderWorker._notify_live_best_effort")
+@patch("app.services.pending_order_worker.records.mark_order_sent")
+@patch("app.services.pending_order_worker.records.mark_order_failed")
+@patch("app.services.pending_order_worker.load_strategy_configs")
+def test_e2e_metals_limit_xauusd(
+    mock_load_cfg,
+    mock_failed,
+    mock_sent,
+    _mock_notify,
+    patched_records,
+):
+    """E2E: XAUUSD Metals limit BUY — CMDTY/SMART + minTick 0.01 + DAY TIF."""
+    mock_load_cfg.return_value = {
+        "market_category": "Metals",
+        "exchange_config": {"exchange_id": "ibkr-paper"},
+        "market_type": "metals",
+    }
+
+    ibkr_client, place_calls = _make_ibkr_client_for_e2e(
+        "XAUUSD", 69067924, "XAUUSD", sec_type="CMDTY", min_tick=0.01,
+    )
+
+    with patch(
+        "app.services.pending_order_worker.create_client",
+        return_value=ibkr_client,
+    ):
+        w = PendingOrderWorker()
+        w._execute_live_order(
+            order_id=504,
+            order_row={
+                "strategy_id": 10,
+                "symbol": "XAUUSD",
+                "signal_type": "open_long",
+                "amount": 1.0,
+                "price": 2345.678,
+                "order_type": "limit",
+            },
+            payload={
+                "strategy_id": 10,
+                "symbol": "XAUUSD",
+                "signal_type": "open_long",
+                "amount": 1.0,
+                "price": 2345.678,
+                "order_type": "limit",
+                "limit_price": 2345.678,
+            },
+        )
+
+    mock_failed.assert_not_called()
+    mock_sent.assert_called_once()
+    assert len(place_calls) == 1
+
+    t = place_calls[0]
+    assert t.contract.secType == "CMDTY"
+    assert getattr(t.contract, "exchange", None) == "SMART"
+    assert t.order.action == "BUY"
+    placed_order = ibkr_client._ib.placeOrder.call_args[0][1]
+    assert placed_order.tif == "DAY"
+    import math
+    expected_snap = math.floor(2345.678 / 0.01) * 0.01
+    assert abs(placed_order.lmtPrice - expected_snap) < 1e-9
+
+    _fire_callbacks_after_fill(
+        ibkr_client, t, 1.0, position_after=1.0, fill_tag="xau_limit_open"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 8. Automation limit always uses DAY (even if payload has time_in_force)
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+@patch("app.services.pending_order_worker.PendingOrderWorker._notify_live_best_effort")
+@patch("app.services.pending_order_worker.records.mark_order_sent")
+@patch("app.services.pending_order_worker.records.mark_order_failed")
+@patch("app.services.pending_order_worker.load_strategy_configs")
+def test_e2e_automation_limit_always_day_tif(
+    mock_load_cfg,
+    mock_failed,
+    mock_sent,
+    _mock_notify,
+    patched_records,
+):
+    """E2E: Automation (worker) limit orders always use DAY TIF per 17-CONTEXT —
+    time_in_force in payload is ignored (only REST route passes it through)."""
+    mock_load_cfg.return_value = {
+        "market_category": "Forex",
+        "exchange_config": {"exchange_id": "ibkr-paper"},
+        "market_type": "forex",
+    }
+
+    ibkr_client, place_calls = _make_ibkr_client_for_e2e(
+        "EURUSD", 12087792, "EUR.USD", min_tick=0.00005,
+    )
+
+    with patch(
+        "app.services.pending_order_worker.create_client",
+        return_value=ibkr_client,
+    ):
+        w = PendingOrderWorker()
+        w._execute_live_order(
+            order_id=505,
+            order_row={
+                "strategy_id": 1,
+                "symbol": "EURUSD",
+                "signal_type": "open_long",
+                "amount": 20000.0,
+                "price": 1.12,
+                "order_type": "limit",
+            },
+            payload={
+                "strategy_id": 1,
+                "symbol": "EURUSD",
+                "signal_type": "open_long",
+                "amount": 20000.0,
+                "price": 1.12,
+                "order_type": "limit",
+                "limit_price": 1.12,
+            },
+        )
+
+    mock_failed.assert_not_called()
+    mock_sent.assert_called_once()
+    assert len(place_calls) == 1
+
+    placed_order = ibkr_client._ib.placeOrder.call_args[0][1]
+    assert placed_order.tif == "DAY"
