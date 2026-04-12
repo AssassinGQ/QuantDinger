@@ -19,7 +19,7 @@ created: 2026-04-12
 |----------|-------|
 | **Framework** | pytest (project `backend_api_python/tests/`) |
 | **Config file** | none — markers in `tests/conftest.py` |
-| **Quick run command** | `cd backend_api_python && pytest tests/test_ibkr_symbols.py tests/test_ibkr_client.py -q --tb=short -x` |
+| **Quick run command** | `cd backend_api_python && pytest tests/test_ibkr_symbols.py tests/test_ibkr_client.py tests/test_order_normalizer.py -q --tb=short -x` |
 | **Full suite command** | `cd backend_api_python && pytest` |
 | **Estimated runtime** | ~15 seconds |
 
@@ -27,8 +27,8 @@ created: 2026-04-12
 
 ## Sampling Rate
 
-- **After every task commit:** Run `cd backend_api_python && pytest tests/test_ibkr_symbols.py tests/test_ibkr_client.py -q --tb=short -x`
-- **After every plan wave:** Run `cd backend_api_python && pytest`
+- **After every task commit:** Run the quick run command above (expand with modules touched in that task).
+- **After every plan wave:** Run `cd backend_api_python && pytest` (or the wave’s combined modules per table below).
 - **Before `/gsd:verify-work`:** Full suite must be green
 - **Max feedback latency:** 15 seconds
 
@@ -36,29 +36,34 @@ created: 2026-04-12
 
 ## Per-Task Verification Map
 
-| Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
-|---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 16-01-01 | 01 | 1 | TRADE-04 | unit | `pytest tests/test_ibkr_symbols.py -k metals -x` | ❌ W0 — update existing | ⬜ pending |
-| 16-01-02 | 01 | 1 | TRADE-04 | unit | `pytest tests/test_ibkr_client.py -k metals -x` | ❌ W0 — add new | ⬜ pending |
-| 16-02-01 | 02 | 1 | TRADE-04 | unit | `pytest tests/test_ibkr_client.py -k "metals and normalizer" -x` | ❌ W0 | ⬜ pending |
-| 16-03-01 | 03 | 2 | TRADE-04 | integration | `pytest tests/ -k "xauusd or xagusd" -x` | ❌ W0 — update existing | ⬜ pending |
+Aligned with `16-01-PLAN.md`, `16-02-PLAN.md`, `16-03-PLAN.md` (task order and waves).
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+| Task ID | Plan | Wave | Requirement | Test Type | Automated Command | Notes |
+|---------|------|------|-------------|-----------|-------------------|-------|
+| 16-01-T1 | 01 | 1 | TRADE-04 | unit | `cd backend_api_python && pytest tests/test_ibkr_symbols.py -q --tb=short -x` | Single merged task: `symbols.py` + UC `test_uc_16_t1_01`…`10` |
+| 16-02-T1 | 02 | 2 | TRADE-04 | unit | `cd backend_api_python && pytest tests/test_order_normalizer.py -q --tb=short -k "metals or Metals or uc_16_t2" -x` | `get_market_pre_normalizer("Metals")` |
+| 16-02-T2 | 02 | 2 | TRADE-04 | smoke | `cd backend_api_python && python -c "from app.services.live_trading.ibkr_trading.client import IBKRClient; assert 'Metals' in IBKRClient.supported_market_categories; assert IBKRClient._EXPECTED_SEC_TYPES.get('Metals')=='CMDTY'"` | Full UC-16-T3-xx pytest proof is **16-02-T3** |
+| 16-02-T3 | 02 | 2 | TRADE-04 | unit | `cd backend_api_python && pytest tests/test_ibkr_client.py -q --tb=short -x` | `test_uc_16_t3_01` … `test_uc_16_t3_08` + migrations |
+| 16-03-T1 | 03 | 3 | TRADE-04 | integration | `cd backend_api_python && pytest tests/test_exchange_engine.py tests/test_strategy_exchange_validation.py -q --tb=short -k "uc_16_t5 or Metals or test_uc_sa_val" -x` | UC-16-T5-xx |
+| 16-03-T2 | 03 | 3 | TRADE-04 | integration | `cd backend_api_python && pytest tests/test_ibkr_forex_paper_smoke.py -q --tb=short -x` | XAGUSD CMDTY smoke |
+| 16-03-T3 | 03 | 3 | TRADE-04 | integration | `cd backend_api_python && pytest tests/test_forex_ibkr_e2e.py -q --tb=short -x` | XAGUSD E2E Metals |
+
+*Status (optional tracking): ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
 ---
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_ibkr_symbols.py` — update `test_metals_detected_as_forex` → `test_metals_detected_as_metals`
-- [ ] `tests/test_ibkr_client.py` — add mocked qualify snapshot tests for CMDTY metals
-- [ ] Existing framework covers all other needs
+- [ ] `tests/test_ibkr_symbols.py` — `test_metals_detected_as_metals` + `test_uc_16_t1_01` … `test_uc_16_t1_10` (plan 16-01 single task)
+- [ ] `tests/test_ibkr_client.py` — Metals CMDTY / `test_uc_16_t3_*` (plan 16-02 Task 3)
+- [ ] Existing framework covers remaining modules
 
 ---
 
 ## Manual-Only Verifications
 
 | Behavior | Requirement | Why Manual | Test Instructions |
-|----------|-------------|------------|-------------------|
+|----------|-------------|------------|---------------------|
 | Paper qualify returns CMDTY for XAUUSD/XAGUSD | TRADE-04 | Requires live IB Gateway | Already verified 2026-04-12 via SSH script — see 16-RESEARCH.md "Paper Qualify Experiment" |
 
 ---

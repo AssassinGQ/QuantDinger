@@ -2,7 +2,7 @@
 
 **Researched:** 2026-04-12  
 **Domain:** Interactive Brokers TWS API + `ib_insync` contract qualification for spot precious metals (XAU\*/XAG\*)  
-**Confidence:** MEDIUM (official contract *samples* are clear; **live/paper qualify** still required per CONTEXT to lock hardcoded values for your entity/region)
+**Confidence:** HIGH (paper qualify experiment confirmed CMDTY/SMART for XAUUSD/XAGUSD on account DUQ123679; Forex encoding FAILS)
 
 <user_constraints>
 ## User Constraints (from CONTEXT.md)
@@ -243,17 +243,45 @@ _EXPECTED_SEC_TYPES = {
 
 - Assuming **all** 6-letter “pair” symbols use `Forex()` — **metals need explicit research** per CONTEXT.
 
-## Open Questions
+## Paper Qualify Experiment (2026-04-12)
 
-1. **Will paper trading return `CMDTY` for `XAUUSD`/`XAGUSD` for *this* IB entity, 100% of the time?**  
-   - What we know: IB publishes a **CMDTY/SMART** sample; `Forex()` produces **CASH/IDEALPRO**.  
-   - What’s unclear: Account-specific acceptance.  
-   - Recommendation: **Paper qualify** both encodings only if needed; pick winner; hardcode.
+**Account:** DUQ123679 (Paper Trading)  
+**IB Gateway:** ib-gateway:4004  
+**Method:** `qualifyContractsAsync` via `ib_insync` clientId=99, readonly=True
 
-2. **Does `XAUEUR` use the same CMDTY pattern with `currency='EUR'`?**  
-   - What we know: Pattern-based detection should include it.  
-   - What’s unclear: IB symbol string (`XAUEUR` vs split).  
-   - Recommendation: One extra qualify in paper for `XAUEUR` before expanding tests.
+### Qualify Results
+
+| Test | Contract Encoding | Result | conId | secType | exchange | localSymbol | tradingClass |
+|------|-------------------|--------|-------|---------|----------|-------------|--------------|
+| XAUUSD CMDTY | `Contract(symbol="XAUUSD", secType="CMDTY", exchange="SMART", currency="USD")` | **QUALIFIED** | **69067924** | **CMDTY** | **SMART** | **XAUUSD** | **XAUUSD** |
+| XAUUSD Forex | `Forex("XAUUSD")` → `secType=CASH, exchange=IDEALPRO, symbol=XAU` | **FAILED** | — | — | — | Error 200: No security definition | — |
+| XAGUSD CMDTY | `Contract(symbol="XAGUSD", secType="CMDTY", exchange="SMART", currency="USD")` | **QUALIFIED** | **77124483** | **CMDTY** | **SMART** | **XAGUSD** | **XAGUSD** |
+| XAGUSD Forex | `Forex("XAGUSD")` → `secType=CASH, exchange=IDEALPRO, symbol=XAG` | **FAILED** | — | — | — | Error 200: No security definition | — |
+| XAUEUR CMDTY | `Contract(symbol="XAUEUR", secType="CMDTY", exchange="SMART", currency="EUR")` | **FAILED** | — | — | — | Error 200: No security definition | — |
+| EURUSD Forex (control) | `Forex("EURUSD")` | **QUALIFIED** | **12087792** | **CASH** | **IDEALPRO** | **EUR.USD** | **EUR.USD** |
+
+### ContractDetails Results
+
+| Symbol | longName | minTick | sizeIncrement | minSize | priceMagnifier | tradingHours (sample) |
+|--------|----------|---------|---------------|---------|----------------|----------------------|
+| **XAUUSD** | London Gold | **0.01** | **1.0** | **1.0** | 1 | 18:00-17:00 (Sun-Fri, US ET) |
+| **XAGUSD** | London Silver | **0.0005** | **1.0** | **1.0** | 1 | 18:00-17:00 (Sun-Fri, US ET) |
+
+### Conclusions (HARDCODE THESE)
+
+1. **XAUUSD and XAGUSD are CMDTY/SMART — NOT Forex CASH/IDEALPRO.** The Forex encoding (`Forex("XAUUSD")`) returns Error 200 "No security definition" on this paper account. This is definitive.
+2. **`_EXPECTED_SEC_TYPES["Metals"] = "CMDTY"`** — hardcode with confidence.
+3. **XAUEUR is NOT available** on this paper account (CMDTY/SMART/EUR fails). Remove from `KNOWN_FOREX_PAIRS` and do NOT include in metals detection scope for now. Defer to future phase if needed.
+4. **sizeIncrement = 1.0 troy ounce** for both gold and silver. `_align_qty_to_contract` will work correctly via existing ContractDetails path — no custom rounding needed.
+5. **minTick differs**: gold = 0.01, silver = 0.0005. This only matters for limit orders (Phase 17), not market orders.
+6. **Trading hours**: 18:00-17:00 ET, Sun-Fri — nearly 23h/day, similar to Forex but NOT identical. The existing RTH framework (`is_rth` via `liquidHours`) handles this automatically.
+7. **conId cross-check**: XAUUSD = 69067924 (matches IB Contract Information Center), XAGUSD = 77124483.
+
+## Open Questions (Post-Experiment)
+
+1. ~~Will paper trading return CMDTY?~~ → **YES, confirmed. CMDTY/SMART is the only working encoding.**
+2. ~~Does XAUEUR use the same CMDTY pattern?~~ → **NO. XAUEUR CMDTY/SMART/EUR fails on this account. Out of scope.**
+3. **XAUEUR should be removed from `KNOWN_FOREX_PAIRS`** — it is not tradable as either Forex or CMDTY on this account. Remove to avoid confusion.
 
 ## Validation Architecture
 
@@ -311,8 +339,8 @@ _EXPECTED_SEC_TYPES = {
 **Confidence breakdown:**
 
 - Standard stack: **HIGH** — repo pins `ib_insync`; patterns match IB docs  
-- Architecture: **HIGH** — explicit IB sample + `Forex` implementation inspected  
-- Pitfalls: **MEDIUM** — regional/permission issues require live/paper confirmation  
+- Architecture: **HIGH** — explicit IB sample + paper qualify experiment confirmed  
+- Pitfalls: **HIGH** — paper qualify experiment resolved all regional/permission questions for account DUQ123679  
 
 **Research date:** 2026-04-12  
 **Valid until:** ~30 days (stable IB API); re-check if `ib_insync` or IB contract DB changes  
