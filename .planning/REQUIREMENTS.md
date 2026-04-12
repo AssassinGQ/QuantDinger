@@ -10,7 +10,7 @@
 - [ ] **TRADE-01**: IBKRClient 支持 Forex LimitOrder，价格精度使用 ContractDetails.minTick 对齐，TIF 支持 IOC/DAY/GTC
 - [ ] **TRADE-02**: 限价单部分成交处理——orderStatus PartiallyFilled 正确更新 remaining，不重复计入 fills/positions
 - [ ] **TRADE-03**: 限价单策略自动化——StatefulClientRunner 支持 limit order 信号，PendingOrderWorker 传递 limit price
-- [ ] **TRADE-04**: 贵金属合约创建——XAUUSD/XAGUSD 使用正确 secType（CMDTY/SMART 或经 paper qualify 验证的类型），与 Forex CASH/IDEALPRO 分开路由
+- [x] **TRADE-04**: 贵金属合约创建——XAUUSD/XAGUSD 使用正确 secType（CMDTY/SMART 或经 paper qualify 验证的类型），与 Forex CASH/IDEALPRO 分开路由
 - [ ] **TRADE-05**: 贵金属交易 E2E 验证——从 API 信号到 IBKR 下单的完整链路测试（mock IBKR），覆盖 qualify + order + callback
 - [ ] **TRADE-06**: 限价单交易 E2E 验证——从策略信号到限价单提交的完整链路测试，覆盖正常成交 + 部分成交 + 取消场景
 
@@ -51,7 +51,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TRADE-01 | Phase 17 | Pending |
 | TRADE-02 | Phase 17 | Pending |
 | TRADE-03 | Phase 17 | Pending |
-| TRADE-04 | Phase 16 | Pending |
+| TRADE-04 | Phase 16 | Complete |
 | TRADE-05 | Phase 18 | Pending |
 | TRADE-06 | Phase 18 | Pending |
 | INFRA-01 | Phase 13 | Complete |
@@ -67,4 +67,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-11*
-*Last updated: 2026-04-11 — INFRA-02 complete (Phase 14-01)*
+*Last updated: 2026-04-12 — TRADE-04 complete (Phase 16-02 IBKR CMDTY/SMART client path)*

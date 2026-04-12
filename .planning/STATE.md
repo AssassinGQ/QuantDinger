@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
 status: unknown
-stopped_at: Completed 16-01-PLAN.md
-last_updated: "2026-04-12T04:35:30.909Z"
+stopped_at: Completed 16-02-PLAN.md
+last_updated: "2026-04-12T12:00:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 3
@@ -27,7 +27,7 @@ See: `.planning/PROJECT.md`
 ## Current Position
 
 Phase: 16 (precious-metals-contract-classification) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Plan: 2 of 3
 - [Phase 15]: Phase 15-02: IBKRClient place_market_order/limit_order run pre_normalize then pre_check from order_normalizer; pre-normalized qty feeds _align_qty_to_contract; HShare pre_normalize keeps sub-lot positives for board-lot pre_check messages.
 - [Phase 15-normalize-pipeline-ordering]: 15-04: Removed ibkr_trading/order_normalizer shim; tests assert ModuleNotFoundError via importlib; canonical path is app.services.live_trading.order_normalizer only.
 - [Phase 16-precious-metals-contract-classification]: Symbol layer: XAU*/XAG* six-letter pairs classify as Metals before Forex set; XAUEUR excluded; normalize_symbol(Metals) returns full pair + SMART + quote for CMDTY inputs.
+- [Phase 16-precious-metals-contract-classification]: 16-02: IBKRClient `Metals` uses `Contract` CMDTY/SMART; `ForexPreNormalizer` for factory; IOC + Forex signal map; qualify TTL shares `IBKR_QUALIFY_TTL_FOREX_SEC`; TRADE-04 satisfied at client layer.
 
 ### Pending Todos
 
@@ -70,6 +71,6 @@ Plan: 2 of 3
 
 ## Session Continuity
 
-**Last session:** 2026-04-12T04:35:30.906Z
-**Stopped At:** Completed 16-01-PLAN.md
+**Last session:** 2026-04-12T12:00:00.000Z
+**Stopped At:** Completed 16-02-PLAN.md
 **Resume File:** None
