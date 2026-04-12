@@ -134,7 +134,7 @@ Full limit-order execution: REST/automation parity, minTick prices, partial fill
 <deferred>
 ## Deferred Ideas
 
-- Frontend UI for setting `max_slippage_pips` in strategy creation wizard — Phase 18 or separate
+- Frontend UI for setting `max_slippage_pips` in strategy creation wizard — Phase 18 or separate phase（用户确认：创建策略时需要 UI 让用户手动开启限价单并指定最大滑点，但不在 Phase 17 范围内）
 - GTC TIF for **automation** — not needed for slippage protection pattern (DAY is sufficient); REST API does expose GTC per TRADE-01
 - TIF override per **automation signal** — complexity not justified for v1.1 (REST path already accepts TIF whitelist)
 - `execDetails` monitoring (IBKR recommends alongside `orderStatus`) — nice-to-have, not blocking
