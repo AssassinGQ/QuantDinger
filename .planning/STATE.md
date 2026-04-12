@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
-status: unknown
-stopped_at: Phase 17 context gathered
-last_updated: "2026-04-12T05:17:11.860Z"
+status: executing
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-04-12T07:10:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 13
+  completed_plans: 11
 ---
 
 # Project State
@@ -20,14 +20,14 @@ See: `.planning/PROJECT.md`
 
 **Core value:** 清理 v1.0 遗留技术债务，增加 Forex 限价单，补全 E2E 测试覆盖。
 
-**Current focus:** Phase 17 — Forex limit orders & automation (Phase 16 complete)
+**Current focus:** Phase 17 — forex-limit-orders-automation
 
 **Verification:** use-case-driven (`.planning/config.json`). **Regression gate:** backend pytest suite must stay green.
 
 ## Current Position
 
-Phase: 16 (precious-metals-contract-classification) — COMPLETE
-Plan: 3 of 3 (all plans done; next: Phase 17)
+Phase: 17 (forex-limit-orders-automation) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
@@ -46,6 +46,7 @@ Plan: 3 of 3 (all plans done; next: Phase 17)
 | Phase 15-normalize-pipeline-ordering P04 | 12min | 2 tasks | 5 files |
 | Phase 16-precious-metals-contract-classification P01 | 12min | 1 tasks | 2 files |
 | Phase 16-precious-metals-contract-classification P03 | 18min | 3 tasks | 4 files |
+| Phase 17-forex-limit-orders-automation P01 | 25min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -62,6 +63,7 @@ Plan: 3 of 3 (all plans done; next: Phase 17)
 - [Phase 16-precious-metals-contract-classification]: Symbol layer: XAU*/XAG* six-letter pairs classify as Metals before Forex set; XAUEUR excluded; normalize_symbol(Metals) returns full pair + SMART + quote for CMDTY inputs.
 - [Phase 16-precious-metals-contract-classification]: 16-02: IBKRClient `Metals` uses `Contract` CMDTY/SMART; `ForexPreNormalizer` for factory; IOC + Forex signal map; qualify TTL shares `IBKR_QUALIFY_TTL_FOREX_SEC`; TRADE-04 satisfied at client layer.
 - [Phase 16-precious-metals-contract-classification]: 16-03: Integration tests — engine/strategy Metals; smoke/E2E XAGUSD with `market_category` Metals, qualify CMDTY, conId 77124483; TRADE-04 closed with full pytest gate.
+- **[Phase 17-forex-limit-orders-automation]:** 17-01: `_get_tif_for_signal(..., order_type)` — limit→DAY; `place_limit_order` minTick snap (BUY floor/SELL ceil); optional `time_in_force` IOC/DAY/GTC; REST `timeInForce` when key present; TRADE-01 satisfied at client + route + tests.
 
 ### Pending Todos
 
@@ -73,6 +75,6 @@ Plan: 3 of 3 (all plans done; next: Phase 17)
 
 ## Session Continuity
 
-**Last session:** 2026-04-12T05:17:11.858Z
-**Stopped At:** Phase 17 context gathered
-**Resume File:** .planning/phases/17-forex-limit-orders-automation/17-CONTEXT.md
+**Last session:** 2026-04-12T07:10:00.000Z
+**Stopped At:** Completed 17-01-PLAN.md (TRADE-01)
+**Resume File:** .planning/phases/17-forex-limit-orders-automation/17-02-PLAN.md

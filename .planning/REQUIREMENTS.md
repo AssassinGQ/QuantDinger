@@ -7,7 +7,7 @@
 
 ### 交易能力增强 (TRADE)
 
-- [ ] **TRADE-01**: IBKRClient 支持 Forex LimitOrder，价格精度使用 ContractDetails.minTick 对齐，TIF 支持 IOC/DAY/GTC
+- [x] **TRADE-01**: IBKRClient 支持 Forex LimitOrder，价格精度使用 ContractDetails.minTick 对齐，TIF 支持 IOC/DAY/GTC
 - [ ] **TRADE-02**: 限价单部分成交处理——orderStatus PartiallyFilled 正确更新 remaining，不重复计入 fills/positions
 - [ ] **TRADE-03**: 限价单策略自动化——StatefulClientRunner 支持 limit order 信号，PendingOrderWorker 传递 limit price
 - [x] **TRADE-04**: 贵金属合约创建——XAUUSD/XAGUSD 使用正确 secType（CMDTY/SMART 或经 paper qualify 验证的类型），与 Forex CASH/IDEALPRO 分开路由
@@ -48,7 +48,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRADE-01 | Phase 17 | Pending |
+| TRADE-01 | Phase 17 | Complete |
 | TRADE-02 | Phase 17 | Pending |
 | TRADE-03 | Phase 17 | Pending |
 | TRADE-04 | Phase 16 | Complete |

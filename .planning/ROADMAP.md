@@ -105,10 +105,10 @@ Plans:
   2. `PartiallyFilled` and subsequent updates adjust **remaining** correctly; cumulative fills do not double-apply positions or PnL.
   3. `StatefulClientRunner` / `PendingOrderWorker` accept limit signals and pass limit price (and order type) so automated trading matches manual/API behavior.
   4. Terminal order statuses remain consistent with existing trackers (no stuck or duplicate terminal handling).
-**Plans:** 3/3 plans drafted (2026-04-12)
+**Plans:** 1/3 plans executed
 
 Plans:
-- [ ] `17-01-PLAN.md` — TRADE-01: `_get_tif_for_signal(order_type)` limit→DAY, minTick snap, REST `timeInForce` IOC/DAY/GTC
+- [x] `17-01-PLAN.md` — TRADE-01: `_get_tif_for_signal(order_type)` limit→DAY, minTick snap, REST `timeInForce` IOC/DAY/GTC
 - [ ] `17-02-PLAN.md` — TRADE-02: `pending_orders.remaining`, cumulative overwrite on PartiallyFilled, invariants, paper 4004 checkpoint
 - [ ] `17-03-PLAN.md` — TRADE-03: `trading_config.live_order`, enqueue limit price, StatefulClientRunner + PendingOrderWorker `OrderContext.price`
 
@@ -143,7 +143,7 @@ Plans:
 | 14. TIF unification (USStock/HShare) | 1/1 | Complete    | 2026-04-11 | 2026-04-11 |
 | 15. Normalize pipeline ordering | 4/4 | Complete    | 2026-04-12 | — |
 | 16. Precious metals classification | 3/3 | Complete    | 2026-04-12 | — |
-| 17. Forex limit orders & automation | v1.1 | 0/3 planned | Not started | — |
+| 17. Forex limit orders & automation | 1/3 | In Progress|  | — |
 | 18. E2E & integration testing | v1.1 | 0/? | Not started | — |
 
 ---
