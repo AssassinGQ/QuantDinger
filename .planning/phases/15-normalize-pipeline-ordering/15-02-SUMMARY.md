@@ -64,7 +64,7 @@ completed: 2026-04-12
 1. **Task 1: IBKRClient place_market_order and place_limit_order pipeline** — `20e9fbf` (feat)
 2. **Task 2: test_ibkr_client — TestQuantityGuard + TestIBKRPreNormalizePipeline** — `edf5f1f` (test)
 
-**Plan metadata:** `4c175e9` (STATE + SUMMARY), `d032b51` (ROADMAP + REQUIREMENTS + SUMMARY refs)
+**Plan metadata:** `4c175e9` (STATE + initial SUMMARY), `5cd25d7` (ROADMAP + REQUIREMENTS + SUMMARY refs)
 
 ## Files Created/Modified
 
@@ -93,4 +93,4 @@ Otherwise — plan executed as written.
 ## Self-Check: PASSED
 
 - `15-02-SUMMARY.md` exists at `.planning/phases/15-normalize-pipeline-ordering/15-02-SUMMARY.md`.
-- Commits `20e9fbf`, `edf5f1f`, `4c175e9`, `d032b51` verified on branch.
+- Commits `20e9fbf`, `edf5f1f`, `4c175e9`, `5cd25d7` verified on branch.
