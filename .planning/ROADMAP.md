@@ -131,7 +131,7 @@ Plans:
 | 12. Frontend IBKR exchanges for Forex | v1.0 | 1/1 | Complete | 2026-04-11 |
 | 13. Qualify result caching + E2E prefix fix | 2/2 | Complete    | 2026-04-11 | 2026-04-11 |
 | 14. TIF unification (USStock/HShare) | 1/1 | Complete    | 2026-04-11 | 2026-04-11 |
-| 15. Normalize pipeline ordering | 4/4 | Complete   | 2026-04-12 | — |
+| 15. Normalize pipeline ordering | 4/4 | Complete    | 2026-04-12 | — |
 | 16. Precious metals classification | v1.1 | 0/? | Not started | — |
 | 17. Forex limit orders & automation | v1.1 | 0/? | Not started | — |
 | 18. E2E & integration testing | v1.1 | 0/? | Not started | — |
