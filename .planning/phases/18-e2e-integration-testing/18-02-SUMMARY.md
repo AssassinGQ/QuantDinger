@@ -58,7 +58,7 @@ completed: 2026-04-12
 1. **Task 1: Qualify cache E2E tests** — `0dfafcc` (test)
 2. **Task 2: TRADE-05 metals mock chain** — `e4505d5` (test)
 
-**Plan metadata:** `1fb4243` (docs: SUMMARY, STATE, ROADMAP)
+**Plan metadata:** `06fc229` (docs: SUMMARY, STATE, ROADMAP)
 
 ## Files Created/Modified
 
