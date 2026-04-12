@@ -27,6 +27,7 @@ QuantDinger 的 IBKR 交易客户端已扩展支持 Forex（外汇）交易。IB
 **Phase 14 complete** (2026-04-11) — TIF 统一（Forex/USStock/HShare → IOC），956 backend tests passing.
 **Phase 15 complete** (2026-04-12) — Normalize pipeline ordering (MarketPreNormalizer + pre_normalize → pre_check → qualify → align)，958 backend tests passing.
 **Phase 16 complete** (2026-04-12) — Precious metals contract classification (XAUUSD/XAGUSD → CMDTY/SMART, paper-validated)，992 backend tests passing.
+**Phase 17 complete** (2026-04-12) — Forex limit orders & automation (LimitOrder DAY TIF, minTick snap, PartiallyFilled cumulative overwrite, strategy→runner→worker limit pipeline)，1023 backend tests passing.
 
 Tech stack: Python 3.10+ backend (Flask + ib_insync), Vue.js 2.x frontend, PostgreSQL, Docker.
 Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wizard.
@@ -57,10 +58,10 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 - ✓ TIF 统一 Forex/USStock/HShare → IOC（IBKR SEHK 支持 IOC 确认） — v1.1 Phase 14
 - ✓ Normalize pipeline ordering（MarketPreNormalizer: pre_normalize → pre_check → qualify → align，无重复） — v1.1 Phase 15
 - ✓ 贵金属合约归类（XAUUSD/XAGUSD → CMDTY/SMART，market_type="Metals"，Paper DUQ123679 验证） — v1.1 Phase 16
+- ✓ Forex 限价单（LimitOrder DAY TIF + minTick snap + IOC/DAY/GTC REST + PartiallyFilled 累计覆盖 + 策略自动化限价管道） — v1.1 Phase 17
 
 ### Active
 
-- Forex 限价单（LimitOrder + 价格精度 + 部分成交处理）
 - 前端 HTTP E2E 测试（Vue wizard → API round-trip）
 
 ### Out of Scope
@@ -87,6 +88,8 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 | TIF 统一 IOC (Forex/USStock/HShare) | 与 Forex 自动化一致；IBKR 确认 SEHK 支持 IOC | ✓ Good (Phase 14) |
 | MarketPreNormalizer 两层架构 | 市场层 pre_normalize+pre_check（同步） vs 券商层 qualify+align（异步） | ✓ Good (Phase 15) |
 | Metals CMDTY/SMART (非 Forex CASH/IDEALPRO) | Paper qualify 验证：Forex("XAUUSD") Error 200；Contract(CMDTY/SMART) 成功 | ✓ Good (Phase 16) |
+| Limit TIF DAY + minTick snap | 自动化限价单 DAY（不随信号变），minTick BUY floor/SELL ceil | ✓ Good (Phase 17) |
+| PartiallyFilled 累计覆盖 | 不做增量 +=，IBKR filled/remaining 是 snapshot | ✓ Good (Phase 17) |
 
 ## Known Tech Debt (from v1.0 Audit)
 
@@ -96,14 +99,14 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 | ~~USStock/HShare open → IOC~~ | ~~Medium~~ | ✓ Phase 14 |
 | TIF fallback (IOC→DAY 重试) | Low | Phase 6 |
 | cashQty 下单 (ADV-02) | Low | Phase 7 |
-| Forex 限价单 (ADV-01) | Low | Phase 7 |
+| ~~Forex 限价单 (ADV-01)~~ | ~~Low~~ | ✓ Phase 17 |
 | ~~贵金属合约归类 (XAUUSD as CMDTY?)~~ | ~~Medium~~ | ✓ Phase 16 |
 
 ## Constraints
 
 - **Tech stack**: ib_insync，与现有 IBKR 集成一致
-- **兼容性**: USStock/HShare/Forex 交易路径不受影响（992 tests regression-free）
+- **兼容性**: USStock/HShare/Forex 交易路径不受影响（1023 tests regression-free）
 - **架构**: BaseStatefulClient / StatefulClientRunner 模式
 
 ---
-*Last updated: 2026-04-12 — Phase 16 complete*
+*Last updated: 2026-04-12 — Phase 17 complete*
