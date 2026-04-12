@@ -112,7 +112,7 @@ None.
 
 - `backend_api_python/app/services/signal_executor.py` — present
 - `backend_api_python/tests/test_signal_executor.py` — present
-- Commits `f650eb7`, `c2e505a` on branch
+- Commits `f650eb7`, `c2e505a`, plus docs commit for SUMMARY/STATE/ROADMAP on branch
 
 ---
 *Phase: 15-normalize-pipeline-ordering*
