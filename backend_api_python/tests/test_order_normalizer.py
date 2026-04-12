@@ -79,7 +79,8 @@ class TestHSharePreNormalizer:
         assert self.norm.pre_normalize(450.0, "00005") == 400
 
     def test_pre_normalize_hsbc_under_lot(self):
-        assert self.norm.pre_normalize(399.9, "00005") == 0
+        # Sub-lot positive qty is floored to whole shares so pre_check can emit board-lot errors (not snapped to 0).
+        assert self.norm.pre_normalize(399.9, "00005") == 399.0
 
     def test_pre_normalize_jd_multiple(self):
         assert self.norm.pre_normalize(120.0, "09618") == 100

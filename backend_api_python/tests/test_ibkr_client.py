@@ -599,7 +599,7 @@ class TestWorkerThread:
 # ===========================================================================
 
 class TestQuantityGuard:
-    """Client rejects non-whole-number and non-positive quantities."""
+    """Quantity validation via MarketPreNormalizer pre_normalize → pre_check (TC-15-T2/T6)."""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_accepts_whole_number(self):
@@ -635,20 +635,28 @@ class TestQuantityGuard:
         assert result.success is True
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_rejects_fractional(self):
+    def test_market_order_usstock_fractional_floors_to_whole(self):
+        """TC-15-T2-01 / TC-15-T6-01: USStock fractional quantity floors; order succeeds with integer qty."""
         client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=150)
+        client._ib.placeOrder.return_value = trade_mock
+
         result = client.place_market_order("AAPL", "buy", 7.8, "USStock")
-        assert result.success is False
-        assert "whole number" in result.message.lower()
-        client._ib.placeOrder.assert_not_called()
+        assert result.success is True
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.totalQuantity == 7
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_limit_order_rejects_fractional(self):
+    def test_limit_order_usstock_fractional_floors_to_whole(self):
+        """TC-15-T2-02 / TC-15-T6-02: USStock limit fractional quantity floors; order succeeds."""
         client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=151)
+        client._ib.placeOrder.return_value = trade_mock
+
         result = client.place_limit_order("AAPL", "buy", 3.5, 150.0, "USStock")
-        assert result.success is False
-        assert "whole number" in result.message.lower()
-        client._ib.placeOrder.assert_not_called()
+        assert result.success is True
+        placed_order = client._ib.placeOrder.call_args[0][1]
+        assert placed_order.totalQuantity == 3
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_rejects_zero(self):
@@ -659,6 +667,7 @@ class TestQuantityGuard:
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_market_order_rejects_negative(self):
+        """TC-15-T2-03: Negative quantity fails pre_check; placeOrder not called."""
         client = _make_client_with_mock_ib()
         result = client.place_market_order("AAPL", "buy", -5, "USStock")
         assert result.success is False
@@ -666,6 +675,7 @@ class TestQuantityGuard:
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_hshare_rejects_non_lot_multiple(self):
+        """TC-15-T2-04: HShare sub-lot quantity fails pre_check with board-lot hint; no placeOrder."""
         client = _make_client_with_mock_ib()
         result = client.place_market_order("00005", "buy", 3, "HShare")
         assert result.success is False
@@ -697,6 +707,67 @@ class TestQuantityGuard:
 
         result = client.place_market_order("00388", "buy", 100, "HShare")
         assert result.success is True
+
+
+# ===========================================================================
+# INFRA-03: pre_normalize → pre_check → qualify → align (TC-15-T2)
+# ===========================================================================
+
+class TestIBKRPreNormalizePipeline:
+    """TC-15-T2-05/T2-06: pipeline order and align input from pre_normalize."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_tc_15_t2_05_pre_normalize_before_pre_check_before_qualify(self):
+        """TC-15-T2-05: pre_normalize then pre_check run before qualifyContractsAsync."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=701)
+        client._ib.placeOrder.return_value = trade_mock
+
+        calls = []
+        mock_n = MagicMock()
+
+        def _pre_norm(raw, sym):
+            calls.append("pre_normalize")
+            return float(int(raw))
+
+        def _pre_chk(q, sym):
+            calls.append("pre_check")
+            return (True, "")
+
+        mock_n.pre_normalize.side_effect = _pre_norm
+        mock_n.pre_check.side_effect = _pre_chk
+
+        orig_qual = client._ib.qualifyContractsAsync
+
+        async def _qual_wrap(*args, **kwargs):
+            calls.append("qualifyContractsAsync")
+            return await orig_qual(*args, **kwargs)
+
+        client._ib.qualifyContractsAsync = _qual_wrap
+
+        with patch(
+            "app.services.live_trading.order_normalizer.get_market_pre_normalizer",
+            return_value=mock_n,
+        ):
+            result = client.place_market_order("AAPL", "buy", 10, "USStock")
+
+        assert result.success is True
+        assert calls[:3] == ["pre_normalize", "pre_check", "qualifyContractsAsync"]
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    @patch.object(IBKRClient, "_align_qty_to_contract", new_callable=AsyncMock)
+    def test_tc_15_t2_06_align_receives_pre_normalized_qty(self, mock_align):
+        """TC-15-T2-06: _align_qty_to_contract receives floored qty 7, not raw 7.8 (USStock)."""
+        client = _make_client_with_mock_ib()
+        trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=702)
+        client._ib.placeOrder.return_value = trade_mock
+        mock_align.return_value = 7.0
+
+        result = client.place_market_order("AAPL", "buy", 7.8, "USStock")
+        assert result.success is True
+        mock_align.assert_awaited()
+        _c, qty_arg, _s = mock_align.call_args[0]
+        assert qty_arg == 7
 
 
 # ===========================================================================
@@ -966,7 +1037,7 @@ class TestPlaceMarketOrderForex:
                 "EURUSD", "buy", 10000.0, "Forex", signal_type="open_long",
             )
             assert result.success is False
-            assert "Quantity 10000.0 rounds to 0" in result.message
+            assert "rounds to 0 after lot-size alignment for EURUSD" in result.message
             assert (
                 "For Forex (IDEALPRO), the amount may be below the minimum tradable size for this pair."
                 in result.message
