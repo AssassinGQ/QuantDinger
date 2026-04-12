@@ -1,9 +1,10 @@
-"""Backward-compatible re-export from exchange_engine.order_normalizer."""
+"""Backward-compatible re-export from order_normalizer (canonical package)."""
 
 from app.services.live_trading.order_normalizer import (  # noqa: F401
-    OrderNormalizer,
-    get_normalizer,
+    CryptoPreNormalizer,
+    MarketPreNormalizer,
+    get_market_pre_normalizer,
 )
-from app.services.live_trading.order_normalizer.us_stock import USStockNormalizer  # noqa: F401
-from app.services.live_trading.order_normalizer.hk_share import HShareNormalizer  # noqa: F401
-from app.services.live_trading.order_normalizer.forex import ForexNormalizer  # noqa: F401
+from app.services.live_trading.order_normalizer.us_stock import USStockPreNormalizer  # noqa: F401
+from app.services.live_trading.order_normalizer.hk_share import HSharePreNormalizer  # noqa: F401
+from app.services.live_trading.order_normalizer.forex import ForexPreNormalizer  # noqa: F401

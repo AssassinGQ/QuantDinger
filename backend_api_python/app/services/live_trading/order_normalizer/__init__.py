@@ -12,44 +12,44 @@ from abc import ABC, abstractmethod
 from typing import Tuple
 
 
-class OrderNormalizer(ABC):
-    """Base class for order quantity normalization."""
+class MarketPreNormalizer(ABC):
+    """Base class for market-layer quantity pre-normalization (before pre-check)."""
 
     @abstractmethod
-    def normalize(self, raw_qty: float, symbol: str) -> float:
+    def pre_normalize(self, raw_qty: float, symbol: str) -> float:
         """Normalize a raw float quantity to a valid order size."""
 
     @abstractmethod
-    def check(self, qty: float, symbol: str) -> Tuple[bool, str]:
+    def pre_check(self, qty: float, symbol: str) -> Tuple[bool, str]:
         """Validate that a quantity is acceptable for placing an order.
 
         Returns (ok, reason).
         """
 
 
-class CryptoNormalizer(OrderNormalizer):
+class CryptoPreNormalizer(MarketPreNormalizer):
     """Pass-through for crypto — exchanges enforce their own precision."""
 
-    def normalize(self, raw_qty: float, symbol: str) -> float:
+    def pre_normalize(self, raw_qty: float, symbol: str) -> float:
         return raw_qty
 
-    def check(self, qty: float, symbol: str) -> Tuple[bool, str]:
+    def pre_check(self, qty: float, symbol: str) -> Tuple[bool, str]:
         if qty <= 0:
             return False, f"Quantity must be positive, got {qty}"
         return True, ""
 
 
-def get_normalizer(market_category: str) -> OrderNormalizer:
-    """Factory: return the appropriate normalizer for a market category."""
-    from app.services.live_trading.order_normalizer.us_stock import USStockNormalizer
-    from app.services.live_trading.order_normalizer.hk_share import HShareNormalizer
-    from app.services.live_trading.order_normalizer.forex import ForexNormalizer
+def get_market_pre_normalizer(market_category: str) -> MarketPreNormalizer:
+    """Factory: return the appropriate pre-normalizer for a market category."""
+    from app.services.live_trading.order_normalizer.us_stock import USStockPreNormalizer
+    from app.services.live_trading.order_normalizer.hk_share import HSharePreNormalizer
+    from app.services.live_trading.order_normalizer.forex import ForexPreNormalizer
 
     cat = (market_category or "").strip()
     if cat == "HShare":
-        return HShareNormalizer()
+        return HSharePreNormalizer()
     if cat == "Forex":
-        return ForexNormalizer()
+        return ForexPreNormalizer()
     if cat == "Crypto":
-        return CryptoNormalizer()
-    return USStockNormalizer()
+        return CryptoPreNormalizer()
+    return USStockPreNormalizer()

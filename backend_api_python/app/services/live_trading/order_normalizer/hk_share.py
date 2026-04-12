@@ -1,6 +1,6 @@
 from typing import Tuple
 
-from app.services.live_trading.order_normalizer import OrderNormalizer
+from app.services.live_trading.order_normalizer import MarketPreNormalizer
 
 
 _DEFAULT_HK_LOT = 100
@@ -60,16 +60,16 @@ def _hk_symbol_key(symbol: str) -> str:
     return s.lstrip("0") or "0"
 
 
-class HShareNormalizer(OrderNormalizer):
+class HSharePreNormalizer(MarketPreNormalizer):
 
     def _lot_size(self, symbol: str) -> int:
         return HK_LOT_SIZES.get(_hk_symbol_key(symbol), _DEFAULT_HK_LOT)
 
-    def normalize(self, raw_qty: float, symbol: str) -> int:
+    def pre_normalize(self, raw_qty: float, symbol: str) -> int:
         lot = self._lot_size(symbol)
         return int(raw_qty // lot) * lot
 
-    def check(self, qty: float, symbol: str) -> Tuple[bool, str]:
+    def pre_check(self, qty: float, symbol: str) -> Tuple[bool, str]:
         if qty <= 0:
             return False, f"Quantity must be positive, got {qty}"
         if qty != int(qty):

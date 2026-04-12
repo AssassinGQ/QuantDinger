@@ -1160,8 +1160,8 @@ class IBKRClient(BaseStatefulClient):
         self, symbol: str, side: str, quantity: float,
         market_type: str = "USStock", **kwargs,
     ) -> LiveOrderResult:
-        from app.services.live_trading.ibkr_trading.order_normalizer import get_normalizer
-        ok, reason = get_normalizer(market_type).check(quantity, symbol)
+        from app.services.live_trading.ibkr_trading.order_normalizer import get_market_pre_normalizer
+        ok, reason = get_market_pre_normalizer(market_type).pre_check(quantity, symbol)
         if not ok:
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
@@ -1239,8 +1239,8 @@ class IBKRClient(BaseStatefulClient):
         self, symbol: str, side: str, quantity: float, price: float,
         market_type: str = "USStock", **kwargs,
     ) -> LiveOrderResult:
-        from app.services.live_trading.ibkr_trading.order_normalizer import get_normalizer
-        ok, reason = get_normalizer(market_type).check(quantity, symbol)
+        from app.services.live_trading.ibkr_trading.order_normalizer import get_market_pre_normalizer
+        ok, reason = get_market_pre_normalizer(market_type).pre_check(quantity, symbol)
         if not ok:
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 

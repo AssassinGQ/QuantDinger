@@ -361,10 +361,10 @@ class SignalExecutor:
                 strategy_ctx, signal, sig, current_price, current_positions
             )
 
-            from app.services.live_trading.order_normalizer import get_normalizer
-            normalizer = get_normalizer(market_category)
+            from app.services.live_trading.order_normalizer import get_market_pre_normalizer
+            normalizer = get_market_pre_normalizer(market_category)
             raw_amount = amount
-            amount = normalizer.normalize(amount, symbol)
+            amount = normalizer.pre_normalize(amount, symbol)
             if raw_amount != amount:
                 logger.info(
                     "Order quantity normalized: %.6f -> %s (strategy=%s symbol=%s market=%s)",

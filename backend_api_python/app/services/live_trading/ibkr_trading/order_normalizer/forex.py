@@ -1,2 +1,2 @@
 """Backward-compatible re-export."""
-from app.services.live_trading.order_normalizer.forex import ForexNormalizer  # noqa: F401
+from app.services.live_trading.order_normalizer.forex import ForexPreNormalizer  # noqa: F401
