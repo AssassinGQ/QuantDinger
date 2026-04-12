@@ -117,7 +117,7 @@ class IBKRClient(BaseStatefulClient):
     """
 
     engine_id = "ibkr"
-    supported_market_categories = frozenset({"USStock", "HShare", "Forex"})
+    supported_market_categories = frozenset({"USStock", "HShare", "Forex", "Metals"})
 
     @staticmethod
     def validate_market_category_static(market_category: str) -> Tuple[bool, str]:
@@ -165,7 +165,7 @@ class IBKRClient(BaseStatefulClient):
     def _get_tif_for_signal(signal_type: str, market_type: str = "USStock") -> str:
         """Get TIF (Time in Force) based on signal type and market type.
 
-        For ``market_type`` in ``("Forex", "USStock", "HShare")``, all eight
+        For ``market_type`` in ``("Forex", "USStock", "HShare", "Metals")``, all eight
         signal types use ``"IOC"`` (unified policy; ``signal_type`` is ignored
         for these categories). IBKR lists IOC for the relevant venues including
         Hong Kong Stock Exchange (SEHK); see
@@ -174,7 +174,7 @@ class IBKRClient(BaseStatefulClient):
         For any other ``market_type`` not explicitly handled here, returns
         ``"DAY"`` as a conservative default until support is added.
         """
-        if market_type in ("Forex", "USStock", "HShare"):
+        if market_type in ("Forex", "USStock", "HShare", "Metals"):
             return "IOC"
         return "DAY"
 
@@ -207,7 +207,7 @@ class IBKRClient(BaseStatefulClient):
     def map_signal_to_side(self, signal_type: str, *, market_category: str = "") -> str:
         sig = (signal_type or "").strip().lower()
         cat = (market_category or "").strip()
-        if cat == "Forex":
+        if cat in ("Forex", "Metals"):
             side = self._FOREX_SIGNAL_MAP.get(sig)
             if side is None:
                 raise ValueError(f"Unsupported signal_type for IBKR: {signal_type}")
@@ -843,13 +843,21 @@ class IBKRClient(BaseStatefulClient):
         ib_symbol, exchange, currency = normalize_symbol(symbol, market_type)
         if market_type == "Forex":
             return ib_insync.Forex(pair=ib_symbol)
+        elif market_type == "Metals":
+            return ib_insync.Contract(
+                symbol=ib_symbol,
+                secType="CMDTY",
+                exchange=exchange,
+                currency=currency,
+            )
         elif market_type in ("USStock", "HShare"):
             return ib_insync.Stock(symbol=ib_symbol, exchange=exchange, currency=currency)
         else:
             raise ValueError(f"Unsupported market_type: {market_type}")
 
     def _qualify_ttl_seconds(self, market_type: str) -> int:
-        if market_type == "Forex":
+        if market_type in ("Forex", "Metals"):
+            # Metals shares Forex TTL env (paper-validated CMDTY qualify cache).
             return int(os.environ.get("IBKR_QUALIFY_TTL_FOREX_SEC", "600"))
         if market_type == "USStock":
             return int(os.environ.get("IBKR_QUALIFY_TTL_USSTOCK_SEC", "600"))
@@ -908,6 +916,7 @@ class IBKRClient(BaseStatefulClient):
         "Forex": "CASH",
         "USStock": "STK",
         "HShare": "STK",
+        "Metals": "CMDTY",
     }
 
     def _validate_qualified_contract(self, contract, market_type: str) -> tuple:
@@ -1141,6 +1150,11 @@ class IBKRClient(BaseStatefulClient):
                         " — Forex 24/5: closed outside liquid hours (weekend or "
                         "daily maintenance window)."
                     )
+                elif market_type == "Metals":
+                    reason += (
+                        " — precious metals (CMDTY/SMART): often closed outside "
+                        "liquid hours (weekends/session breaks; not Forex 24/5 IDEALPRO)."
+                    )
                 return False, reason
             return True, ""
 
@@ -1194,6 +1208,13 @@ class IBKRClient(BaseStatefulClient):
                     msg += (
                         " For Forex (IDEALPRO), the amount may be below the minimum "
                         "tradable size for this pair."
+                    )
+                elif market_type == "Metals":
+                    msg += (
+                        " For precious metals (CMDTY on SMART), each contract is in "
+                        "troy ounces; typical sizeIncrement=1.0 and minSize=1.0. "
+                        "Approximate USD notionals per 1 troy ounce (not live quotes): "
+                        "XAUUSD ~3200; XAGUSD ~32."
                     )
                 return LiveOrderResult(
                     success=False,
@@ -1276,6 +1297,13 @@ class IBKRClient(BaseStatefulClient):
                     msg += (
                         " For Forex (IDEALPRO), the amount may be below the minimum "
                         "tradable size for this pair."
+                    )
+                elif market_type == "Metals":
+                    msg += (
+                        " For precious metals (CMDTY on SMART), each contract is in "
+                        "troy ounces; typical sizeIncrement=1.0 and minSize=1.0. "
+                        "Approximate USD notionals per 1 troy ounce (not live quotes): "
+                        "XAUUSD ~3200; XAGUSD ~32."
                     )
                 return LiveOrderResult(
                     success=False,
