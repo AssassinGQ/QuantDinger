@@ -73,6 +73,53 @@ class StatefulClientRunner(OrderRunner):
             ""
         ).strip()
 
+        ot = str(
+            ctx.payload.get("order_type")
+            or (ctx.order_row or {}).get("order_type")
+            or "market"
+        ).strip().lower()
+        lp = float(ctx.price or ctx.payload.get("limit_price") or 0.0)
+
+        if ot == "limit":
+            if lp <= 0:
+                return ExecutionResult(success=False, error="ibkr_limit_price_required")
+            try:
+                result = client.place_limit_order(
+                    ctx.symbol,
+                    action,
+                    ctx.amount,
+                    lp,
+                    market_type=market_type,
+                    pending_order_id=ctx.order_id,
+                    strategy_id=ctx.strategy_id,
+                    signal_type=ctx.signal_type,
+                    payload=ctx.payload,
+                    order_row=ctx.order_row,
+                    notification_config=ctx.notification_config,
+                    strategy_name=ctx.strategy_name,
+                    market_category=ctx.market_category,
+                )
+            except Exception as e:
+                return ExecutionResult(success=False, error=f"{eid}_exception:{e}")
+
+            if not result.success:
+                return ExecutionResult(
+                    success=False,
+                    error=f"{eid}_order_failed:{result.message or ''}",
+                )
+
+            exchange_order_id = str(result.order_id or "")
+
+            return ExecutionResult(
+                success=True,
+                exchange_id=eid,
+                exchange_order_id=exchange_order_id,
+                filled=0.0,
+                avg_price=0.0,
+                note=f"{eid}_order_submitted",
+                raw=result.raw or {},
+            )
+
         try:
             result = client.place_market_order(
                 symbol=ctx.symbol,
