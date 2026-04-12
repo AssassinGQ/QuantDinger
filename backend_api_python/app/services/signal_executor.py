@@ -12,6 +12,8 @@ from app.services.signal_processor import is_signal_allowed, position_state
 from app.services.entry_ai_filter import is_entry_ai_filter_enabled, entry_ai_filter_allows
 from app.services.pending_order_enqueuer import PendingOrderEnqueuer
 from app.services.data_handler import DataHandler
+from app.services.live_trading.forex_pip import pip_size_for_forex_symbol
+from app.services.live_trading.ibkr_trading.client import IBKRClient
 from app.services.live_trading.order_normalizer import get_market_pre_normalizer
 from app.utils.logger import get_logger
 
@@ -375,6 +377,31 @@ class SignalExecutor:
                 logger.debug("Amount %s <= 0, returning False", amount)
                 return False
 
+            order_type_kw = "market"
+            limit_price_kw = None
+            tc = strategy_ctx.get("trading_config") or {}
+            lo = tc.get("live_order") or {}
+            ot_cfg = str(lo.get("order_type") or "market").strip().lower()
+            mc = str(market_category or "").strip()
+            exec_mode = str(execution_mode or "").strip().lower()
+            if ot_cfg == "limit" and mc in ("Forex", "Metals") and exec_mode == "live":
+                sig_lower = str(signal_type or "").strip().lower()
+                side = IBKRClient._FOREX_SIGNAL_MAP.get(sig_lower)
+                if side is not None:
+                    spips = float(lo.get("max_slippage_pips") or 0.0)
+                    pip = pip_size_for_forex_symbol(symbol)
+                    delta = spips * pip
+                    p = float(current_price or 0.0)
+                    if side == "buy":
+                        limit_px = p + delta
+                    else:
+                        limit_px = p - delta
+                    if limit_px <= 0:
+                        logger.info("[LimitEnqueue] rejected: non-positive limit_px")
+                        return False
+                    order_type_kw = "limit"
+                    limit_price_kw = limit_px
+
             order_result = self.pending_order_enqueuer.execute_exchange_order(
                 exchange=exchange, strategy_id=strategy_id, symbol=symbol,
                 signal_type=signal_type, amount=amount,
@@ -383,6 +410,8 @@ class SignalExecutor:
                 stop_loss_price=stop_loss_price, take_profit_price=take_profit_price,
                 execution_mode=execution_mode, notification_config=notification_config,
                 signal_ts=signal_ts,
+                order_type=order_type_kw,
+                limit_price=limit_price_kw,
             )
 
             if not order_result or not order_result.get("success"):

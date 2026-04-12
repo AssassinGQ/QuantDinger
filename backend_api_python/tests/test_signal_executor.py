@@ -546,6 +546,101 @@ class TestSignalExecutorExecute:
         signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
 
 
+class TestSignalExecutorForexLimitEnqueue:
+    """UC-03c / UC-03d: live Forex/Metals + trading_config.live_order limit → limit_price."""
+
+    @patch("app.services.signal_executor._get_available_capital", return_value=100000.0)
+    def test_uc_03c_limit_buy_price(self, _mock_capital, signal_executor):
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "live",
+            "_market_category": "Forex",
+            "_market_type": "forex",
+            "trading_config": {
+                "live_order": {"order_type": "limit", "max_slippage_pips": 10.0},
+            },
+        }
+        signal = {"type": "open_long"}
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
+
+        result = signal_executor.execute(
+            strategy_ctx, signal, symbol="EURUSD", current_price=1.1, current_positions=[]
+        )
+
+        assert result is True
+        kw = signal_executor.pending_order_enqueuer.execute_exchange_order.call_args[1]
+        assert kw["order_type"] == "limit"
+        assert abs(kw["limit_price"] - 1.101) < 1e-9
+
+    @patch("app.services.signal_executor._get_available_capital", return_value=100000.0)
+    def test_uc_03c_limit_sell_price(self, _mock_capital, signal_executor):
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "live",
+            "_market_category": "Forex",
+            "_market_type": "forex",
+            "trading_config": {
+                "live_order": {"order_type": "limit", "max_slippage_pips": 10.0},
+            },
+        }
+        signal = {"type": "open_short"}
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
+
+        result = signal_executor.execute(
+            strategy_ctx, signal, symbol="EURUSD", current_price=1.1, current_positions=[]
+        )
+
+        assert result is True
+        kw = signal_executor.pending_order_enqueuer.execute_exchange_order.call_args[1]
+        assert kw["order_type"] == "limit"
+        assert abs(kw["limit_price"] - 1.099) < 1e-9
+
+    @patch("app.services.signal_executor._get_available_capital", return_value=100000.0)
+    def test_limit_rejected_non_positive_limit_px(self, _mock_capital, signal_executor):
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "live",
+            "_market_category": "Forex",
+            "_market_type": "forex",
+            "trading_config": {
+                "live_order": {"order_type": "limit", "max_slippage_pips": 10.0},
+            },
+        }
+        signal = {"type": "open_short"}
+        with patch.object(
+            signal_executor, "_calculate_order_amount", return_value=(0.1, "open_short")
+        ):
+            result = signal_executor.execute(
+                strategy_ctx, signal, symbol="EURUSD", current_price=0.0, current_positions=[]
+            )
+
+        assert result is False
+        signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
+
+    @patch("app.services.signal_executor._get_available_capital", return_value=100000.0)
+    def test_signal_mode_ignores_live_order_limit(self, _mock_capital, signal_executor):
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "signal",
+            "_market_category": "Forex",
+            "_market_type": "forex",
+            "trading_config": {
+                "live_order": {"order_type": "limit", "max_slippage_pips": 10.0},
+            },
+        }
+        signal = {"type": "open_long"}
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
+
+        result = signal_executor.execute(
+            strategy_ctx, signal, symbol="EURUSD", current_price=1.1, current_positions=[]
+        )
+
+        assert result is True
+        kw = signal_executor.pending_order_enqueuer.execute_exchange_order.call_args[1]
+        assert kw.get("order_type") == "market"
+        assert kw.get("limit_price") is None
+
+
 class TestSignalExecutorMarketPreNormalize:
     """TC-15-T3-03: enqueue path uses get_market_pre_normalizer().pre_normalize before execute_exchange_order."""
 

@@ -55,6 +55,45 @@ class TestPendingOrderEnqueuer:
         assert insert_kwargs["order_type"] == "market"
         assert insert_kwargs["signal_type"] == "open_long"
 
+    @patch("app.services.pending_order_enqueuer.get_price_fetcher")
+    def test_execute_exchange_order_limit_stores_order_type_and_price(self, mock_get_pf, enqueuer):
+        mock_pf = MagicMock()
+        mock_pf.fetch_current_price.return_value = 1.1
+        mock_get_pf.return_value = mock_pf
+        enqueuer._price_fetcher = mock_pf
+
+        enqueuer.data_handler.find_recent_pending_order.return_value = None
+        enqueuer.data_handler.get_user_id.return_value = 1
+        enqueuer.data_handler.insert_pending_order.return_value = 999
+
+        result = enqueuer.execute_exchange_order(
+            exchange=None,
+            strategy_id=1,
+            symbol="EURUSD",
+            signal_type="open_long",
+            amount=10000.0,
+            ref_price=1.1,
+            market_type="forex",
+            market_category="Forex",
+            leverage=1.0,
+            margin_mode="cross",
+            execution_mode="live",
+            notification_config={},
+            signal_ts=int(time.time()),
+            order_type="limit",
+            limit_price=1.101,
+        )
+
+        assert result["success"] is True
+        insert_kwargs = enqueuer.data_handler.insert_pending_order.call_args[1]
+        assert insert_kwargs["order_type"] == "limit"
+        assert abs(insert_kwargs["price"] - 1.101) < 1e-9
+
+        import json
+        payload = json.loads(insert_kwargs["payload_json"])
+        assert payload["order_type"] == "limit"
+        assert abs(payload["limit_price"] - 1.101) < 1e-9
+
     def test_execute_exchange_order_prevents_duplicate(self, enqueuer):
         # Mock recent pending order found
         enqueuer.data_handler.find_recent_pending_order.return_value = {

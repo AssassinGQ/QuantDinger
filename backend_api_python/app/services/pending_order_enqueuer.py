@@ -34,6 +34,7 @@ class PendingOrderEnqueuer:
         execution_mode: str,
         notification_config: Optional[Dict[str, Any]] = None,
         extra_payload: Optional[Dict[str, Any]] = None,
+        order_type: str = "market",
     ) -> Optional[int]:
         """Insert a pending order record and return its id."""
         try:
@@ -42,6 +43,7 @@ class PendingOrderEnqueuer:
             if mode not in ("signal", "live"):
                 mode = "signal"
 
+            ot = str(order_type or "market").strip().lower()
             payload: Dict[str, Any] = {
                 "strategy_id": int(strategy_id),
                 "symbol": symbol,
@@ -53,7 +55,10 @@ class PendingOrderEnqueuer:
                 "execution_mode": mode,
                 "notification_config": notification_config or {},
                 "signal_ts": int(signal_ts or 0),
+                "order_type": ot,
             }
+            if ot == "limit":
+                payload["limit_price"] = float(price or 0.0)
             if extra_payload and isinstance(extra_payload, dict):
                 payload.update(extra_payload)
 
@@ -123,7 +128,7 @@ class PendingOrderEnqueuer:
                 signal_type=signal_type,
                 signal_ts=stsig,
                 market_type=market_type or "swap",
-                order_type="market",
+                order_type=ot,
                 amount=float(amount or 0.0),
                 price=float(price or 0.0),
                 execution_mode=mode,
@@ -160,6 +165,8 @@ class PendingOrderEnqueuer:
         execution_mode: str = "signal",
         notification_config: Optional[Dict[str, Any]] = None,
         signal_ts: int = 0,
+        order_type: str = "market",
+        limit_price: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Convert a signal into a concrete pending order and enqueue it into DB.
@@ -174,6 +181,10 @@ class PendingOrderEnqueuer:
                     exchange, symbol, market_type, market_category
                 ) or 0.0
             ref_price = float(ref_price or 0.0)
+            ot = str(order_type or "market").strip().lower()
+            enqueue_price = ref_price
+            if ot == "limit" and limit_price is not None:
+                enqueue_price = float(limit_price)
 
             extra_payload = {
                 "ref_price": float(ref_price or 0.0),
@@ -189,19 +200,24 @@ class PendingOrderEnqueuer:
                 "maker_retries": int(maker_retries or 0),
                 "close_fallback_to_market": bool(close_fallback_to_market),
                 "open_fallback_to_market": bool(open_fallback_to_market),
+                "order_type": ot,
             }
+            if ot == "limit" and limit_price is not None:
+                extra_payload["limit_price"] = float(limit_price)
+
             pending_id = self.enqueue_pending_order(
                 strategy_id=strategy_id,
                 symbol=symbol,
                 signal_type=signal_type,
                 amount=float(amount or 0.0),
-                price=float(ref_price or 0.0),
+                price=float(enqueue_price or 0.0),
                 signal_ts=int(signal_ts or 0),
                 market_type=market_type,
                 leverage=float(leverage or 1.0),
                 execution_mode=execution_mode,
                 notification_config=notification_config,
                 extra_payload=extra_payload,
+                order_type=ot,
             )
 
             pending_flag = str(execution_mode or "").strip().lower() == "live"
