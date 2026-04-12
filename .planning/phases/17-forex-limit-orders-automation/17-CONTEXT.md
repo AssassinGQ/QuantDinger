@@ -49,7 +49,7 @@ Full limit-order execution: REST/automation parity, minTick prices, partial fill
 
 ### Claude's Discretion
 - How to refactor `_align_qty_to_contract` to also return/apply minTick (rename? new helper? combined struct?)
-- Exact `execution_config` schema for limit order fields
+- Exact `trading_config.live_order` schema for limit order fields
 - How `StatefulClientRunner.execute` branches on order_type (if/elif vs strategy pattern)
 - How to acquire `current_price` at signal time (from indicator payload? IBKR snapshot? cached last price?)
 - Test organization and naming for new limit-order tests
