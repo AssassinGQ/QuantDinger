@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
 status: unknown
-stopped_at: Phase 16 context gathered
-last_updated: "2026-04-12T04:05:43.156Z"
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-04-12T04:35:30.909Z"
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 10
+  completed_plans: 8
 ---
 
 # Project State
@@ -20,14 +20,14 @@ See: `.planning/PROJECT.md`
 
 **Core value:** 清理 v1.0 遗留技术债务，增加 Forex 限价单，补全 E2E 测试覆盖。
 
-**Current focus:** Phase 15 — normalize-pipeline-ordering
+**Current focus:** Phase 16 — precious-metals-contract-classification
 
 **Verification:** use-case-driven (`.planning/config.json`). **Regression gate:** backend pytest suite must stay green.
 
 ## Current Position
 
-Phase: 15 (normalize-pipeline-ordering) — **COMPLETE** (4/4 plans)
-Plan: Next — Phase 16 (precious metals contract classification) per ROADMAP
+Phase: 16 (precious-metals-contract-classification) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
@@ -44,6 +44,7 @@ Plan: Next — Phase 16 (precious metals contract classification) per ROADMAP
 | Phase 15-normalize-pipeline-ordering P03 | 1min | 2 tasks | 2 files |
 | Phase 15-normalize-pipeline-ordering P02 | 25min | 2 tasks | 4 files |
 | Phase 15-normalize-pipeline-ordering P04 | 12min | 2 tasks | 5 files |
+| Phase 16-precious-metals-contract-classification P01 | 12min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -57,6 +58,7 @@ Plan: Next — Phase 16 (precious metals contract classification) per ROADMAP
 - [Phase 15-normalize-pipeline-ordering]: 15-03: SignalExecutor module-level get_market_pre_normalizer + pre_normalize before enqueue; TC-15-T3-03 mocks factory and asserts enqueued amount.
 - [Phase 15]: Phase 15-02: IBKRClient place_market_order/limit_order run pre_normalize then pre_check from order_normalizer; pre-normalized qty feeds _align_qty_to_contract; HShare pre_normalize keeps sub-lot positives for board-lot pre_check messages.
 - [Phase 15-normalize-pipeline-ordering]: 15-04: Removed ibkr_trading/order_normalizer shim; tests assert ModuleNotFoundError via importlib; canonical path is app.services.live_trading.order_normalizer only.
+- [Phase 16-precious-metals-contract-classification]: Symbol layer: XAU*/XAG* six-letter pairs classify as Metals before Forex set; XAUEUR excluded; normalize_symbol(Metals) returns full pair + SMART + quote for CMDTY inputs.
 
 ### Pending Todos
 
@@ -68,6 +70,6 @@ Plan: Next — Phase 16 (precious metals contract classification) per ROADMAP
 
 ## Session Continuity
 
-**Last session:** 2026-04-12T04:05:43.153Z
-**Stopped At:** Phase 16 context gathered
-**Resume File:** .planning/phases/16-precious-metals-contract-classification/16-CONTEXT.md
+**Last session:** 2026-04-12T04:35:30.906Z
+**Stopped At:** Completed 16-01-PLAN.md
+**Resume File:** None

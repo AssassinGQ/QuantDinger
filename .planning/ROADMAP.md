@@ -32,7 +32,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 - [x] **Phase 13: Qualify result caching + E2E prefix fix** — TTL cache for `qualifyContractsAsync` with per-market TTL and targeted invalidation (qualify/validation failures); IBKR reconnect does **not** flush the cache; fix E2E test API prefix drift
 - [x] **Phase 14: TIF unification (USStock/HShare)** — IOC for Forex, USStock, HShare (all signals); `TestTifMatrix`; SEHK/IBKR doc (depends on 13) — **complete 2026-04-11**
 - [x] **Phase 15: Normalize pipeline ordering** — `pre_normalize` → `pre_check` → qualify → `align` with no duplicate steps (depends on 13) (completed 2026-04-12)
-- [ ] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex (depends on 13) — plans drafted
+- [ ] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex (depends on 13) — 16-01 complete; 16-02/16-03 pending
 - [ ] **Phase 17: Forex limit orders & automation** — LimitOrder + partial fills + runner/worker limit price (depends on 14, 15, 16)
 - [ ] **Phase 18: E2E & integration testing** — Metals/limit E2E (mock IBKR), frontend HTTP E2E (depends on 17)
 
@@ -89,10 +89,10 @@ Plans:
   1. XAUUSD (and documented handling for XAGUSD) routes through `_create_contract` / validation distinct from standard IDEALPRO Forex pairs.
   2. Post-qualify validation rejects wrong `secType`/routing for these symbols when IB returns unexpected shapes.
   3. Metals paths remain separable from EURUSD-style Forex so logs and positions show the correct instrument class.
-**Plans:** 3 plans
+**Plans:** 1/3 plans executed
 
 Plans:
-- [ ] `16-01-PLAN.md` — Symbols: XAU*/XAG* → Metals, KNOWN_FOREX cleanup, normalize SMART/CMDTY inputs
+- [x] `16-01-PLAN.md` — Symbols: XAU*/XAG* → Metals, KNOWN_FOREX cleanup, normalize SMART/CMDTY inputs
 - [ ] `16-02-PLAN.md` — IBKR client CMDTY branch, normalizer Metals, core tests + TIF/RTH
 - [ ] `16-03-PLAN.md` — Engine/strategy validation, paper smoke + E2E XAGUSD Metals
 
@@ -137,7 +137,7 @@ Plans:
 | 13. Qualify result caching + E2E prefix fix | 2/2 | Complete    | 2026-04-11 | 2026-04-11 |
 | 14. TIF unification (USStock/HShare) | 1/1 | Complete    | 2026-04-11 | 2026-04-11 |
 | 15. Normalize pipeline ordering | 4/4 | Complete    | 2026-04-12 | — |
-| 16. Precious metals classification | v1.1 | 0/3 planned | Not started | — |
+| 16. Precious metals classification | 1/3 | In Progress|  | — |
 | 17. Forex limit orders & automation | v1.1 | 0/? | Not started | — |
 | 18. E2E & integration testing | v1.1 | 0/? | Not started | — |
 
