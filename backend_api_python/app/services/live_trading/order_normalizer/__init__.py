@@ -50,6 +50,9 @@ def get_market_pre_normalizer(market_category: str) -> MarketPreNormalizer:
         return HSharePreNormalizer()
     if cat == "Forex":
         return ForexPreNormalizer()
+    if cat == "Metals":
+        # CMDTY precious metals on SMART — lot rules from IB ContractDetails (same pass-through as Forex).
+        return ForexPreNormalizer()
     if cat == "Crypto":
         return CryptoPreNormalizer()
     return USStockPreNormalizer()

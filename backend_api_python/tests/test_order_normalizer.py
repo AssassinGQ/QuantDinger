@@ -236,6 +236,30 @@ class TestGetMarketPreNormalizer:
         assert isinstance(get_market_pre_normalizer(None), USStockPreNormalizer)
 
 
+# ── Phase 16: Metals → ForexPreNormalizer (UC-16-T2) ─────────────────
+
+def test_uc_16_t2_01_metals_factory_returns_forex_pre_normalizer():
+    """UC-16-T2-01: get_market_pre_normalizer('Metals') → ForexPreNormalizer."""
+    n = get_market_pre_normalizer("Metals")
+    assert isinstance(n, ForexPreNormalizer)
+
+
+def test_uc_16_t2_02_metals_pre_check_positive():
+    """UC-16-T2-02: ForexPreNormalizer pre_check positive qty for XAUUSD."""
+    n = ForexPreNormalizer()
+    ok, msg = n.pre_check(1.0, "XAUUSD")
+    assert ok is True
+    assert msg == ""
+
+
+def test_uc_16_t2_03_metals_pre_check_rejects_non_positive():
+    """UC-16-T2-03: pre_check rejects non-positive qty for XAGUSD."""
+    n = ForexPreNormalizer()
+    ok, msg = n.pre_check(0.0, "XAGUSD")
+    assert ok is False
+    assert msg
+
+
 def test_tc_15_t4_02_shim_module_removed():
     """TC-15-T4-02: legacy shim package under live_trading.ibkr_trading is removed."""
     _shim = "app.services.live_trading." + "ibkr_trading" + "." + "order_normalizer"
