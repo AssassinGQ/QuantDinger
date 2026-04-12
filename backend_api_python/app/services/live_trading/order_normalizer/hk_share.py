@@ -65,9 +65,15 @@ class HSharePreNormalizer(MarketPreNormalizer):
     def _lot_size(self, symbol: str) -> int:
         return HK_LOT_SIZES.get(_hk_symbol_key(symbol), _DEFAULT_HK_LOT)
 
-    def pre_normalize(self, raw_qty: float, symbol: str) -> int:
+    def pre_normalize(self, raw_qty: float, symbol: str) -> float:
         lot = self._lot_size(symbol)
-        return int(raw_qty // lot) * lot
+        if lot <= 1:
+            return float(raw_qty)
+        snapped = int(raw_qty // lot) * lot
+        # Keep sub-lot positive quantities so pre_check can emit board-lot messaging (e.g. 400).
+        if raw_qty > 0 and snapped == 0:
+            return float(int(raw_qty))
+        return float(snapped)
 
     def pre_check(self, qty: float, symbol: str) -> Tuple[bool, str]:
         if qty <= 0:

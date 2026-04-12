@@ -1160,8 +1160,11 @@ class IBKRClient(BaseStatefulClient):
         self, symbol: str, side: str, quantity: float,
         market_type: str = "USStock", **kwargs,
     ) -> LiveOrderResult:
-        from app.services.live_trading.ibkr_trading.order_normalizer import get_market_pre_normalizer
-        ok, reason = get_market_pre_normalizer(market_type).pre_check(quantity, symbol)
+        from app.services.live_trading.order_normalizer import get_market_pre_normalizer
+
+        n = get_market_pre_normalizer(market_type)
+        qty = n.pre_normalize(quantity, symbol)
+        ok, reason = n.pre_check(qty, symbol)
         if not ok:
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
@@ -1182,10 +1185,10 @@ class IBKRClient(BaseStatefulClient):
                 return LiveOrderResult(success=False, message=reason,
                                    exchange_id=self.engine_id)
 
-            qty = await self._align_qty_to_contract(contract, quantity, symbol)
-            if qty <= 0:
+            aligned = await self._align_qty_to_contract(contract, qty, symbol)
+            if aligned <= 0:
                 msg = (
-                    f"Quantity {quantity} rounds to 0 after lot-size alignment for {symbol}"
+                    f"Quantity {aligned} rounds to 0 after lot-size alignment for {symbol}"
                 )
                 if market_type == "Forex":
                     msg += (
@@ -1200,7 +1203,7 @@ class IBKRClient(BaseStatefulClient):
 
             order = ib_insync.MarketOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
-                totalQuantity=qty, account=self._account,
+                totalQuantity=aligned, account=self._account,
                 tif=tif,
             )
             trade = self._ib.placeOrder(contract, order)
@@ -1212,7 +1215,7 @@ class IBKRClient(BaseStatefulClient):
                 strategy_id=int(kwargs.get("strategy_id") or 0),
                 symbol=symbol,
                 signal_type=str(kwargs.get("signal_type") or ""),
-                amount=qty,
+                amount=aligned,
                 market_type=market_type,
                 payload=kwargs.get("payload") or {},
                 order_row=kwargs.get("order_row") or {},
@@ -1239,8 +1242,11 @@ class IBKRClient(BaseStatefulClient):
         self, symbol: str, side: str, quantity: float, price: float,
         market_type: str = "USStock", **kwargs,
     ) -> LiveOrderResult:
-        from app.services.live_trading.ibkr_trading.order_normalizer import get_market_pre_normalizer
-        ok, reason = get_market_pre_normalizer(market_type).pre_check(quantity, symbol)
+        from app.services.live_trading.order_normalizer import get_market_pre_normalizer
+
+        n = get_market_pre_normalizer(market_type)
+        qty = n.pre_normalize(quantity, symbol)
+        ok, reason = n.pre_check(qty, symbol)
         if not ok:
             return LiveOrderResult(success=False, message=reason, exchange_id=self.engine_id)
 
@@ -1261,10 +1267,10 @@ class IBKRClient(BaseStatefulClient):
                 return LiveOrderResult(success=False, message=reason,
                                    exchange_id=self.engine_id)
 
-            qty = await self._align_qty_to_contract(contract, quantity, symbol)
-            if qty <= 0:
+            aligned = await self._align_qty_to_contract(contract, qty, symbol)
+            if aligned <= 0:
                 msg = (
-                    f"Quantity {quantity} rounds to 0 after lot-size alignment for {symbol}"
+                    f"Quantity {aligned} rounds to 0 after lot-size alignment for {symbol}"
                 )
                 if market_type == "Forex":
                     msg += (
@@ -1279,7 +1285,7 @@ class IBKRClient(BaseStatefulClient):
 
             order = ib_insync.LimitOrder(
                 action="BUY" if side.lower() == "buy" else "SELL",
-                totalQuantity=qty, lmtPrice=price, account=self._account,
+                totalQuantity=aligned, lmtPrice=price, account=self._account,
                 tif=tif,
             )
             trade = self._ib.placeOrder(contract, order)
@@ -1291,7 +1297,7 @@ class IBKRClient(BaseStatefulClient):
                 strategy_id=int(kwargs.get("strategy_id") or 0),
                 symbol=symbol,
                 signal_type=str(kwargs.get("signal_type") or ""),
-                amount=qty,
+                amount=aligned,
                 market_type=market_type,
                 payload=kwargs.get("payload") or {},
                 order_row=kwargs.get("order_row") or {},
