@@ -26,6 +26,7 @@ QuantDinger 的 IBKR 交易客户端已扩展支持 Forex（外汇）交易。IB
 **Phase 13 complete** (2026-04-11) — Qualify 缓存 + E2E prefix 修复, 931 backend tests passing.
 **Phase 14 complete** (2026-04-11) — TIF 统一（Forex/USStock/HShare → IOC），956 backend tests passing.
 **Phase 15 complete** (2026-04-12) — Normalize pipeline ordering (MarketPreNormalizer + pre_normalize → pre_check → qualify → align)，958 backend tests passing.
+**Phase 16 complete** (2026-04-12) — Precious metals contract classification (XAUUSD/XAGUSD → CMDTY/SMART, paper-validated)，992 backend tests passing.
 
 Tech stack: Python 3.10+ backend (Flask + ib_insync), Vue.js 2.x frontend, PostgreSQL, Docker.
 Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wizard.
@@ -55,11 +56,11 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 - ✓ E2E 测试 API prefix 统一（/api/strategy/ → /api/） — v1.1 Phase 13
 - ✓ TIF 统一 Forex/USStock/HShare → IOC（IBKR SEHK 支持 IOC 确认） — v1.1 Phase 14
 - ✓ Normalize pipeline ordering（MarketPreNormalizer: pre_normalize → pre_check → qualify → align，无重复） — v1.1 Phase 15
+- ✓ 贵金属合约归类（XAUUSD/XAGUSD → CMDTY/SMART，market_type="Metals"，Paper DUQ123679 验证） — v1.1 Phase 16
 
 ### Active
 
 - Forex 限价单（LimitOrder + 价格精度 + 部分成交处理）
-- 贵金属合约归类（XAUUSD/XAGUSD → CMDTY vs CASH 判定）
 - 前端 HTTP E2E 测试（Vue wizard → API round-trip）
 
 ### Out of Scope
@@ -85,6 +86,7 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 | Qualify TTL 缓存 (symbol, market_type) | 减少冗余 qualifyContractsAsync，重连不清缓存 | ✓ Good (Phase 13) |
 | TIF 统一 IOC (Forex/USStock/HShare) | 与 Forex 自动化一致；IBKR 确认 SEHK 支持 IOC | ✓ Good (Phase 14) |
 | MarketPreNormalizer 两层架构 | 市场层 pre_normalize+pre_check（同步） vs 券商层 qualify+align（异步） | ✓ Good (Phase 15) |
+| Metals CMDTY/SMART (非 Forex CASH/IDEALPRO) | Paper qualify 验证：Forex("XAUUSD") Error 200；Contract(CMDTY/SMART) 成功 | ✓ Good (Phase 16) |
 
 ## Known Tech Debt (from v1.0 Audit)
 
@@ -95,13 +97,13 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 | TIF fallback (IOC→DAY 重试) | Low | Phase 6 |
 | cashQty 下单 (ADV-02) | Low | Phase 7 |
 | Forex 限价单 (ADV-01) | Low | Phase 7 |
-| 贵金属合约归类 (XAUUSD as CMDTY?) | Medium | Phase 8 |
+| ~~贵金属合约归类 (XAUUSD as CMDTY?)~~ | ~~Medium~~ | ✓ Phase 16 |
 
 ## Constraints
 
 - **Tech stack**: ib_insync，与现有 IBKR 集成一致
-- **兼容性**: USStock/HShare 交易路径不受影响（958 tests regression-free）
+- **兼容性**: USStock/HShare/Forex 交易路径不受影响（992 tests regression-free）
 - **架构**: BaseStatefulClient / StatefulClientRunner 模式
 
 ---
-*Last updated: 2026-04-12 — Phase 15 complete*
+*Last updated: 2026-04-12 — Phase 16 complete*
