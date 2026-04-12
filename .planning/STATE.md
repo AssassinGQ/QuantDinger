@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
 status: unknown
-stopped_at: Completed 14-01-PLAN.md — Phase 14 single-plan wave done
-last_updated: "2026-04-12T14:00:00.000Z"
+stopped_at: Completed `14-01-SUMMARY.md` — Phase 14 plan 01 (TIF IOC unification + tests + planning docs)
+last_updated: "2026-04-11T20:55:30.346Z"
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 4
+  total_plans: 3
   completed_plans: 3
 ---
 
