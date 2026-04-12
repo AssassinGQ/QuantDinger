@@ -73,10 +73,23 @@ def _make_mock_ib_insync():
             self.currency = currency
             self.exchange = exchange
 
+    class MockContract:
+        """ib_insync.Contract stand-in (e.g. CMDTY precious metals on SMART)."""
+
+        def __init__(self, symbol="", secType="", exchange="", currency="", conId=0, **kwargs):
+            self.symbol = symbol
+            self.secType = secType
+            self.exchange = exchange
+            self.currency = currency
+            self.conId = int(conId or 0)
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
     mock_mod.MarketOrder = MockMarketOrder
     mock_mod.LimitOrder = MockLimitOrder
     mock_mod.Stock = MockStock
     mock_mod.Forex = MockForex
+    mock_mod.Contract = MockContract
     mock_mod.IB = MagicMock
     return mock_mod
 
@@ -360,6 +373,63 @@ class TestQualifyContractForex:
         assert "Forex" in result.message
 
 
+class TestQualifyContractMetals:
+    """UC-16-T4-04: async qualify sets paper conIds; cache key (symbol, Metals)."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_qualify_xauusd_sets_paper_conid_and_cache(self):
+        client = _make_client_with_mock_ib()
+        mock_ib = _make_mock_ib_insync()
+
+        async def _mock_qualify(*contracts):
+            for c in contracts:
+                c.conId = 69067924
+                c.localSymbol = "XAUUSD"
+                c.tradingClass = "XAUUSD"
+            return list(contracts)
+
+        client._ib.qualifyContractsAsync = _mock_qualify
+        contract = mock_ib.Contract(
+            symbol="XAUUSD", secType="CMDTY", exchange="SMART", currency="USD",
+        )
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                client._qualify_contract_async(contract, "XAUUSD", "Metals"),
+            )
+        finally:
+            loop.close()
+        assert result is True
+        assert contract.conId == 69067924
+        assert ("XAUUSD", "Metals") in client._qualify_cache
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_qualify_xagusd_sets_paper_conid(self):
+        client = _make_client_with_mock_ib()
+        mock_ib = _make_mock_ib_insync()
+
+        async def _mock_qualify(*contracts):
+            for c in contracts:
+                c.conId = 77124483
+                c.localSymbol = "XAGUSD"
+                c.tradingClass = "XAGUSD"
+            return list(contracts)
+
+        client._ib.qualifyContractsAsync = _mock_qualify
+        contract = mock_ib.Contract(
+            symbol="XAGUSD", secType="CMDTY", exchange="SMART", currency="USD",
+        )
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                client._qualify_contract_async(contract, "XAGUSD", "Metals"),
+            )
+        finally:
+            loop.close()
+        assert result is True
+        assert contract.conId == 77124483
+
+
 class TestQualifyContractCache:
     """TTL cache for qualifyContractsAsync: hit, empty-qualify invalidation, validation invalidation."""
 
@@ -517,6 +587,95 @@ class TestValidateQualifiedContract:
         valid, reason = client._validate_qualified_contract(contract, "HShare")
         assert valid is True
         assert reason == ""
+
+
+class TestUC16T3Client:
+    """UC-16-T3-01..08: Metals routing, validation, TIF, map_signal, category, align message."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_16_t3_01_create_contract_xauusd_metals(self):
+        client = _make_client_with_mock_ib()
+        c = client._create_contract("XAUUSD", "Metals")
+        assert c.secType == "CMDTY"
+        assert c.exchange == "SMART"
+        assert c.symbol == "XAUUSD"
+        assert c.currency == "USD"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_16_t3_02_create_contract_xagusd_metals(self):
+        client = _make_client_with_mock_ib()
+        c = client._create_contract("XAGUSD", "Metals")
+        assert c.secType == "CMDTY"
+        assert c.exchange == "SMART"
+        assert c.symbol == "XAGUSD"
+        assert c.currency == "USD"
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_16_t3_03_validate_metals_cmdty_ok(self):
+        client = _make_client_with_mock_ib()
+        mock_ib = _make_mock_ib_insync()
+        contract = mock_ib.Contract(
+            symbol="XAUUSD", secType="CMDTY", exchange="SMART", currency="USD",
+        )
+        contract.conId = 69067924
+        valid, reason = client._validate_qualified_contract(contract, "Metals")
+        assert valid is True
+        assert reason == ""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_16_t3_04_validate_metals_sectype_stk_fails(self):
+        client = _make_client_with_mock_ib()
+        mock_ib = _make_mock_ib_insync()
+        contract = mock_ib.Contract(
+            symbol="XAUUSD", secType="STK", exchange="SMART", currency="USD",
+        )
+        contract.conId = 1
+        valid, reason = client._validate_qualified_contract(contract, "Metals")
+        assert valid is False
+        assert "Expected secType=CMDTY for Metals" in reason
+
+    def test_uc_16_t3_05_tif_metals_ioc(self):
+        assert IBKRClient._get_tif_for_signal("open_long", "Metals") == "IOC"
+
+    def test_uc_16_t3_06_map_signal_metals_open_short(self):
+        client = IBKRClient.__new__(IBKRClient)
+        assert client.map_signal_to_side("open_short", market_category="Metals") == "sell"
+
+    def test_uc_16_t3_07_validate_market_category_metals(self):
+        ok, msg = IBKRClient.validate_market_category_static("Metals")
+        assert ok is True
+        assert msg == ""
+
+    @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+    def test_uc_16_t3_08_place_market_metals_align_zero_message(self):
+        """UC-16-T3-08: aligned<=0 Metals message documents troy oz, increments, sample notionals."""
+        IBKRClient._lot_size_cache.clear()
+        try:
+            client = _make_client_with_mock_ib()
+
+            async def _mock_details(*args, **kwargs):
+                return [types.SimpleNamespace(sizeIncrement=25000.0, minSize=0)]
+
+            client._ib.reqContractDetailsAsync = _mock_details
+            trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=799)
+            client._ib.placeOrder.return_value = trade_mock
+            result = client.place_market_order(
+                "XAUUSD", "buy", 10000.0, "Metals", signal_type="open_long",
+            )
+            assert result.success is False
+            m = result.message
+            assert "precious metals" in m.lower()
+            assert "troy" in m.lower()
+            assert "sizeIncrement" in m
+            assert "1.0" in m
+            assert "minSize" in m
+            assert "XAUUSD" in m
+            assert "3200" in m
+            assert "XAGUSD" in m
+            assert "XAGUSD ~32" in m
+            assert client._ib.placeOrder.call_count == 0
+        finally:
+            IBKRClient._lot_size_cache.clear()
 
 
 # ===========================================================================
@@ -853,11 +1012,11 @@ _TIF_MATRIX_SIGNALS = (
     "close_short",
     "reduce_short",
 )
-_TIF_MATRIX_MARKETS = ("Forex", "USStock", "HShare")
+_TIF_MATRIX_MARKETS = ("Forex", "USStock", "HShare", "Metals")
 
 
 class TestTifMatrix:
-    """8×3 matrix: every signal × (Forex, USStock, HShare) → IOC; unknown market → DAY."""
+    """8×4 matrix: every signal × (Forex, USStock, HShare, Metals) → IOC; unknown market → DAY."""
 
     @pytest.mark.parametrize(
         "signal_type, market_type",
@@ -989,16 +1148,18 @@ class TestPlaceMarketOrderForex:
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_uc_m3_xauusd_buy_market(self):
-        """UC-M3: XAUUSD buy 10 → XAU/USD, IOC."""
+        """UC-M3 / UC-16-T4-01: XAUUSD Metals buy 10 → CMDTY SMART XAUUSD, IOC."""
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=602)
         client._ib.placeOrder.return_value = trade_mock
         result = client.place_market_order(
-            "XAUUSD", "buy", 10.0, "Forex", signal_type="open_long",
+            "XAUUSD", "buy", 10.0, "Metals", signal_type="open_long",
         )
         assert result.success is True
         contract, placed_order = client._ib.placeOrder.call_args[0]
-        assert contract.symbol == "XAU"
+        assert contract.secType == "CMDTY"
+        assert contract.symbol == "XAUUSD"
+        assert contract.exchange == "SMART"
         assert contract.currency == "USD"
         assert float(placed_order.totalQuantity) == 10.0
         assert placed_order.tif == "IOC"
@@ -1479,7 +1640,7 @@ class TestForexRTHGate:
             "EST",
             server_utc,
         )
-        open_ok, reason = client.is_market_open("XAGUSD", "Forex")
+        open_ok, reason = client.is_market_open("XAGUSD", "Metals")
         assert open_ok is True
         assert reason == ""
 
