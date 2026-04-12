@@ -10,6 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.pending_order_worker import PendingOrderWorker
+
+from tests.helpers.ibkr_mocks import (
+    _fire_callbacks_after_fill,
+    _make_ibkr_client_for_e2e,
+    _make_mock_ib_insync,
+)
 from tests.test_ibkr_client import _make_client_with_mock_ib, _make_mock_ib_insync as _client_make_mock_ib
 
 
@@ -206,4 +213,65 @@ def test_qualify_cache_ttl_forex_vs_usstock_distinct(patched_records, monkeypatc
     client = _make_client_with_mock_ib()
     assert client._qualify_ttl_seconds("Forex") == 10
     assert client._qualify_ttl_seconds("USStock") == 99
+
+
+# ---------------------------------------------------------------------------
+# Task 2: TRADE-05 metals chain
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
+@patch("app.services.pending_order_worker.PendingOrderWorker._notify_live_best_effort")
+@patch("app.services.pending_order_worker.records.mark_order_sent")
+@patch("app.services.pending_order_worker.records.mark_order_failed")
+@patch("app.services.pending_order_worker.load_strategy_configs")
+def test_trade05_metals_mock_ibkr_qualify_order_callback_xagusd(
+    mock_load_cfg,
+    mock_failed,
+    mock_sent,
+    _mock_notify,
+    patched_records,
+):
+    """TRADE-05: Metals XAGUSD CMDTY — PendingOrderWorker → qualify → placeOrder → callbacks."""
+    mock_load_cfg.return_value = {
+        "market_category": "Metals",
+        "exchange_config": {"exchange_id": "ibkr-paper"},
+        "market_type": "metals",
+    }
+
+    ibkr_client, place_calls = _make_ibkr_client_for_e2e(
+        "XAGUSD", 77124483, "XAGUSD", sec_type="CMDTY"
+    )
+
+    with patch(
+        "app.services.pending_order_worker.create_client",
+        return_value=ibkr_client,
+    ):
+        w = PendingOrderWorker()
+        w._execute_live_order(
+            order_id=501,
+            order_row={
+                "strategy_id": 10,
+                "symbol": "XAGUSD",
+                "signal_type": "open_long",
+                "amount": 5000.0,
+            },
+            payload={
+                "strategy_id": 10,
+                "symbol": "XAGUSD",
+                "signal_type": "open_long",
+                "amount": 5000.0,
+            },
+        )
+
+    assert mock_failed.call_count == 0
+    assert mock_sent.call_count == 1
+    assert len(place_calls) == 1
+    t_open = place_calls[0]
+    assert getattr(t_open.contract, "secType", None) == "CMDTY"
+    assert getattr(t_open.contract, "symbol", None) == "XAGUSD"
+
+    _fire_callbacks_after_fill(
+        ibkr_client, t_open, 5000.0, position_after=5000.0, fill_tag="trade05_xag"
+    )
 
