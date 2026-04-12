@@ -12,6 +12,7 @@ from app.services.signal_processor import is_signal_allowed, position_state
 from app.services.entry_ai_filter import is_entry_ai_filter_enabled, entry_ai_filter_allows
 from app.services.pending_order_enqueuer import PendingOrderEnqueuer
 from app.services.data_handler import DataHandler
+from app.services.live_trading.order_normalizer import get_market_pre_normalizer
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -361,7 +362,6 @@ class SignalExecutor:
                 strategy_ctx, signal, sig, current_price, current_positions
             )
 
-            from app.services.live_trading.order_normalizer import get_market_pre_normalizer
             normalizer = get_market_pre_normalizer(market_category)
             raw_amount = amount
             amount = normalizer.pre_normalize(amount, symbol)
