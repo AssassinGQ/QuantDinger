@@ -31,7 +31,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 - [x] **Phase 13: Qualify result caching + E2E prefix fix** — TTL cache for `qualifyContractsAsync` with per-market TTL and targeted invalidation (qualify/validation failures); IBKR reconnect does **not** flush the cache; fix E2E test API prefix drift
 - [x] **Phase 14: TIF unification (USStock/HShare)** — IOC for Forex, USStock, HShare (all signals); `TestTifMatrix`; SEHK/IBKR doc (depends on 13) — **complete 2026-04-11**
-- [ ] **Phase 15: Normalize pipeline ordering** — `pre_normalize` → `pre_check` → qualify → `align` with no duplicate steps (depends on 13)
+- [x] **Phase 15: Normalize pipeline ordering** — `pre_normalize` → `pre_check` → qualify → `align` with no duplicate steps (depends on 13) (completed 2026-04-12)
 - [ ] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex (depends on 13)
 - [ ] **Phase 17: Forex limit orders & automation** — LimitOrder + partial fills + runner/worker limit price (depends on 14, 15, 16)
 - [ ] **Phase 18: E2E & integration testing** — Metals/limit E2E (mock IBKR), frontend HTTP E2E (depends on 17)
@@ -74,12 +74,12 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   1. Market-order and limit-order paths both execute: `pre_normalize` → `pre_check` → qualify/contract validation → quantity align—never align before qualify (canonical order per Phase 15 CONTEXT).
   2. Market-level `pre_normalize` / `pre_check` and broker-level `align` are not applied redundantly on the same logical order step (single `qty` closure into async align).
   3. Regressions are caught by unit/integration tests on `MarketPreNormalizer`, `IBKRClient`, and `SignalExecutor`.
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 Plans:
 - [x] `15-01-PLAN.md` — Rename `OrderNormalizer` → `MarketPreNormalizer`, factory, shim re-exports; unit tests TC-15-T1 / TC-15-T5-01 / TC-15-T5-03
 - [x] `15-02-PLAN.md` — `IBKRClient` pre_normalize → pre_check → qualify → align; `test_ibkr_client` TC-15-T2 / TC-15-T6
 - [x] `15-03-PLAN.md` — `SignalExecutor` upstream `pre_normalize`; TC-15-T3
-- [ ] `15-04-PLAN.md` — Delete `ibkr_trading/order_normalizer` shim; TC-15-T4 / TC-15-T5-02; full suite gate
+- [x] `15-04-PLAN.md` — Delete `ibkr_trading/order_normalizer` shim; TC-15-T4 / TC-15-T5-02; full suite gate
 
 ### Phase 16: Precious metals contract classification
 **Goal**: XAUUSD/XAGUSD use the correct IB product type (e.g. CMDTY/SMART vs Forex CASH/IDEALPRO) with validated qualify results.
@@ -131,7 +131,7 @@ Plans:
 | 12. Frontend IBKR exchanges for Forex | v1.0 | 1/1 | Complete | 2026-04-11 |
 | 13. Qualify result caching + E2E prefix fix | 2/2 | Complete    | 2026-04-11 | 2026-04-11 |
 | 14. TIF unification (USStock/HShare) | 1/1 | Complete    | 2026-04-11 | 2026-04-11 |
-| 15. Normalize pipeline ordering | 3/4 | In Progress|  | — |
+| 15. Normalize pipeline ordering | 4/4 | Complete   | 2026-04-12 | — |
 | 16. Precious metals classification | v1.1 | 0/? | Not started | — |
 | 17. Forex limit orders & automation | v1.1 | 0/? | Not started | — |
 | 18. E2E & integration testing | v1.1 | 0/? | Not started | — |
