@@ -28,6 +28,10 @@ from app.services.live_trading import records
 
 logger = get_logger(__name__)
 
+# Invariant: abs(filled + remaining - totalQuantity) must be within this (see _on_order_status PartiallyFilled).
+_ORDER_QTY_EPS_ABS = 1e-4
+_ORDER_QTY_EPS_REL = 1e-6
+
 ib_insync = None
 
 
@@ -106,6 +110,7 @@ class IBKROrderContext:
     notification_config: Dict[str, Any] = field(default_factory=dict)
     strategy_name: str = ""
     market_category: str = ""
+    last_reported_filled: float = 0.0
 
 
 class IBKRClient(BaseStatefulClient):
@@ -451,14 +456,45 @@ class IBKRClient(BaseStatefulClient):
         order_id = trade.order.orderId
         status = trade.orderStatus.status
         filled = float(trade.orderStatus.filled or 0)
+        remaining_os = float(getattr(trade.orderStatus, "remaining", None) or 0)
         avg_price = float(trade.orderStatus.avgFillPrice or 0)
+        total_q = float(getattr(trade.order, "totalQuantity", None) or 0)
         logger.info(
-            "[IBKR-Event] orderStatus: orderId=%s status=%s filled=%s avgPrice=%s",
-            order_id, status, filled, avg_price,
+            "[IBKR-Event] orderStatus: orderId=%s status=%s filled=%s remaining=%s avgPrice=%s",
+            order_id, status, filled, remaining_os, avg_price,
         )
 
         ctx = self._order_contexts.pop(order_id, None)
         if ctx is None:
+            return
+
+        # PartiallyFilled → 累计值覆盖 DB 的 filled/remaining（不做增量计算）
+        if status == "PartiallyFilled" and ctx.pending_order_id:
+            f = filled
+            r = remaining_os
+            if f < ctx.last_reported_filled:
+                logger.warning(
+                    "[IBKR] non_monotonic_filled orderId=%s prev=%s curr=%s",
+                    order_id, ctx.last_reported_filled, f,
+                )
+            if total_q > 0:
+                eps = max(
+                    _ORDER_QTY_EPS_ABS,
+                    _ORDER_QTY_EPS_REL * max(1.0, abs(total_q)),
+                )
+                if abs(f + r - total_q) > eps:
+                    logger.warning(
+                        "[IBKR] filled_plus_remaining orderId=%s f=%s r=%s total_q=%s ORDER_QTY_EPS=%s",
+                        order_id, f, r, total_q, eps,
+                    )
+            records.update_pending_order_fill_snapshot(
+                ctx.pending_order_id,
+                filled=f,
+                remaining=r,
+                avg_price=avg_price,
+            )
+            ctx.last_reported_filled = f
+            self._order_contexts[order_id] = ctx
             return
 
         if status == "Filled" and filled > 0:

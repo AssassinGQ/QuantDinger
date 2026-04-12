@@ -72,13 +72,22 @@ def _make_ctx(order_id=100, **overrides):
     return IBKROrderContext(**defaults)
 
 
-def _make_trade(order_id, status, filled=0.0, avg_price=0.0, log_messages=None):
+def _make_trade(
+    order_id,
+    status,
+    filled=0.0,
+    avg_price=0.0,
+    log_messages=None,
+    remaining=0.0,
+    total_qty=None,
+):
     trade = MagicMock()
     trade.order.orderId = order_id
+    trade.order.totalQuantity = 0.0 if total_qty is None else float(total_qty)
     trade.orderStatus.status = status
     trade.orderStatus.filled = filled
     trade.orderStatus.avgFillPrice = avg_price
-    trade.orderStatus.remaining = 0
+    trade.orderStatus.remaining = remaining
     if log_messages:
         trade.log = [MagicMock(message=m) for m in log_messages]
     else:
@@ -221,6 +230,148 @@ class TestCallbackDispatchRouting:
 
         client._on_order_status(_make_trade(999, "Filled", 10.0, 155.0))
         assert len(fire_calls) == 0
+
+
+# ===========================================================================
+# PartiallyFilled cumulative snapshot (TRADE-02)
+# ===========================================================================
+
+CLIENT_PY = __import__(
+    "app.services.live_trading.ibkr_trading.client", fromlist=["*"]
+).__file__
+
+
+class TestPartiallyFilledSnapshot:
+    """UC-02c–UC-02g: PartiallyFilled overwrites DB; no trade on partial; invariants."""
+
+    @patch("app.services.live_trading.ibkr_trading.client.records.update_pending_order_fill_snapshot")
+    def test_partially_filled_calls_snapshot_not_handle_fill(self, mock_snap):
+        client = _make_client()
+        fire_calls = []
+        client._fire_submit = lambda fn, is_blocking=True: fire_calls.append(fn)
+
+        ctx = _make_ctx(order_id=11, pending_order_id=99)
+        client._order_contexts[11] = ctx
+
+        client._on_order_status(
+            _make_trade(
+                11,
+                "PartiallyFilled",
+                filled=4.0,
+                avg_price=1.25,
+                remaining=6.0,
+                total_qty=10.0,
+            )
+        )
+
+        mock_snap.assert_called_once_with(99, filled=4.0, remaining=6.0, avg_price=1.25)
+        assert len(fire_calls) == 0
+        assert 11 in client._order_contexts
+        assert client._order_contexts[11].last_reported_filled == 4.0
+
+    @patch("app.services.live_trading.ibkr_trading.client.records.update_pending_order_fill_snapshot")
+    def test_partially_filled_duplicate_overwrites_same(self, mock_snap):
+        client = _make_client()
+        ctx = _make_ctx(order_id=12, pending_order_id=88)
+        client._order_contexts[12] = ctx
+
+        tr = _make_trade(
+            12, "PartiallyFilled", filled=4.0, avg_price=1.0, remaining=6.0, total_qty=10.0
+        )
+        client._on_order_status(tr)
+        client._on_order_status(tr)
+
+        assert mock_snap.call_count == 2
+        mock_snap.assert_called_with(88, filled=4.0, remaining=6.0, avg_price=1.0)
+
+    @patch("app.services.live_trading.ibkr_trading.client.logger")
+    @patch("app.services.live_trading.ibkr_trading.client.records.update_pending_order_fill_snapshot")
+    def test_non_monotonic_filled_logs_warning(self, _mock_snap, mock_logger):
+        client = _make_client()
+        ctx = _make_ctx(order_id=13, pending_order_id=77)
+        client._order_contexts[13] = ctx
+
+        client._on_order_status(
+            _make_trade(
+                13,
+                "PartiallyFilled",
+                filled=5.0,
+                avg_price=1.0,
+                remaining=5.0,
+                total_qty=10.0,
+            )
+        )
+        client._on_order_status(
+            _make_trade(
+                13,
+                "PartiallyFilled",
+                filled=4.0,
+                avg_price=1.0,
+                remaining=6.0,
+                total_qty=10.0,
+            )
+        )
+
+        warn_msgs = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any("non_monotonic_filled" in m for m in warn_msgs)
+
+    @patch("app.services.live_trading.ibkr_trading.client.logger")
+    @patch("app.services.live_trading.ibkr_trading.client.records.update_pending_order_fill_snapshot")
+    def test_sum_invariant_bad_total_logs_warning(self, _mock_snap, mock_logger):
+        client = _make_client()
+        ctx = _make_ctx(order_id=14, pending_order_id=66)
+        client._order_contexts[14] = ctx
+
+        client._on_order_status(
+            _make_trade(
+                14,
+                "PartiallyFilled",
+                filled=3.0,
+                avg_price=1.0,
+                remaining=10.0,
+                total_qty=10.0,
+            )
+        )
+
+        warn_msgs = [str(c) for c in mock_logger.warning.call_args_list]
+        joined = " ".join(warn_msgs)
+        assert "filled_plus_remaining" in joined and "ORDER_QTY_EPS" in joined
+
+    @patch("app.services.live_trading.records.record_trade")
+    @patch("app.services.live_trading.records.apply_fill_to_local_position", return_value=(0.0, {}))
+    @patch("app.services.live_trading.records.mark_order_sent")
+    @patch("app.services.live_trading.ibkr_trading.client.records.update_pending_order_fill_snapshot")
+    def test_partially_filled_then_filled_records_trade_once(
+        self, _snap, mock_sent, mock_apply, mock_record,
+    ):
+        client = _make_client()
+        ctx = _make_ctx(order_id=15, pending_order_id=55, strategy_id=3)
+        client._order_contexts[15] = ctx
+
+        client._on_order_status(
+            _make_trade(
+                15,
+                "PartiallyFilled",
+                filled=5.0,
+                avg_price=2.0,
+                remaining=5.0,
+                total_qty=10.0,
+            )
+        )
+        assert 15 in client._order_contexts
+
+        client._on_order_status(
+            _make_trade(15, "Filled", filled=10.0, avg_price=2.0, remaining=0.0, total_qty=10.0)
+        )
+
+        mock_record.assert_called_once()
+
+    def test_chinese_comment_uc02g_present_in_client_source(self):
+        from pathlib import Path
+
+        text = Path(CLIENT_PY).read_text(encoding="utf-8")
+        needle = "PartiallyFilled → 累计值覆盖 DB 的 filled/remaining（不做增量计算）"
+        assert needle in text
 
 
 # ===========================================================================
