@@ -38,12 +38,13 @@ created: 2026-04-12
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 17-01-01 | 01 | 1 | TRADE-01 | unit | `pytest tests/test_ibkr_client.py -k "tif_limit" -x` | ❌ W0 | ⬜ pending |
-| 17-01-02 | 01 | 1 | TRADE-01 | unit | `pytest tests/test_ibkr_client.py -k "mintick" -x` | ❌ W0 | ⬜ pending |
-| 17-02-01 | 02 | 1 | TRADE-02 | unit | `pytest tests/test_ibkr_order_callback.py -k "partial_fill" -x` | ❌ W0 | ⬜ pending |
-| 17-02-02 | 02 | 1 | TRADE-02 | unit | `pytest tests/test_ibkr_order_callback.py -k "terminal_fill" -x` | ❌ W0 | ⬜ pending |
-| 17-03-01 | 03 | 2 | TRADE-03 | unit | `pytest tests/test_stateful_runner.py -k "limit" -x` | ❌ W0 | ⬜ pending |
-| 17-03-02 | 03 | 2 | TRADE-03 | unit | `pytest tests/test_pending_order_enqueuer.py -k "limit" -x` | ❌ W0 | ⬜ pending |
+| 17-01-T1 | 01 | 1 | TRADE-01 | unit | `pytest tests/test_ibkr_client.py -k "limit or tif or mintick or snap" -x` | ❌ W0 | ⬜ pending |
+| 17-02-T1 | 02 | 2 | TRADE-02 | unit | `pytest tests/test_ibkr_order_callback.py tests/test_ibkr_client.py -x` | ❌ W0 | ⬜ pending |
+| 17-02-T2 | 02 | 2 | TRADE-02 | unit | `pytest tests/test_ibkr_order_callback.py -x` | ❌ W0 | ⬜ pending |
+| 17-02-T3 | 02 | 2 | TRADE-02 | manual | Paper port 4004 observation | N/A | ⬜ pending |
+| 17-03-T1 | 03 | 2 | TRADE-03 | unit | `pytest tests/test_pending_order_enqueuer.py tests/test_signal_executor_limit_enqueue.py -x` | ❌ W0 | ⬜ pending |
+| 17-03-T2 | 03 | 2 | TRADE-03 | unit | `pytest tests/test_stateful_runner_execute.py -x` | ❌ W0 | ⬜ pending |
+| 17-03-T3 | 03 | 2 | TRADE-03 | unit | `pytest tests/test_pending_order_worker.py -x` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -51,10 +52,13 @@ created: 2026-04-12
 
 ## Wave 0 Requirements
 
-- [ ] Extend `tests/test_ibkr_client.py` — TIF limit DAY + minTick snap cases
-- [ ] Extend `tests/test_ibkr_order_callback.py` — PartiallyFilled cumulative overwrite sequences
-- [ ] New/extend `tests/test_stateful_runner.py` — limit OrderContext → place_limit_order
-- [ ] New/extend `tests/test_pending_order_enqueuer.py` — order_type + price enqueue
+- [ ] Extend `tests/test_ibkr_client.py` — TIF limit DAY + minTick BUY floor / SELL ceil snap cases (UC-01a–g)
+- [ ] Extend `tests/test_ibkr_order_callback.py` — PartiallyFilled cumulative overwrite, monotonic/sum invariants (UC-02c–g)
+- [ ] New `tests/test_pending_order_fill_snapshot.py` — DB snapshot helper args (UC-02a/b)
+- [ ] New `tests/test_stateful_runner_execute.py` — limit OrderContext → place_limit_order (UC-03e/f)
+- [ ] New/extend `tests/test_pending_order_enqueuer.py` — order_type + price enqueue (UC-03d)
+- [ ] New `tests/test_signal_executor_limit_enqueue.py` — pip helper + limit price calc (UC-03a–c)
+- [ ] New/extend `tests/test_pending_order_worker.py` — OrderContext.price parity (UC-03g/h)
 
 *Existing infrastructure (conftest, fixtures) covers framework needs.*
 

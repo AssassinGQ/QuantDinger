@@ -15,10 +15,9 @@ Full limit-order execution: REST/automation parity, minTick prices, partial fill
 
 ### TIF Policy for Limit Orders
 - Market orders remain **IOC** (Phase 14 decision, unchanged)
-- Limit orders use **DAY** — resting until end of trading session or fill, whichever comes first
-- **No override allowed** — limit orders are always DAY, not configurable per signal/API
+- **Automation path** (signal → enqueue → worker → runner): limit orders always use **DAY** — resting until end of trading session or fill, whichever comes first. No per-signal override; `_get_tif_for_signal` returns `"DAY"` when `order_type == "limit"` regardless of `market_type`
+- **REST API path** (`POST /api/ibkr/order`): manual limit orders accept optional `timeInForce` from `IOC`/`DAY`/`GTC` whitelist per TRADE-01; default is `DAY` when omitted
 - Applies to **all market types** including Forex, Metals, USStock, HShare — same rule
-- `_get_tif_for_signal` needs a new code path: when `order_type == "limit"` → return `"DAY"` regardless of `market_type`
 
 ### Partial Fill Handling
 - IBKR `orderStatus` callback reports **cumulative** `filled` and `remaining` (not incremental)
@@ -31,7 +30,7 @@ Full limit-order execution: REST/automation parity, minTick prices, partial fill
 
 ### Limit Order Signal Flow (Automation)
 - Limit orders are **slippage protection** — limit price is set slightly worse than market to cap maximum slippage
-- **Offset source**: strategy `execution_config` contains `order_type: "limit"` and `max_slippage_pips` (user sets in frontend when creating strategy)
+- **Offset source**: strategy `trading_config.live_order` contains `order_type: "limit"` and `max_slippage_pips` (user sets in frontend when creating strategy)
 - **Price calculation at signal time** (not at worker execution time):
   - BUY: `limit_price = current_price + max_slippage_in_price_units`
   - SELL: `limit_price = current_price - max_slippage_in_price_units`
@@ -136,8 +135,8 @@ Full limit-order execution: REST/automation parity, minTick prices, partial fill
 ## Deferred Ideas
 
 - Frontend UI for setting `max_slippage_pips` in strategy creation wizard — Phase 18 or separate
-- GTC TIF option — not needed for slippage protection pattern (DAY is sufficient)
-- TIF override per signal/API — complexity not justified for v1.1
+- GTC TIF for **automation** — not needed for slippage protection pattern (DAY is sufficient); REST API does expose GTC per TRADE-01
+- TIF override per **automation signal** — complexity not justified for v1.1 (REST path already accepts TIF whitelist)
 - `execDetails` monitoring (IBKR recommends alongside `orderStatus`) — nice-to-have, not blocking
 - Reconnection recovery for in-flight DAY limit orders — technical concern for research/planning to address
 
