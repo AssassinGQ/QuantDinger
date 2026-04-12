@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
 status: unknown
-stopped_at: Completed 18-01-PLAN.md
-last_updated: "2026-04-12T08:35:00.000Z"
+stopped_at: Completed 18-05-PLAN.md
+last_updated: "2026-04-12T08:26:45.511Z"
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 19
-  completed_plans: 14
+  completed_plans: 15
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: `.planning/PROJECT.md`
 ## Current Position
 
 Phase: 18 (e2e-integration-testing) — EXECUTING
-Plan: 2 of 6
+Plan: 6 of 6 (next to execute: `18-06-PLAN.md`)
 
 ## Performance Metrics
 
@@ -48,6 +48,7 @@ Plan: 2 of 6
 | Phase 16-precious-metals-contract-classification P03 | 18min | 3 tasks | 4 files |
 | Phase 17-forex-limit-orders-automation P01 | 25min | 1 tasks | 3 files |
 | Phase 18-e2e-integration-testing P01 | 8min | 2 tasks | 6 files |
+| Phase 18-e2e-integration-testing P05 | 5min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -66,10 +67,11 @@ Plan: 2 of 6
 - [Phase 16-precious-metals-contract-classification]: 16-03: Integration tests — engine/strategy Metals; smoke/E2E XAGUSD with `market_category` Metals, qualify CMDTY, conId 77124483; TRADE-04 closed with full pytest gate.
 - **[Phase 17-forex-limit-orders-automation]:** 17-01: `_get_tif_for_signal(..., order_type)` — limit→DAY; `place_limit_order` minTick snap (BUY floor/SELL ceil); optional `time_in_force` IOC/DAY/GTC; REST `timeInForce` when key present; TRADE-01 satisfied at client + route + tests.
 - **[Phase 18-e2e-integration-testing]:** 18-01: Shared `tests/helpers/ibkr_mocks` + `flask_strategy_app` + `conftest` `strategy_client` / `patched_records`; smoke and `test_forex_ibkr_e2e` refactored to shared imports (foundation for TRADE-05/06 + TEST-02 work in 18-02+).
+- [Phase 18-e2e-integration-testing]: 18-05: Strategy HTTP E2E tests patch get_strategy_service inside tests after strategy_client to avoid reload clearing mocks
 
 ### Pending Todos
 
-- Continue Phase 18: execute plans 18-02 through 18-06 (qualify-cache E2E, limit cancel/errors, cross-market, strategy HTTP, Vue Jest).
+- Continue Phase 18: execute plans 18-02, 18-03, 18-04, 18-06 (qualify-cache E2E, limit cancel/errors, cross-market, Vue Jest); 18-05 complete.
 
 ### Blockers/Concerns
 
@@ -77,6 +79,6 @@ Plan: 2 of 6
 
 ## Session Continuity
 
-**Last session:** 2026-04-12T08:35:00.000Z
-**Stopped At:** Completed 18-01-PLAN.md
-**Resume File:** .planning/phases/18-e2e-integration-testing/18-02-PLAN.md
+**Last session:** 2026-04-12T08:26:45.509Z
+**Stopped At:** Completed 18-05-PLAN.md
+**Resume File:** `.planning/phases/18-e2e-integration-testing/18-06-PLAN.md`

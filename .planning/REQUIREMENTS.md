@@ -23,7 +23,7 @@
 ### 测试质量 (TEST)
 
 - [x] **TEST-01**: test_forex_ibkr_e2e.py 中 blueprint prefix 与生产 API 路由一致（消除 /api/strategy/ vs /api/ 差异）
-- [ ] **TEST-02**: 前端 HTTP E2E 测试——Vue wizard 创建 Forex+IBKR 策略的 HTTP round-trip 验证（可选 Playwright）
+- [x] **TEST-02**: 前端 HTTP E2E 测试——Vue wizard 创建 Forex+IBKR 策略的 HTTP round-trip 验证（可选 Playwright）
 
 ## v2 Requirements (Deferred)
 
@@ -58,7 +58,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-02 | Phase 14 | Complete |
 | INFRA-03 | Phase 15 | Complete |
 | TEST-01 | Phase 13 | Complete |
-| TEST-02 | Phase 18 | Pending |
+| TEST-02 | Phase 18 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 11 total
