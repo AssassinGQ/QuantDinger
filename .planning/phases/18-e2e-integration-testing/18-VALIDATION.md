@@ -2,7 +2,7 @@
 phase: 18
 slug: e2e-integration-testing
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-04-12
 ---
@@ -36,25 +36,26 @@ created: 2026-04-12
 
 ## Per-Task Verification Map
 
-Aligned with plan structure (TBD — populated during planning).
+Aligned with `18-01-PLAN.md` through `18-06-PLAN.md`.
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | Notes |
 |---------|------|------|-------------|-----------|-------------------|-------|
-| 18-W0-T1 | W0 | 0 | INFRA | setup | `cd backend_api_python && python -c "from tests.helpers.ibkr_mocks import FakeEvent"` | Extract mock helpers to tests/helpers/ |
-| 18-W0-T2 | W0 | 0 | INFRA | setup | `cd backend_api_python && pytest tests/test_forex_ibkr_e2e.py -q --tb=short -x` | Shared Flask fixture in conftest.py; existing tests still green |
-| 18-P1-T1 | 01 | 1 | TRADE-05 | E2E | `cd backend_api_python && pytest tests/test_e2e_qualify_cache_ibkr.py -q --tb=short -x` | Qualify cache: hit/miss/TTL/invalidation/reconnect |
-| 18-P2-T1 | 02 | 1 | TRADE-06 | E2E | `cd backend_api_python && pytest tests/test_e2e_limit_cancel_errors_ibkr.py -q --tb=short -x` | Cancel scenarios + error paths |
-| 18-P3-T1 | 03 | 2 | TRADE-05/06 | E2E | `cd backend_api_python && pytest tests/test_e2e_cross_market_usstock_hshare.py -q --tb=short -x` | USStock/HShare market + limit full chain |
-| 18-P4-T1 | 04 | 2 | TEST-02 | integration | `cd backend_api_python && pytest tests/test_strategy_http_e2e.py -q --tb=short -x` | Flask test_client strategy CRUD + batch |
-| 18-P5-T1 | 05 | 3 | TEST-02 | unit | `cd quantdinger_vue && npm run test:unit` | Vue Jest wizard component tests |
+| 18-01-T1 | 01 | 1 | TRADE-05/06/TEST-02 | setup | `cd backend_api_python && python -c "from tests.helpers.ibkr_mocks import FakeEvent, make_ibkr_client_for_e2e"` | Extract mock helpers to tests/helpers/ |
+| 18-01-T2 | 01 | 1 | TRADE-05/06/TEST-02 | setup | `cd backend_api_python && pytest tests/test_forex_ibkr_e2e.py tests/test_ibkr_forex_paper_smoke.py -q --tb=short -x` | Refactor imports; existing tests still green |
+| 18-02-T1 | 02 | 2 | TRADE-05/06 | E2E | `cd backend_api_python && pytest tests/test_e2e_qualify_cache_ibkr.py -q --tb=short -x` | Qualify cache: hit/miss/TTL/invalidation/reconnect |
+| 18-03-T1 | 03 | 2 | TRADE-06 | E2E | `cd backend_api_python && pytest tests/test_e2e_limit_cancel_errors_ibkr.py -q --tb=short -x` | Cancel scenarios (filled=0/filled>0) + error paths |
+| 18-04-T1 | 04 | 2 | TRADE-05/06 | E2E | `cd backend_api_python && pytest tests/test_e2e_cross_market_usstock_hshare_ibkr.py -q --tb=short -x` | USStock/HShare market + limit full chain |
+| 18-05-T1 | 05 | 2 | TEST-02 | integration | `cd backend_api_python && pytest tests/test_strategy_http_e2e.py -q --tb=short -x` | Flask test_client strategy CRUD + batch |
+| 18-06-T1 | 06 | 3 | TEST-02 | unit | `cd quantdinger_vue && npm run test:unit` | Vue Jest wizard component tests |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
 ---
 
-## Wave 0 Requirements
+## Wave 0 Requirements (Plan 18-01)
 
-- [ ] `tests/helpers/__init__.py` + `tests/helpers/ibkr_mocks.py` — shared IBKR mock helpers (FakeEvent, _wire_ib_events, _make_qualify_for_pair, _fire_callbacks_after_fill, _make_mock_ib_insync, _make_ibkr_client_for_e2e)
+- [ ] `tests/helpers/__init__.py` — package init
+- [ ] `tests/helpers/ibkr_mocks.py` — shared IBKR mock helpers (FakeEvent, wire_ib_events, make_qualify_for_pair, fire_callbacks_after_fill, make_mock_ib_insync, make_ibkr_client_for_e2e)
 - [ ] `tests/helpers/flask_strategy_app.py` — shared Flask app factory + login_required stub
 - [ ] `tests/conftest.py` — shared Flask app fixture re-exporting helpers
 - [ ] Existing `test_forex_ibkr_e2e.py` and `test_ibkr_forex_paper_smoke.py` updated to import from helpers (behavior unchanged)
@@ -72,11 +73,11 @@ Aligned with plan structure (TBD — populated during planning).
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** pending
