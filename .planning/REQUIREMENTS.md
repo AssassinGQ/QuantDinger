@@ -11,8 +11,8 @@
 - [ ] **TRADE-02**: 限价单部分成交处理——orderStatus PartiallyFilled 正确更新 remaining，不重复计入 fills/positions
 - [ ] **TRADE-03**: 限价单策略自动化——StatefulClientRunner 支持 limit order 信号，PendingOrderWorker 传递 limit price
 - [x] **TRADE-04**: 贵金属合约创建——XAUUSD/XAGUSD 使用正确 secType（CMDTY/SMART 或经 paper qualify 验证的类型），与 Forex CASH/IDEALPRO 分开路由
-- [ ] **TRADE-05**: 贵金属交易 E2E 验证——从 API 信号到 IBKR 下单的完整链路测试（mock IBKR），覆盖 qualify + order + callback
-- [ ] **TRADE-06**: 限价单交易 E2E 验证——从策略信号到限价单提交的完整链路测试，覆盖正常成交 + 部分成交 + 取消场景
+- [x] **TRADE-05**: 贵金属交易 E2E 验证——从 API 信号到 IBKR 下单的完整链路测试（mock IBKR），覆盖 qualify + order + callback
+- [x] **TRADE-06**: 限价单交易 E2E 验证——从策略信号到限价单提交的完整链路测试，覆盖正常成交 + 部分成交 + 取消场景
 
 ### 基础设施优化 (INFRA)
 
@@ -52,8 +52,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TRADE-02 | Phase 17 | Pending |
 | TRADE-03 | Phase 17 | Pending |
 | TRADE-04 | Phase 16 | Complete |
-| TRADE-05 | Phase 18 | Pending |
-| TRADE-06 | Phase 18 | Pending |
+| TRADE-05 | Phase 18 | Complete |
+| TRADE-06 | Phase 18 | Complete |
 | INFRA-01 | Phase 13 | Complete |
 | INFRA-02 | Phase 14 | Complete |
 | INFRA-03 | Phase 15 | Complete |
