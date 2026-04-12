@@ -8,26 +8,24 @@ QuantDinger 的 IBKR 交易客户端已扩展支持 Forex（外汇）交易。IB
 
 策略系统发出的 Forex 交易信号能正确通过 IBKRClient 在 IDEALPRO 上执行，从信号到成交的完整链路畅通。
 
-## Current Milestone: v1.1 Tech Debt Cleanup + Limit Orders
+## Milestones
+
+### ✅ v1.1 Tech Debt Cleanup + Limit Orders — SHIPPED 2026-04-12
 
 **Goal:** 清理 v1.0 遗留的技术债务，增加 Forex 限价单能力，补全 E2E 测试覆盖。
 
-**Target features:**
-- Qualify 结果缓存（减少重复 IBKR API 调用）
-- USStock/HShare open 信号统一 IOC（与 Forex 对齐）
-- Forex 限价单（LimitOrder）
-- 贵金属合约归类（XAUUSD/XAGUSD → 正确 secType）
-- normalize() 调用时序修正
-- E2E 测试 prefix 修复 + 前端 HTTP E2E
+**Delivered:**
+- ✓ Qualify 结果缓存（减少重复 IBKR API 调用）
+- ✓ USStock/HShare open 信号统一 IOC（与 Forex 对齐）
+- ✓ Forex 限价单（LimitOrder + PartiallyFilled + 策略自动化）
+- ✓ 贵金属合约归类（XAUUSD/XAGUSD → CMDTY/SMART）
+- ✓ normalize() 调用时序修正（MarketPreNormalizer）
+- ✓ E2E 测试 prefix 修复 + 前端 HTTP E2E + qualify cache E2E + cross-market E2E
 
 ## Current State
 
 **Shipped v1.0** (2026-04-11) — 12 phases, 15 plans.
-**Phase 13 complete** (2026-04-11) — Qualify 缓存 + E2E prefix 修复, 931 backend tests passing.
-**Phase 14 complete** (2026-04-11) — TIF 统一（Forex/USStock/HShare → IOC），956 backend tests passing.
-**Phase 15 complete** (2026-04-12) — Normalize pipeline ordering (MarketPreNormalizer + pre_normalize → pre_check → qualify → align)，958 backend tests passing.
-**Phase 16 complete** (2026-04-12) — Precious metals contract classification (XAUUSD/XAGUSD → CMDTY/SMART, paper-validated)，992 backend tests passing.
-**Phase 17 complete** (2026-04-12) — Forex limit orders & automation (LimitOrder DAY TIF, minTick snap, PartiallyFilled cumulative overwrite, strategy→runner→worker limit pipeline)，1023 backend tests passing.
+**Shipped v1.1** (2026-04-12) — 6 phases (13-18), 14 plans. 1049 backend tests passing, Vue Jest passing.
 
 Tech stack: Python 3.10+ backend (Flask + ib_insync), Vue.js 2.x frontend, PostgreSQL, Docker.
 Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wizard.
@@ -62,7 +60,7 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 
 ### Active
 
-- 前端 HTTP E2E 测试（Vue wizard → API round-trip）
+- (None — v1.1 milestone complete)
 
 ### Out of Scope
 
@@ -78,6 +76,8 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
+| E2E 按主题拆分 + 共享 helpers | 减少重复 mock 代码，提高可维护性 | ✓ Good (Phase 18) |
+| Flask test_client (非 Playwright) | CI/CD 不引入浏览器依赖，pytest 一致性 | ✓ Good (Phase 18) |
 | Forex TIF = IOC | IDEALPRO 市价单需要 IOC（避免 DAY 挂单残留） | ✓ Good (Phase 6) |
 | 市价单优先 | 外汇流动性好，滑点可控 | ✓ Good (Phase 7) |
 | ForexNormalizer passthrough + IB 对齐 | normalize 透传，_align_qty_to_contract 负责 sizeIncrement | ✓ Good (Phase 8) |
@@ -105,8 +105,8 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 ## Constraints
 
 - **Tech stack**: ib_insync，与现有 IBKR 集成一致
-- **兼容性**: USStock/HShare/Forex 交易路径不受影响（1023 tests regression-free）
+- **兼容性**: USStock/HShare/Forex/Metals 交易路径不受影响（1049 tests regression-free）
 - **架构**: BaseStatefulClient / StatefulClientRunner 模式
 
 ---
-*Last updated: 2026-04-12 — Phase 17 complete*
+*Last updated: 2026-04-12 — v1.1 milestone complete (Phase 18)*
