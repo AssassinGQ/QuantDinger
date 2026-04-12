@@ -33,7 +33,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 - [x] **Phase 14: TIF unification (USStock/HShare)** — IOC for Forex, USStock, HShare (all signals); `TestTifMatrix`; SEHK/IBKR doc (depends on 13) — **complete 2026-04-11**
 - [x] **Phase 15: Normalize pipeline ordering** — `pre_normalize` → `pre_check` → qualify → `align` with no duplicate steps (depends on 13) (completed 2026-04-12)
 - [x] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex (depends on 13) — **complete 2026-04-12** (16-01/16-02/16-03)
-- [ ] **Phase 17: Forex limit orders & automation** — LimitOrder + partial fills + runner/worker limit price (depends on 14, 15, 16)
+- [x] **Phase 17: Forex limit orders & automation** — LimitOrder + partial fills + runner/worker limit price (depends on 14, 15, 16) (completed 2026-04-12)
 - [ ] **Phase 18: E2E & integration testing** — Metals/limit E2E (mock IBKR), frontend HTTP E2E (depends on 17)
 
 **Execution order:** 13 → {14, 15, 16} (parallel) → 17 → 18
@@ -105,7 +105,7 @@ Plans:
   2. `PartiallyFilled` and subsequent updates adjust **remaining** correctly; cumulative fills do not double-apply positions or PnL.
   3. `StatefulClientRunner` / `PendingOrderWorker` accept limit signals and pass limit price (and order type) so automated trading matches manual/API behavior.
   4. Terminal order statuses remain consistent with existing trackers (no stuck or duplicate terminal handling).
-**Plans:** 1/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] `17-01-PLAN.md` — TRADE-01: `_get_tif_for_signal(order_type)` limit→DAY, minTick snap, REST `timeInForce` IOC/DAY/GTC
@@ -143,7 +143,7 @@ Plans:
 | 14. TIF unification (USStock/HShare) | 1/1 | Complete    | 2026-04-11 | 2026-04-11 |
 | 15. Normalize pipeline ordering | 4/4 | Complete    | 2026-04-12 | — |
 | 16. Precious metals classification | 3/3 | Complete    | 2026-04-12 | — |
-| 17. Forex limit orders & automation | 1/3 | In Progress|  | — |
+| 17. Forex limit orders & automation | 3/3 | Complete    | 2026-04-12 | — |
 | 18. E2E & integration testing | v1.1 | 0/? | Not started | — |
 
 ---
