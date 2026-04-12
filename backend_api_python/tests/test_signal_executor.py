@@ -546,6 +546,43 @@ class TestSignalExecutorExecute:
         signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
 
 
+class TestSignalExecutorMarketPreNormalize:
+    """TC-15-T3-03: enqueue path uses get_market_pre_normalizer().pre_normalize before execute_exchange_order."""
+
+    @patch("app.services.signal_executor.get_market_pre_normalizer")
+    @patch("app.services.signal_executor._get_available_capital", return_value=10000.0)
+    def test_tc_15_t3_03_enqueue_uses_pre_normalize(
+        self, _mock_capital, mock_get_pre_norm, signal_executor
+    ):
+        """TC-15-T3-03: execute_exchange_order amount equals mocked pre_normalize output."""
+        mock_normalizer = MagicMock()
+        mock_normalizer.pre_normalize.return_value = 42.0
+        mock_get_pre_norm.return_value = mock_normalizer
+
+        strategy_ctx = {
+            "id": 1,
+            "_leverage": 2.0,
+            "_market_type": "swap",
+            "_market_category": "Crypto",
+            "trading_config": {"entry_pct": 0.1},
+        }
+        signal = {"type": "open_long"}
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {"success": True}
+
+        result = signal_executor.execute(
+            strategy_ctx,
+            signal,
+            symbol="BTC/USDT",
+            current_price=50000.0,
+            current_positions=[],
+        )
+
+        assert result is True
+        mock_normalizer.pre_normalize.assert_called_once()
+        call_kwargs = signal_executor.pending_order_enqueuer.execute_exchange_order.call_args[1]
+        assert call_kwargs["amount"] == 42.0
+
+
 class TestGetAvailableCapital:
     """_get_available_capital 函数测试"""
 
