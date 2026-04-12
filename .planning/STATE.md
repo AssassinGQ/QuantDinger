@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
 status: unknown
-stopped_at: Completed `15-01-SUMMARY.md` — Phase 15 plan 01 (MarketPreNormalizer rename + tests + planning docs)
-last_updated: "2026-04-12T12:35:00.000Z"
+stopped_at: Completed 15-03-PLAN.md
+last_updated: "2026-04-12T02:15:58.561Z"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 7
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: `.planning/PROJECT.md`
 ## Current Position
 
 Phase: 15 (normalize-pipeline-ordering) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 
 ## Performance Metrics
 
@@ -41,6 +41,7 @@ Plan: 2 of 4
 | Phase 13-qualify-result-caching-e2e-prefix-fix P01 | 25min | 3 tasks | 6 files |
 | Phase 14-tif-unification-usstock-hshare P01 | ~20min | 1 task | 2 files |
 | Phase 15-normalize-pipeline-ordering P01 | 15min | 2 tasks | 11 files |
+| Phase 15-normalize-pipeline-ordering P03 | 1min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -51,10 +52,11 @@ Plan: 2 of 4
 - **[Phase 13]:** E2E test Flask app registers `strategy_bp` with `url_prefix='/api'` and POST `/api/strategies/create`, matching `register_routes` (TEST-01).
 - [Phase 13]: Qualify cache: (symbol, market_type) key, per-market IBKR_QUALIFY_TTL_*_SEC, no flush on reconnect
 - **[Phase 15-01]:** Market-layer helpers renamed to `MarketPreNormalizer` / `*PreNormalizer` with `pre_normalize` / `pre_check`; factory `get_market_pre_normalizer`; shim re-exports new symbols until plan 15-04; `ibkr_trading/client.py` and `signal_executor` call sites updated in the same change set.
+- [Phase 15-normalize-pipeline-ordering]: 15-03: SignalExecutor module-level get_market_pre_normalizer + pre_normalize before enqueue; TC-15-T3-03 mocks factory and asserts enqueued amount.
 
 ### Pending Todos
 
-- Continue Phase 15: execute `15-02-PLAN.md` (IBKR client pipeline order) then `15-03` / `15-04` per ROADMAP.
+- Continue Phase 15: finish `15-02` summary if missing; execute `15-04-PLAN.md` (shim removal + suite gate) per ROADMAP.
 
 ### Blockers/Concerns
 
@@ -62,6 +64,6 @@ Plan: 2 of 4
 
 ## Session Continuity
 
-**Last session:** 2026-04-12T02:12:55.882Z
-**Stopped At:** Completed 15-01-PLAN.md
-**Resume File:** 15-02-PLAN.md (IBKRClient pipeline)
+**Last session:** 2026-04-12T02:15:58.301Z
+**Stopped At:** Completed 15-03-PLAN.md
+**Resume File:** 15-04-PLAN.md
