@@ -1,5 +1,9 @@
 """Tests for MarketPreNormalizer hierarchy."""
 
+import importlib
+
+import pytest
+
 from app.services.live_trading.order_normalizer import (
     CryptoPreNormalizer,
     get_market_pre_normalizer,
@@ -232,15 +236,8 @@ class TestGetMarketPreNormalizer:
         assert isinstance(get_market_pre_normalizer(None), USStockPreNormalizer)
 
 
-class TestBackwardCompatImport:
-    """Ensure old import paths still work."""
-
-    def test_old_import_path(self):
-        from app.services.live_trading.ibkr_trading.order_normalizer import (
-            get_market_pre_normalizer as old_get,
-        )
-        assert old_get("HShare").pre_normalize(450, "00005") == 400
-
-    def test_old_submodule_import(self):
-        from app.services.live_trading.ibkr_trading.order_normalizer.hk_share import _hk_symbol_key
-        assert _hk_symbol_key("00005") == "5"
+def test_tc_15_t4_02_shim_module_removed():
+    """TC-15-T4-02: legacy shim package under live_trading.ibkr_trading is removed."""
+    _shim = "app.services.live_trading." + "ibkr_trading" + "." + "order_normalizer"
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(_shim)
