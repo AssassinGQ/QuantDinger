@@ -57,16 +57,67 @@
 
 ---
 
-## Cross-Milestone Trends
+## Milestone: v1.1 — Tech Debt Cleanup + Limit Orders
 
-| Metric | v1.0 |
-|--------|------|
-| Phases | 12 |
-| Plans | 15 |
-| Timeline | 3 days |
-| Test count | 928 |
-| Rework phases | 0 |
-| Tech debt items | 7 |
+**Shipped:** 2026-04-12
+**Phases:** 6 | **Plans:** 19
+
+### What Was Built
+
+- Qualify result caching — `(symbol, market_type)` TTL cache with per-market env var config; reconnect-safe
+- TIF unification — Forex/USStock/HShare all IOC; 24-combination `TestTifMatrix`
+- Normalize pipeline ordering — `MarketPreNormalizer` two-layer architecture (market sync + broker async)
+- Precious metals classification — XAUUSD/XAGUSD → CMDTY/SMART, validated via paper qualify
+- Forex limit orders — LimitOrder DAY TIF + minTick snap + PartiallyFilled cumulative + runner/worker pipeline
+- Comprehensive E2E test suite — qualify cache, limit/cancel/error, cross-market, strategy HTTP CRUD, Vue Jest wizard
+
+### What Worked
+
+- **Parallel phase execution** — Phases 14, 15, 16 ran independently after Phase 13, cutting wall-clock time for the three-phase dependency fan-out.
+- **Shared test infrastructure (18-01)** — Extracting `ibkr_mocks.py` and `flask_strategy_app.py` first enabled rapid E2E module creation (18-02 through 18-06) with zero duplicated mock code.
+- **CONTEXT.md locking product decisions** — Phase 17 CONTEXT locked "DAY only for automation", "cumulative snapshot not incremental", which prevented research rabbit holes.
+- **UAT via test execution** — Phase 18 deliverables are test code; running `pytest` + `jest` provided immediate pass/fail UAT without manual browser verification.
+- **gsd-plan-checker catch** — Checker caught an invalid `pytest -k` OR expression (`|` instead of `or`) in Phase 18-04 before execution.
+
+### What Was Inefficient
+
+- **TRADE-02/TRADE-03 checkbox drift** — Requirements and roadmap plan checkboxes for 17-02 and 17-03 were not updated to `[x]` during execution. Required manual fix at milestone completion.
+- **STATE.md `advance-plan` parse errors** — The `gsd-tools state advance-plan` command failed on several plan completions due to "Current Plan" field format mismatches, requiring manual STATE.md edits.
+- **VERIFICATION.md written but not machine-checked** — Phase VERIFICATION files exist but there's no automated gate that compares delivered artifacts against success criteria programmatically.
+
+### Patterns Established
+
+- `tests/helpers/ibkr_mocks.py` as central IBKR test double hub (FakeEvent, wire, qualify stubs, E2E client factory)
+- `tests/helpers/flask_strategy_app.py` + `conftest.py` `strategy_client` for HTTP E2E without browser
+- `MarketPreNormalizer` / `*PreNormalizer` naming convention for market-layer normalization
+- `@jest-environment jsdom` per-file for Vue 2 component tests (keeping node-env for file-based tests)
+- Theme-based E2E file splitting: `test_e2e_{theme}_ibkr.py`
+
+### Key Lessons
+
+1. **Mark requirements complete during plan execution, not after** — waiting until milestone completion created reconciliation overhead.
+2. **Two-layer normalization (sync market + async broker)** resolves the "normalize before or after qualify" tension cleanly — worth replicating for future instrument types.
+3. **E2E test infrastructure as Phase 1 of any test phase** — extracting shared helpers before writing test modules saves 50%+ time on subsequent plans.
+
+### Cost Observations
+
+- Model mix: opus for research/planning/execution, sonnet for checking/verification
+- Sessions: ~5 sessions over 2 days
+- Notable: 19 plans in 2 days — parallel phase execution + pre-extracted helpers kept throughput high
 
 ---
-*Retrospective started: 2026-04-11*
+
+## Cross-Milestone Trends
+
+| Metric | v1.0 | v1.1 |
+|--------|------|------|
+| Phases | 12 | 6 |
+| Plans | 15 | 19 |
+| Timeline | 3 days | 2 days |
+| Test count | 928 | 1049 (+121) |
+| Rework phases | 0 | 0 |
+| Tech debt items | 7 | 2 (5 resolved) |
+| Checkbox drift | yes | yes (fixed) |
+
+---
+*Retrospective started: 2026-04-11 · Updated: 2026-04-12 (v1.1)*

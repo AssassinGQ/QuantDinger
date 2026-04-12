@@ -25,7 +25,7 @@ QuantDinger 的 IBKR 交易客户端已扩展支持 Forex（外汇）交易。IB
 ## Current State
 
 **Shipped v1.0** (2026-04-11) — 12 phases, 15 plans.
-**Shipped v1.1** (2026-04-12) — 6 phases (13-18), 14 plans. 1049 backend tests passing, Vue Jest passing.
+**Shipped v1.1** (2026-04-12) — 6 phases (13-18), 19 plans. 1049 backend tests passing, 3 Vue Jest tests passing.
 
 Tech stack: Python 3.10+ backend (Flask + ib_insync), Vue.js 2.x frontend, PostgreSQL, Docker.
 Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wizard.
@@ -109,4 +109,4 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 - **架构**: BaseStatefulClient / StatefulClientRunner 模式
 
 ---
-*Last updated: 2026-04-12 — v1.1 milestone complete (Phase 18)*
+*Last updated: 2026-04-12 — v1.1 milestone archived*
