@@ -31,7 +31,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 - [x] **Phase 13: Qualify result caching + E2E prefix fix** — TTL cache for `qualifyContractsAsync` with per-market TTL and targeted invalidation (qualify/validation failures); IBKR reconnect does **not** flush the cache; fix E2E test API prefix drift
 - [x] **Phase 14: TIF unification (USStock/HShare)** — IOC for Forex, USStock, HShare (all signals); `TestTifMatrix`; SEHK/IBKR doc (depends on 13) — **complete 2026-04-11**
-- [ ] **Phase 15: Normalize pipeline ordering** — `check` → `normalize` → qualify → `align` with no duplicate steps (depends on 13)
+- [ ] **Phase 15: Normalize pipeline ordering** — `pre_normalize` → `pre_check` → qualify → `align` with no duplicate steps (depends on 13)
 - [ ] **Phase 16: Precious metals contract classification** — XAUUSD/XAGUSD routed to correct secType vs IDEALPRO Forex (depends on 13)
 - [ ] **Phase 17: Forex limit orders & automation** — LimitOrder + partial fills + runner/worker limit price (depends on 14, 15, 16)
 - [ ] **Phase 18: E2E & integration testing** — Metals/limit E2E (mock IBKR), frontend HTTP E2E (depends on 17)
