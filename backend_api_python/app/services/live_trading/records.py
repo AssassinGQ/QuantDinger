@@ -191,6 +191,48 @@ def mark_order_sent(
         cur.close()
 
 
+def update_pending_order_fill_snapshot(
+    order_id: int,
+    *,
+    filled: float,
+    remaining: float,
+    avg_price: float = 0.0,
+) -> None:
+    """
+    Overwrite filled / remaining / avg_price from IBKR cumulative snapshot (e.g. PartiallyFilled).
+    Does not change status or terminal fields.
+    """
+    if order_id <= 0:
+        return
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """
+                UPDATE pending_orders
+                SET filled = %s,
+                    remaining = %s,
+                    avg_price = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (
+                    float(filled or 0.0),
+                    float(remaining or 0.0),
+                    float(avg_price or 0.0),
+                    int(order_id),
+                ),
+            )
+            db.commit()
+            cur.close()
+    except Exception as e:
+        logger.warning(
+            "update_pending_order_fill_snapshot failed: id=%s err=%s",
+            order_id,
+            e,
+        )
+
+
 def mark_order_failed(
     order_id: int,
     error: str,

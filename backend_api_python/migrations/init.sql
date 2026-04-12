@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS pending_orders (
     exchange_order_id VARCHAR(100) DEFAULT '',
     exchange_response_json TEXT DEFAULT '',
     filled DECIMAL(20,8) DEFAULT 0,
+    remaining DECIMAL(20,8) DEFAULT 0,
     avg_price DECIMAL(20,8) DEFAULT 0,
     executed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
