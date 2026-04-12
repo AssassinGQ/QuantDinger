@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
-status: unknown
-stopped_at: Completed 18-03-PLAN.md
-last_updated: "2026-04-12T08:35:00.000Z"
+status: complete
+stopped_at: Completed 18-06-PLAN.md
+last_updated: "2026-04-12T08:36:27.677Z"
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 19
-  completed_plans: 18
+  completed_plans: 19
 ---
 
 # Project State
@@ -20,14 +20,14 @@ See: `.planning/PROJECT.md`
 
 **Core value:** 清理 v1.0 遗留技术债务，增加 Forex 限价单，补全 E2E 测试覆盖。
 
-**Current focus:** Phase 18 — e2e-integration-testing
+**Current focus:** Phase 18 complete — e2e-integration-testing (all plans done)
 
 **Verification:** use-case-driven (`.planning/config.json`). **Regression gate:** backend pytest suite must stay green.
 
 ## Current Position
 
-Phase: 18 (e2e-integration-testing) — EXECUTING
-Plan: 18-03 complete — next unchecked: `18-06-PLAN.md` (see ROADMAP)
+Phase: 18 (e2e-integration-testing) — COMPLETE
+Plan: 18-06 complete (`frnt-02-wizard-forex-market.spec.js`, TEST-02)
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Plan: 18-03 complete — next unchecked: `18-06-PLAN.md` (see ROADMAP)
 | Phase 18-e2e-integration-testing P04 | 10min | 2 tasks | 1 files |
 | Phase 18-e2e-integration-testing P03 | 25min | 2 tasks | 1 files |
 | Phase 18-e2e-integration-testing P02 | 25min | 2 tasks | 1 files |
+| Phase 18-e2e-integration-testing P06 | 12min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -74,10 +75,11 @@ Plan: 18-03 complete — next unchecked: `18-06-PLAN.md` (see ROADMAP)
 - [Phase 18-e2e-integration-testing]: 18-04: Added test_e2e_cross_market_usstock_hshare_ibkr.py — USStock/HShare market full chains + USStock limit (minTick 0.01, DAY TIF); TRADE-05/TRADE-06 cross-market worker coverage.
 - [Phase 18-e2e-integration-testing]: 18-03: test_e2e_limit_cancel_errors_ibkr.py covers TRADE-06 limit/partial/cancel and qualify/validation/price error paths with documented rejection layers.
 - [Phase 18-e2e-integration-testing]: 18-02: test_e2e_qualify_cache_ibkr.py covers qualify cache (monotonic TTL, invalidation, reconnect) and TRADE-05 XAGUSD CMDTY worker chain
+- [Phase 18-e2e-integration-testing]: 18-06: Jest FRNT-02 uses jsdom + live step + executionModeUi live to render Forex IBKR broker UI in trading-assistant wizard
 
 ### Pending Todos
 
-- Continue Phase 18: execute `18-06-PLAN.md` (Vue Jest); Phase 18 plans 18-01–18-05 and 18-03 complete per ROADMAP.
+- None for Phase 18 (all six plans complete). Follow ROADMAP for Phase 17 open items or next milestone.
 
 ### Blockers/Concerns
 
@@ -85,6 +87,6 @@ Plan: 18-03 complete — next unchecked: `18-06-PLAN.md` (see ROADMAP)
 
 ## Session Continuity
 
-**Last session:** 2026-04-12T08:35:00.000Z
-**Stopped At:** Completed 18-03-PLAN.md
-**Resume File:** `.planning/phases/18-e2e-integration-testing/18-06-PLAN.md`
+**Last session:** 2026-04-12T08:36:27.675Z
+**Stopped At:** Completed 18-06-PLAN.md
+**Resume File:** None
