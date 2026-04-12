@@ -19,8 +19,7 @@ KNOWN_FOREX_PAIRS = {
     "USDMXN", "USDZAR", "USDTRY", "USDHKD", "USDSGD",
     "USDNOK", "USDSEK", "USDDKK",
     "EURTRY", "EURMXN", "EURNOK", "EURSEK", "EURDKK", "EURPLN", "EURHUF", "EURCZK",
-    # Metals (traded as CASH on IDEALPRO)
-    "XAUUSD", "XAGUSD", "XAUEUR",
+    # Precious metals (XAU*/XAG* six-letter pairs) use CMDTY on SMART — not IDEALPRO CASH; see parse_symbol / Metals branch.
 }
 
 _FOREX_SEPARATORS = "/.-_ "
@@ -32,6 +31,15 @@ def _clean_forex_raw(symbol: str) -> str:
     for sep in _FOREX_SEPARATORS:
         result = result.replace(sep, "")
     return result
+
+
+def _is_precious_metal_pair(forex_clean: str) -> bool:
+    """True for validated six-letter XAU*/XAG* pairs routed as Metals (excludes XAUEUR per IBKR CMDTY behavior)."""
+    if len(forex_clean) != 6 or not forex_clean.isalpha():
+        return False
+    if forex_clean == "XAUEUR":
+        return False
+    return forex_clean.startswith("XAU") or forex_clean.startswith("XAG")
 
 
 def normalize_symbol(symbol: str, market_type: str) -> Tuple[str, str, str]:
@@ -56,7 +64,16 @@ def normalize_symbol(symbol: str, market_type: str) -> Tuple[str, str, str]:
                 f"expected 6 letters after cleaning (e.g. EURUSD), got '{pair}'"
             )
         return pair, "IDEALPRO", pair[3:]
-    
+
+    elif market_type == "Metals":
+        pair = _clean_forex_raw(symbol)
+        if len(pair) != 6 or not pair.isalpha():
+            raise ValueError(
+                f"Invalid precious metals symbol '{symbol}': "
+                f"expected 6 letters after cleaning (e.g. XAUUSD), got '{pair}'"
+            )
+        return pair, "SMART", pair[3:6]
+
     elif market_type == "USStock":
         # US stocks: AAPL, TSLA, GOOGL
         # Use SMART routing for best execution
@@ -104,8 +121,9 @@ def parse_symbol(symbol: str) -> Tuple[str, Optional[str]]:
     if clean.isdigit() and len(clean) <= 5:
         return symbol, "HShare"
     
-    # Forex: strip separators, check against known set
     forex_clean = _clean_forex_raw(symbol)
+    if _is_precious_metal_pair(forex_clean):
+        return forex_clean, "Metals"
     if forex_clean in KNOWN_FOREX_PAIRS:
         return forex_clean, "Forex"
     
@@ -131,5 +149,12 @@ def format_display_symbol(ib_symbol: str, exchange: str) -> str:
     if exchange == "IDEALPRO":
         if len(ib_symbol) == 6 and ib_symbol.isalpha():
             return f"{ib_symbol[:3]}.{ib_symbol[3:]}"
+        return ib_symbol
+    if (
+        exchange == "SMART"
+        and len(ib_symbol) == 6
+        and ib_symbol.isalpha()
+        and (ib_symbol.startswith("XAU") or ib_symbol.startswith("XAG"))
+    ):
         return ib_symbol
     return ib_symbol

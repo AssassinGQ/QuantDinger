@@ -17,7 +17,7 @@ class TestNormalizeSymbolForex:
     @pytest.mark.parametrize("input_sym,expected_pair,expected_quote", [
         ("EURUSD", "EURUSD", "USD"),
         ("USDJPY", "USDJPY", "JPY"),
-        ("XAUUSD", "XAUUSD", "USD"),
+        ("USDCAD", "USDCAD", "CAD"),
         ("GBPJPY", "GBPJPY", "JPY"),
         ("AUDUSD", "AUDUSD", "USD"),
         ("CADJPY", "CADJPY", "JPY"),
@@ -73,9 +73,9 @@ class TestParseSymbolForex:
         assert mtype == "Forex"
         assert clean == "EURUSD"
 
-    def test_metals_detected_as_forex(self):
+    def test_metals_detected_as_metals(self):
         clean, mtype = parse_symbol("XAUUSD")
-        assert mtype == "Forex"
+        assert mtype == "Metals"
         assert clean == "XAUUSD"
 
     def test_hshare_not_confused_with_forex(self):
@@ -136,3 +136,48 @@ class TestParseSymbolRegression:
         clean, mtype = parse_symbol("AAPL")
         assert mtype == "USStock"
         assert clean == "AAPL"
+
+
+class TestPreciousMetalsSymbolUcs:
+    """UC-16-T1-*: IBKR precious metals symbol layer (TRADE-04)."""
+
+    def test_uc_16_t1_01(self):
+        """UC-16-T1-01: Gold pair."""
+        assert parse_symbol("XAUUSD") == ("XAUUSD", "Metals")
+
+    def test_uc_16_t1_02(self):
+        """UC-16-T1-02: Silver pair."""
+        assert parse_symbol("XAGUSD") == ("XAGUSD", "Metals")
+
+    def test_uc_16_t1_03(self):
+        """UC-16-T1-03: Separator strip."""
+        assert parse_symbol("xau-usd") == ("XAUUSD", "Metals")
+
+    def test_uc_16_t1_04(self):
+        """UC-16-T1-04: Pattern future-proof (not in KNOWN)."""
+        assert parse_symbol("XAUGBP") == ("XAUGBP", "Metals")
+
+    def test_uc_16_t1_05(self):
+        """UC-16-T1-05: XAUEUR excluded from metals."""
+        assert parse_symbol("XAUEUR") == ("XAUEUR", "USStock")
+
+    def test_uc_16_t1_06(self):
+        """UC-16-T1-06: Unchanged Forex."""
+        assert parse_symbol("EURUSD") == ("EURUSD", "Forex")
+
+    def test_uc_16_t1_07(self):
+        """UC-16-T1-07: CMDTY inputs."""
+        assert normalize_symbol("XAUUSD", "Metals") == ("XAUUSD", "SMART", "USD")
+
+    def test_uc_16_t1_08(self):
+        """UC-16-T1-08: CMDTY inputs."""
+        assert normalize_symbol("XAGUSD", "Metals") == ("XAGUSD", "SMART", "USD")
+
+    def test_uc_16_t1_09(self):
+        """UC-16-T1-09: Invalid length/alpha."""
+        with pytest.raises(ValueError, match="Invalid precious metals symbol"):
+            normalize_symbol("bad", "Metals")
+
+    def test_uc_16_t1_10(self):
+        """UC-16-T1-10: Display."""
+        assert format_display_symbol("XAUUSD", "SMART") == "XAUUSD"
