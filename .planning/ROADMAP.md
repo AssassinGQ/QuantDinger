@@ -151,7 +151,7 @@ Plans:
 | 15. Normalize pipeline ordering | 4/4 | Complete    | 2026-04-12 | — |
 | 16. Precious metals classification | 3/3 | Complete    | 2026-04-12 | — |
 | 17. Forex limit orders & automation | 3/3 | Complete    | 2026-04-12 | — |
-| 18. E2E & integration testing | 6/6 | Complete   | 2026-04-12 | — |
+| 18. E2E & integration testing | 6/6 | Complete    | 2026-04-12 | — |
 
 ---
 *Roadmap created: 2026-04-09 · v1.0 shipped: 2026-04-11 · v1.1 phases 13-18: 2026-04-11*
