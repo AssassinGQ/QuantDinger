@@ -67,7 +67,7 @@ Each task was committed atomically:
 1. **Task 1: Delete shim package and verify no app imports** — `d87dd18` (feat)
 2. **Task 2: Tests — TC-15-T4-02 + TC-15-T5-02 (remove backward compat)** — `8de228f` (test)
 
-**Plan metadata:** _(pending final docs commit)_
+**Plan metadata:** `39f8302` (docs: complete normalize pipeline shim removal plan)
 
 ## Files Created/Modified
 
@@ -121,4 +121,4 @@ None.
 ## Self-Check: PASSED
 
 - `15-04-SUMMARY.md` exists at `.planning/phases/15-normalize-pipeline-ordering/15-04-SUMMARY.md`.
-- Commits `d87dd18`, `8de228f` present on `main`.
+- Commits `d87dd18`, `8de228f`, `39f8302` present on `main`.
