@@ -121,11 +121,11 @@ Plans:
   2. Limit-order E2E covers normal fill, partial fill, and cancel scenarios with mocks.
   3. Frontend HTTP E2E (Flask `test_client` per 18-CONTEXT; no Playwright in CI) proves strategy create/update/delete/batch against the API; Vue Jest covers wizard Forex/IBKR surfaces.
   4. Full backend test suite remains green (including existing ~928 tests).
-**Plans:** 4/6 plans executed
+**Plans:** 5/6 plans executed
 Plans:
 - [x] `18-01-PLAN.md` — Shared `tests/helpers` IBKR mocks + Flask strategy fixture + refactor smoke/E2E imports (enables TRADE-05/06 + TEST-02)
-- [ ] `18-02-PLAN.md` — Qualify-cache E2E + TRADE-05 XAGUSD mock chain (`test_e2e_qualify_cache_ibkr.py`)
-- [ ] `18-03-PLAN.md` — Limit fill/partial/cancel + error paths (`test_e2e_limit_cancel_errors_ibkr.py`, TRADE-06)
+- [x] `18-02-PLAN.md` — Qualify-cache E2E + TRADE-05 XAGUSD mock chain (`test_e2e_qualify_cache_ibkr.py`)
+- [x] `18-03-PLAN.md` — Limit fill/partial/cancel + error paths (`test_e2e_limit_cancel_errors_ibkr.py`, TRADE-06)
 - [x] `18-04-PLAN.md` — USStock/HShare cross-market E2E (`test_e2e_cross_market_usstock_hshare_ibkr.py`)
 - [x] `18-05-PLAN.md` — Strategy HTTP CRUD + batch (`test_strategy_http_e2e.py`, TEST-02)
 - [ ] `18-06-PLAN.md` — Vue Jest wizard spec (`frnt-02-wizard-forex-market.spec.js`, TEST-02)
@@ -151,7 +151,7 @@ Plans:
 | 15. Normalize pipeline ordering | 4/4 | Complete    | 2026-04-12 | — |
 | 16. Precious metals classification | 3/3 | Complete    | 2026-04-12 | — |
 | 17. Forex limit orders & automation | 3/3 | Complete    | 2026-04-12 | — |
-| 18. E2E & integration testing | 3/6 | In Progress|  | — |
+| 18. E2E & integration testing | 5/6 | In Progress|  | — |
 
 ---
 *Roadmap created: 2026-04-09 · v1.0 shipped: 2026-04-11 · v1.1 phases 13-18: 2026-04-11*

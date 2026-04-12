@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Tech Debt Cleanup + Limit Orders
 status: unknown
-stopped_at: Completed 18-04-PLAN.md
-last_updated: "2026-04-12T08:27:50.777Z"
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-04-12T08:32:18.741Z"
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 19
-  completed_plans: 16
+  completed_plans: 18
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: `.planning/PROJECT.md`
 ## Current Position
 
 Phase: 18 (e2e-integration-testing) — EXECUTING
-Plan: 6 of 6 (next to execute: `18-06-PLAN.md`)
+Plan: 18-02 complete — next unchecked: `18-03-PLAN.md`, `18-06-PLAN.md` (see ROADMAP)
 
 ## Performance Metrics
 
@@ -50,6 +50,8 @@ Plan: 6 of 6 (next to execute: `18-06-PLAN.md`)
 | Phase 18-e2e-integration-testing P01 | 8min | 2 tasks | 6 files |
 | Phase 18-e2e-integration-testing P05 | 5min | 1 tasks | 1 files |
 | Phase 18-e2e-integration-testing P04 | 10min | 2 tasks | 1 files |
+| Phase 18-e2e-integration-testing P03 | 25min | 2 tasks | 1 files |
+| Phase 18-e2e-integration-testing P02 | 25min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -70,10 +72,12 @@ Plan: 6 of 6 (next to execute: `18-06-PLAN.md`)
 - **[Phase 18-e2e-integration-testing]:** 18-01: Shared `tests/helpers/ibkr_mocks` + `flask_strategy_app` + `conftest` `strategy_client` / `patched_records`; smoke and `test_forex_ibkr_e2e` refactored to shared imports (foundation for TRADE-05/06 + TEST-02 work in 18-02+).
 - [Phase 18-e2e-integration-testing]: 18-05: Strategy HTTP E2E tests patch get_strategy_service inside tests after strategy_client to avoid reload clearing mocks
 - [Phase 18-e2e-integration-testing]: 18-04: Added test_e2e_cross_market_usstock_hshare_ibkr.py — USStock/HShare market full chains + USStock limit (minTick 0.01, DAY TIF); TRADE-05/TRADE-06 cross-market worker coverage.
+- [Phase 18-e2e-integration-testing]: 18-03: test_e2e_limit_cancel_errors_ibkr.py covers TRADE-06 limit/partial/cancel and qualify/validation/price error paths with documented rejection layers.
+- [Phase 18-e2e-integration-testing]: 18-02: test_e2e_qualify_cache_ibkr.py covers qualify cache (monotonic TTL, invalidation, reconnect) and TRADE-05 XAGUSD CMDTY worker chain
 
 ### Pending Todos
 
-- Continue Phase 18: execute plans 18-02, 18-03, 18-06 (qualify-cache E2E, limit cancel/errors, Vue Jest); 18-01, 18-04, 18-05 complete.
+- Continue Phase 18: execute remaining roadmap plans (e.g. `18-03-PLAN.md`, `18-06-PLAN.md` per ROADMAP); 18-01, 18-02, 18-04, 18-05 complete.
 
 ### Blockers/Concerns
 
@@ -81,6 +85,6 @@ Plan: 6 of 6 (next to execute: `18-06-PLAN.md`)
 
 ## Session Continuity
 
-**Last session:** 2026-04-12T08:27:50.775Z
-**Stopped At:** Completed 18-04-PLAN.md
-**Resume File:** `.planning/phases/18-e2e-integration-testing/18-06-PLAN.md`
+**Last session:** 2026-04-12T08:32:18.739Z
+**Stopped At:** Completed 18-02-PLAN.md
+**Resume File:** `.planning/phases/18-e2e-integration-testing/18-03-PLAN.md`
