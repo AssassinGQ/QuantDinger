@@ -61,7 +61,7 @@ class DataSourceFactory:
         elif market == 'HShare':
             from app.data_sources.cn_stock import HShareDataSource
             return HShareDataSource()
-        elif market == 'Forex':
+        elif market in ('Forex', 'Metals'):
             from app.data_sources.forex import ForexDataSource
             return ForexDataSource()
         elif market == 'Futures':
