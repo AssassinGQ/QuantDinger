@@ -9,6 +9,7 @@ import requests
 import threading
 
 from app.data_sources.base import BaseDataSource, TIMEFRAME_SECONDS, RateLimitError
+from app.data_sources import DataSourceFactory
 from app.utils.logger import get_logger
 from app.config import TiingoConfig, APIKeys
 
@@ -160,31 +161,20 @@ class ForexDataSource(BaseDataSource):
                     mid = (bid + ask) / 2
                 
                 last_price = mid or bid or ask
-                
-                # 获取前一天收盘价来计算涨跌（需要额外请求日线数据）
+
+                # 获取前一天收盘价来计算涨跌（使用 get_kline 缓存获取，无额外 API 请求）
                 prev_close = 0
                 change = 0
                 change_pct = 0
-                
+
                 try:
-                    # 获取昨日收盘价
-                    yesterday = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
-                    today = datetime.now().strftime('%Y-%m-%d')
-                    price_url = f"{self.base_url}/fx/{tiingo_symbol}/prices"
-                    price_params = {
-                        'startDate': yesterday,
-                        'endDate': today,
-                        'resampleFreq': '1day',
-                        'token': api_key
-                    }
-                    price_resp = requests.get(price_url, params=price_params, timeout=TiingoConfig.TIMEOUT)
-                    if price_resp.status_code == 200:
-                        price_data = price_resp.json()
-                        if price_data and len(price_data) > 0:
-                            prev_close = float(price_data[-1].get('close', 0) or 0)
-                            if prev_close and last_price:
-                                change = last_price - prev_close
-                                change_pct = (change / prev_close) * 100
+                    klines = DataSourceFactory.get_kline("Forex", tiingo_symbol.upper(), "1D", 2)
+                    if klines and len(klines) >= 2:
+                        yesterday_kline = klines[-2]
+                        prev_close = float(yesterday_kline.get('close', 0) or 0)
+                        if prev_close and last_price:
+                            change = last_price - prev_close
+                            change_pct = (change / prev_close) * 100
                 except Exception:
                     pass  # 涨跌计算失败不影响主要功能
                 
