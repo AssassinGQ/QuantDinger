@@ -21,7 +21,7 @@ import math
 
 from app.utils.logger import get_logger
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
-from app.services.live_trading.ibkr_trading.symbols import normalize_symbol
+from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, resolve_ibkr_market_type
 from app.services.live_trading.ibkr_trading.order_tracker import HARD_TERMINAL
 from app.services.live_trading.task_queue import TaskQueue
 from app.services.live_trading import records
@@ -883,17 +883,18 @@ class IBKRClient(BaseStatefulClient):
 
     def _create_contract(self, symbol: str, market_type: str):
         _ensure_ib_insync()
-        ib_symbol, exchange, currency = normalize_symbol(symbol, market_type)
-        if market_type == "Forex":
+        mt = resolve_ibkr_market_type(symbol, market_type)
+        ib_symbol, exchange, currency = normalize_symbol(symbol, mt)
+        if mt == "Forex":
             return ib_insync.Forex(pair=ib_symbol)
-        elif market_type == "Metals":
+        elif mt == "Metals":
             return ib_insync.Contract(
                 symbol=ib_symbol,
                 secType="CMDTY",
                 exchange=exchange,
                 currency=currency,
             )
-        elif market_type in ("USStock", "HShare"):
+        elif mt in ("USStock", "HShare"):
             return ib_insync.Stock(symbol=ib_symbol, exchange=exchange, currency=currency)
         else:
             raise ValueError(f"Unsupported market_type: {market_type}")
@@ -909,7 +910,8 @@ class IBKRClient(BaseStatefulClient):
         return 600
 
     def _invalidate_qualify_cache(self, symbol: str, market_type: str) -> None:
-        self._qualify_cache.pop((symbol, market_type), None)
+        mt = resolve_ibkr_market_type(symbol, market_type)
+        self._qualify_cache.pop((symbol, mt), None)
 
     @staticmethod
     def _qualify_snapshot_from_contract(contract) -> Dict[str, Any]:
@@ -926,8 +928,9 @@ class IBKRClient(BaseStatefulClient):
                 setattr(contract, attr, val)
 
     async def _qualify_contract_async(self, contract, symbol: str, market_type: str) -> bool:
-        key = (symbol, market_type)
-        ttl = self._qualify_ttl_seconds(market_type)
+        mt = resolve_ibkr_market_type(symbol, market_type)
+        key = (symbol, mt)
+        ttl = self._qualify_ttl_seconds(mt)
         now = time.monotonic()
         entry = self._qualify_cache.get(key)
         if entry and now < float(entry.get("expires_at", 0)):
@@ -963,12 +966,13 @@ class IBKRClient(BaseStatefulClient):
     }
 
     def _validate_qualified_contract(self, contract, market_type: str) -> tuple:
+        mt = resolve_ibkr_market_type(getattr(contract, "symbol", "") or "", market_type)
         con_id = getattr(contract, "conId", 0) or 0
         if con_id == 0:
-            return (False, f"conId is 0 after qualification for {market_type} contract")
-        expected = self._EXPECTED_SEC_TYPES.get(market_type)
+            return (False, f"conId is 0 after qualification for {mt} contract")
+        expected = self._EXPECTED_SEC_TYPES.get(mt)
         if expected and contract.secType != expected:
-            return (False, f"Expected secType={expected} for {market_type}, got {contract.secType}")
+            return (False, f"Expected secType={expected} for {mt}, got {contract.secType}")
         return (True, "")
 
     _lot_size_cache: Dict[int, float] = {}
@@ -1231,12 +1235,13 @@ class IBKRClient(BaseStatefulClient):
             sym = getattr(contract, "symbol", symbol)
             if not is_rth_check(details, server_time, con_id=con_id, symbol=sym):
                 reason = f"{sym} is outside RTH (market closed)"
-                if market_type == "Forex":
+                mt = resolve_ibkr_market_type(symbol, market_type)
+                if mt == "Forex":
                     reason += (
                         " — Forex 24/5: closed outside liquid hours (weekend or "
                         "daily maintenance window)."
                     )
-                elif market_type == "Metals":
+                elif mt == "Metals":
                     reason += (
                         " — precious metals (CMDTY/SMART): often closed outside "
                         "liquid hours (weekends/session breaks; not Forex 24/5 IDEALPRO)."
@@ -1287,15 +1292,16 @@ class IBKRClient(BaseStatefulClient):
 
             aligned = await self._align_qty_to_contract(contract, qty, symbol)
             if aligned <= 0:
+                mt = resolve_ibkr_market_type(symbol, market_type)
                 msg = (
                     f"Quantity {aligned} rounds to 0 after lot-size alignment for {symbol}"
                 )
-                if market_type == "Forex":
+                if mt == "Forex":
                     msg += (
                         " For Forex (IDEALPRO), the amount may be below the minimum "
                         "tradable size for this pair."
                     )
-                elif market_type == "Metals":
+                elif mt == "Metals":
                     msg += (
                         " For precious metals (CMDTY on SMART), each contract is in "
                         "troy ounces; typical sizeIncrement=1.0 and minSize=1.0. "
@@ -1399,15 +1405,16 @@ class IBKRClient(BaseStatefulClient):
                         qty, aligned, increment, symbol,
                     )
             if aligned <= 0:
+                mt = resolve_ibkr_market_type(symbol, market_type)
                 msg = (
                     f"Quantity {aligned} rounds to 0 after lot-size alignment for {symbol}"
                 )
-                if market_type == "Forex":
+                if mt == "Forex":
                     msg += (
                         " For Forex (IDEALPRO), the amount may be below the minimum "
                         "tradable size for this pair."
                     )
-                elif market_type == "Metals":
+                elif mt == "Metals":
                     msg += (
                         " For precious metals (CMDTY on SMART), each contract is in "
                         "troy ounces; typical sizeIncrement=1.0 and minSize=1.0. "

@@ -42,6 +42,16 @@ def _is_precious_metal_pair(forex_clean: str) -> bool:
     return forex_clean.startswith("XAU") or forex_clean.startswith("XAG")
 
 
+def resolve_ibkr_market_type(symbol: str, market_category: str) -> str:
+    """QD ``Forex`` + XAU/XAG spot pair -> ``Metals`` for IBKR; else pass-through."""
+    cat = (market_category or "").strip()
+    if cat == "Forex":
+        pair = _clean_forex_raw(symbol)
+        if _is_precious_metal_pair(pair):
+            return "Metals"
+    return cat
+
+
 def normalize_symbol(symbol: str, market_type: str) -> Tuple[str, str, str]:
     """
     Convert system symbol to IB contract parameters.

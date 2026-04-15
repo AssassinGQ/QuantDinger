@@ -7,8 +7,31 @@ USStock/HShare behavior.
 
 import pytest
 from app.services.live_trading.ibkr_trading.symbols import (
-    normalize_symbol, parse_symbol, format_display_symbol
+    normalize_symbol,
+    parse_symbol,
+    format_display_symbol,
+    resolve_ibkr_market_type,
 )
+
+
+class TestResolveIbkrMarketType:
+    """Forex + precious-metal symbol → Metals for IBKR only; QD can keep Forex."""
+
+    def test_xagusd_forex_maps_to_metals(self):
+        assert resolve_ibkr_market_type("XAGUSD", "Forex") == "Metals"
+        assert resolve_ibkr_market_type("xag-usd", "Forex") == "Metals"
+
+    def test_xauusd_forex_maps_to_metals(self):
+        assert resolve_ibkr_market_type("XAUUSD", "Forex") == "Metals"
+
+    def test_eurusd_forex_unchanged(self):
+        assert resolve_ibkr_market_type("EURUSD", "Forex") == "Forex"
+
+    def test_xagusd_explicit_metals_unchanged(self):
+        assert resolve_ibkr_market_type("XAGUSD", "Metals") == "Metals"
+
+    def test_xaueur_forex_not_mapped(self):
+        assert resolve_ibkr_market_type("XAUEUR", "Forex") == "Forex"
 
 
 class TestNormalizeSymbolForex:
