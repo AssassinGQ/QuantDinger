@@ -211,7 +211,7 @@ class IBKRClient(BaseStatefulClient):
         """
         if (order_type or "").lower() == "limit":
             return "DAY"
-        if market_type in ("Forex", "USStock", "HShare", "Metals"):
+        if market_type in ("Forex", "Metals"):
             return "IOC"
         return "DAY"
 
