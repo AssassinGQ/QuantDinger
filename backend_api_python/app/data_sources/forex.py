@@ -2,14 +2,14 @@
 外汇数据源
 使用 Tiingo 获取外汇数据
 """
-from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+import os
 import time
 import requests
 import threading
 
 from app.data_sources.base import BaseDataSource, TIMEFRAME_SECONDS, RateLimitError
-from app.data_sources import DataSourceFactory
 from app.utils.logger import get_logger
 from app.config import TiingoConfig, APIKeys
 
@@ -19,6 +19,17 @@ logger = get_logger(__name__)
 _forex_cache: Dict[str, Dict[str, Any]] = {}
 _forex_cache_lock = threading.Lock()
 _FOREX_CACHE_TTL = 60  # 外汇价格缓存 60 秒 (Tiingo 免费 API 限制严格)
+
+# 昨日收盘内存兜底：K 线库暂不可用或限流时仍可用于展示涨跌（不写库，避免伪造 OHLC）
+_forex_prev_close_fallback: Dict[str, Tuple[float, float]] = {}
+_forex_prev_close_fallback_lock = threading.Lock()
+_FOREX_PREV_CLOSE_FALLBACK_TTL_SEC = int(os.getenv("FOREX_PREV_CLOSE_FALLBACK_TTL_SEC", str(72 * 3600)))
+# get_kline(..., before_time=当日 UTC 0 点)：分档扩大 limit，仍拿不到昨收则不必再扩（再扩也没必要交易）。
+_FOREX_PREV_CLOSE_KLINE_LIMIT = int(os.getenv("FOREX_PREV_CLOSE_KLINE_LIMIT", "10"))
+_FOREX_PREV_CLOSE_KLINE_LIMIT_2 = int(os.getenv("FOREX_PREV_CLOSE_KLINE_LIMIT_2", "20"))
+_FOREX_PREV_CLOSE_KLINE_LIMIT_3 = int(os.getenv("FOREX_PREV_CLOSE_KLINE_LIMIT_3", "31"))  # 约 1 个月
+# Fail-safe: 昨收过旧则视为不可靠（天）
+_FOREX_PREV_CLOSE_MAX_AGE_DAYS = float(os.getenv("FOREX_PREV_CLOSE_MAX_AGE_DAYS", "1"))
 
 # 源端限流缓存：记录 Tiingo 限流截止时间（Unix timestamp）
 # 一旦触发 429，后续请求在冷却期内直接 fail-fast，不再撞 API
@@ -39,6 +50,60 @@ def _mark_tiingo_rate_limited() -> None:
     global _tiingo_rate_limit_until
     _tiingo_rate_limit_until = time.time() + _TIINGO_RATE_LIMIT_COOLDOWN
     logger.warning("Tiingo rate-limited, cooldown until +%ds", _TIINGO_RATE_LIMIT_COOLDOWN)
+
+
+def _utc_day_start_ts(ts: int) -> int:
+    """UTC 自然日 0 点对应的时间戳（秒）。"""
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(start.timestamp())
+
+
+def _forex_resolve_prev_close(display_symbol: str) -> Tuple[float, float]:
+    """
+    复用 kline_fetcher.get_kline：before_time=当前 UTC 日 0 点，只取 time 早于该点的日线；
+    返回 (close, age_days)：
+    - close: 序列最后一根的 close（即「上一完整交易日」收盘，内部仍为先库后网）
+    - age_days: 该 bar 距离 before_time 的天数
+    """
+    from app.services.kline_fetcher import get_kline as kline_unified_get_kline
+
+    start_today = _utc_day_start_ts(int(time.time()))
+    lim1 = max(5, _FOREX_PREV_CLOSE_KLINE_LIMIT)
+    lim2 = max(lim1, _FOREX_PREV_CLOSE_KLINE_LIMIT_2)
+    lim3 = max(lim2, _FOREX_PREV_CLOSE_KLINE_LIMIT_3)
+    try:
+        for lim in (lim1, lim2, lim3):
+            bars = kline_unified_get_kline(
+                "Forex", display_symbol, "1D", lim, before_time=start_today
+            )
+            if bars:
+                c = float(bars[-1].get("close") or 0)
+                if c > 0:
+                    ts = int(bars[-1].get("time") or 0)
+                    age_days = max(0.0, (start_today - ts) / 86400.0) if ts > 0 else 0.0
+                    return c, age_days
+    except Exception as ex:
+        logger.debug("Forex prev_close get_kline(before_time=): %s", ex)
+    return 0.0, 0.0
+
+
+def _remember_prev_close(cache_key: str, prev_close: float) -> None:
+    if prev_close <= 0:
+        return
+    with _forex_prev_close_fallback_lock:
+        _forex_prev_close_fallback[cache_key] = (float(prev_close), time.time())
+
+
+def _prev_close_from_memory_fallback(cache_key: str) -> float:
+    with _forex_prev_close_fallback_lock:
+        item = _forex_prev_close_fallback.get(cache_key)
+    if not item:
+        return 0.0
+    prev_close, ts = item
+    if time.time() - ts > _FOREX_PREV_CLOSE_FALLBACK_TTL_SEC:
+        return 0.0
+    return float(prev_close)
 
 
 class ForexDataSource(BaseDataSource):
@@ -162,22 +227,62 @@ class ForexDataSource(BaseDataSource):
                 
                 last_price = mid or bid or ask
 
-                # 获取前一天收盘价来计算涨跌（使用 get_kline 缓存获取，无额外 API 请求）
-                prev_close = 0
-                change = 0
-                change_pct = 0
+                # 昨日收盘：get_kline(1D, before_time=当日 UTC 0 点) 取早于该时刻的最近一根日线 close（先库后网）
+                prev_close = 0.0
+                change = 0.0
+                change_pct = 0.0
+                display_symbol = tiingo_symbol.upper()
+                prev_fb_key = f"Forex:{display_symbol}"
 
+                prev_source = "none"
                 try:
-                    klines = DataSourceFactory.get_kline("Forex", tiingo_symbol.upper(), "1D", 2)
-                    if klines and len(klines) >= 2:
-                        yesterday_kline = klines[-2]
-                        prev_close = float(yesterday_kline.get('close', 0) or 0)
-                        if prev_close and last_price:
+                    prev_age_days = 0.0
+                    resolved_prev = _forex_resolve_prev_close(display_symbol)
+                    if isinstance(resolved_prev, tuple):
+                        prev_close = float(resolved_prev[0] or 0)
+                        prev_age_days = float(resolved_prev[1] or 0)
+                    else:
+                        prev_close = float(resolved_prev or 0)
+                    if prev_close > 0:
+                        prev_source = "kline"
+                        _remember_prev_close(prev_fb_key, prev_close)
+                        if prev_age_days > _FOREX_PREV_CLOSE_MAX_AGE_DAYS:
+                            logger.warning(
+                                "Forex previousClose stale for %s: age_days=%.3f > %.3f",
+                                display_symbol,
+                                prev_age_days,
+                                _FOREX_PREV_CLOSE_MAX_AGE_DAYS,
+                            )
+                    if not prev_close and last_price:
+                        mem = _prev_close_from_memory_fallback(prev_fb_key)
+                        if mem > 0:
+                            prev_close = mem
+                            prev_source = "memory"
+                            logger.debug(
+                                "Forex ticker using previousClose memory fallback for %s",
+                                display_symbol,
+                            )
+                    if prev_close and last_price:
+                        change = last_price - prev_close
+                        change_pct = (change / prev_close) * 100
+                except Exception as ex:
+                    logger.debug(
+                        "Forex ticker prev_close failed for %s: %s",
+                        display_symbol,
+                        ex,
+                    )
+                    if last_price:
+                        mem = _prev_close_from_memory_fallback(prev_fb_key)
+                        if mem > 0:
+                            prev_close = mem
+                            prev_source = "memory"
                             change = last_price - prev_close
                             change_pct = (change / prev_close) * 100
-                except Exception:
-                    pass  # 涨跌计算失败不影响主要功能
-                
+                            logger.debug(
+                                "Forex ticker previousClose from memory after error for %s",
+                                display_symbol,
+                            )
+
                 result = {
                     'last': round(last_price, 5),
                     'bid': round(bid, 5),
@@ -185,6 +290,9 @@ class ForexDataSource(BaseDataSource):
                     'change': round(change, 5),
                     'changePercent': round(change_pct, 2),
                     'previousClose': round(prev_close, 5) if prev_close else 0,
+                    'previousCloseAgeDays': round(prev_age_days, 3) if prev_close else 0.0,
+                    'previousCloseFresh': bool(prev_close and prev_age_days <= _FOREX_PREV_CLOSE_MAX_AGE_DAYS),
+                    'previousCloseSource': prev_source,
                     '_cache_time': time.time()
                 }
                 

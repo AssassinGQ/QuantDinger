@@ -79,6 +79,12 @@ class SingleRegimeWeightedRunner(SingleSymbolRunner):
             market_type=args.strategy.get("_market_type", "swap"),
             market_category=args.strategy.get("_market_category", "Crypto"),
         )
+        self._maybe_notify_prev_close_stale(
+            args.strategy_id,
+            args.strategy,
+            symbol,
+            args.strategy.get("_market_category", "Crypto"),
+        )
         if current_price is None:
             logger.warning(
                 "Strategy %s failed to fetch current price for %s",
