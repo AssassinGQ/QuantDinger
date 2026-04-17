@@ -8,7 +8,7 @@ QuantDinger3 is a quantitative trading platform with multi-market strategy execu
 
 ### Milestone M1: IBKR data-sufficiency risk gate for open signals
 
-**Status:** planned  
+**Status:** in progress (Phase 1 domain model delivered 2026-04-17)  
 **Created:** 2026-04-16
 
 #### Goal
