@@ -1,270 +1,331 @@
 ---
-phase: 01
-reviewers: [gemini, claude, opencode]
-reviewed_at: 2026-04-17T00:00:00Z
+phase: 1
+reviewers:
+  - gemini
+  - claude
+  - opencode
+skipped:
+  - codex: CLI 未安装（`command -v codex`）
+  - coderabbit: CLI 未安装（`command -v coderabbit`）
+reviewed_at: "2026-04-17T06:06:50Z"
 plans_reviewed:
   - 01-01-PLAN.md
   - 01-02-PLAN.md
-  - 01-VALIDATION.md
+notes:
+  - "Claude CLI 启动时出现 stdin 警告（3s 内未收到管道数据），其输出可能混合了工作区代码状态与计划文本；请以计划文件与仓库事实为准交叉验证。"
 ---
 
-# Cross-AI Plan Review — Phase 01（RE-REVIEW）
+# Cross-AI Plan Review — Phase 1
 
-> **说明：** 这是对 **已修订** 的 `01-01-PLAN.md` / `01-02-PLAN.md`（以及作为验收基线的 `01-VALIDATION.md`）的第二轮交叉评审输出。
->
-> **CLI 可用性：** 本轮实际调用了 `gemini`、`claude`、`opencode`。环境中 **`codex` CLI 不可用**（因此 `--all` 无法包含 Codex）。
+## Gemini Review
 
-## Consensus Summary（本轮）
+# Implementation Plan Review: Phase 1 (IBKR Schedule + Sufficiency Domain Model)
 
-- **总体结论：** 三条评审一致认为 Phase 1 的拆分（类型/适配器 vs 纯校验器 + 结构化日志 + orchestration）是 **一致且可测试** 的，并且 **Phase 2/3 的职责没有明显回渗**（尤其是 `signal_executor.py` 不改动、Phase 1 只做分类与可观测性）。
-- **相比上一轮 review 的“收敛点”：** 纯校验器（无 logging）、单点发射 orchestration、禁止 `trading_hours` 私有导入、秒级 `effective_lookback` / `missing_window`、以及更硬的验收/静态字符串检查，普遍被认为 **显著降低了架构腐化与不可测试性风险**。
-- **仍残留的主要分歧/风险（需要执行期盯紧）：**
-  - **`compute_available_bars_from_kline_fetcher` 与真实 `kline_fetcher.get_kline` 行为对齐**：Gemini 评为 **LOW**；Claude 评为 **MEDIUM**（建议在 Plan02 的集成路径用更“像生产”的 mock/或后续 Phase2 用真实路径补齐）；OpenCode 评为 **HIGH→整体 MEDIUM**（核心担忧是“mock 边界能过单测，但抓不到集成漂移”）。
-  - **验收里“函数名必须完全匹配”的刚性**：Claude 指出可能造成 **流程摩擦**（建议计划前言补充“改名不减覆盖即可”的原则）；OpenCode/Gemini 未强烈反对，但这是一个 **工程治理** 层面的注意点。
-  - **时间框→秒映射表/舍入策略、以及 `timezone_fallback` 与 `schedule_status` 的组合语义**：OpenCode 提出需要 **更明确的版本化常量/文档**；Claude 也建议补一个 **`next_session_open_utc` 的独立用例**（不只在 fuse 过渡里间接覆盖）。
-- **综合风险评级（人工汇总，非简单平均）：** **LOW～MEDIUM**。设计边界与测试策略整体成熟；最大不确定性集中在 **kline 计数语义与生产路径一致性**，建议在实现/Phase2 交接时作为显式跟踪项。
-
----
-
-## Gemini Review（原文）
-
-# Phase 1 Plan Review: IBKR Schedule + Sufficiency Domain Model
-
-This review covers the **updated** implementation plans (`01-01-PLAN.md` and `01-02-PLAN.md`) for Phase 1. The plans have been revised to incorporate feedback regarding component boundaries, typed contracts, and strict avoidance of private API coupling.
+This review covers `01-01-PLAN.md` (Contract & Adapter) and `01-02-PLAN.md` (Validator & Logging) for the IBKR data-sufficiency risk gate.
 
 ## 1. Summary
-The decomposition of Phase 1 into a typed contract wave followed by a pure validation and orchestration wave is highly coherent and follows senior engineering standards. By separating the **Schedule Adapter** (facts about the market) from the **Sufficiency Validator** (pure logic comparing requirements to facts), the system gains high testability and prevents the "logic leak" often seen in broker integrations. The inclusion of a dedicated **Orchestration Service** to handle logging ensures the validator remains a pure function, which is critical for deterministic risk-gating. The plans are low-risk and strictly adhere to the milestone's "fail-safe" and "observability" requirements.
+The plans provide a robust and architecturally sound foundation for the IBKR sufficiency risk gate. By splitting the work into a typed contract phase and a pure logic/orchestration phase, the implementation ensures that the data-sufficiency domain is clearly defined before it is integrated into the execution path. The strategy of reusing existing `trading_hours.py` logic through a thin adapter is a high-signal decision that maintains consistency with current session checks while improving observability via structured logging.
 
 ## 2. Strengths
-*   **Strict Boundary Enforcement:** The "no private imports" constraint for `trading_hours.py` (verified via static string checks in tests) prevents brittle coupling to the existing fuse logic.
-*   **Pure Logic Validator:** Using dependency injection (`get_kline_callable`) for the bar-counting helper ensures the validator can be exhaustively unit-tested without DB or network side effects.
-*   **Deterministic Precedence:** Task 1 in Plan 02 explicitly defines the precedence order for reason codes (e.g., `unknown_schedule` before `missing_bars`), which is vital for consistent user alerting in Phase 3.
-*   **Seconds-Based Semantics:** Normalizing `effective_lookback` and `missing_window` to `float` (seconds) provides an unambiguous metric that simplifies downstream diagnostic logic and alert generation.
-*   **Fail-Safe Observability:** Capturing `timezone_resolution` (explicit vs fallback) and `schedule_failure_reason` ensures that when a "fail-closed" block occurs, the logs provide immediate root-cause evidence.
+- **Clean Architectural Boundaries:** The separation of the `IBKRScheduleProvider` (adapter) from the `DataSufficiencyValidator` (pure logic) strictly adheres to decision `D-09` and ensures that classification logic is not coupled to broker-specific parsing.
+- **Strongly Typed Contract:** The use of `Enum` and `dataclass` for `DataSufficiencyResult` and its diagnostics (Task 1, Plan 01) provides the "machine-stable" interface required for later guard and alerting phases.
+- **Side-Effect Isolation:** The validator in Plan 02 is designed to be pure (no I/O or logging), making it highly testable and resistant to regression. Orchestration is correctly handled in a separate `DataSufficiencyService`.
+- **Comprehensive Test Specifications:** The inclusion of exact `def test_*` names and detailed use cases (e.g., "cross_day_session", "fuse_transition", "precedence_unknown_schedule_over_missing_bars") ensures that implementation will be anchored to the requirements.
+- **Observability Alignment:** Task 2 in Plan 02 directly addresses `N3` by defining a structured logging payload that excludes raw broker blobs, reducing noise while maintaining auditability.
 
 ## 3. Concerns
-*   **Kline Aggregation Drift (LOW):** While the plan instructs the validator to mirror `LOWER_LEVELS` aggregation intent, there is a minor risk of drift if `kline_fetcher.py` logic changes in the future. 
-    *   *Mitigation:* The plan uses a mocked `get_kline` return in tests to verify the counting logic, ensuring the validator's interpretation of "available bars" is at least internally consistent.
-*   **`missing_window` during Market Gaps (LOW):** If a market is closed for a weekend, the `missing_window` in seconds might be large, even if only a few bars are actually missing. 
-    *   *Mitigation:* This is acceptable for Phase 1; the goal is to report the data shortfall in a standard unit (seconds). The `reason_code` (`market_closed_gap`) provides the necessary context.
+- **Mock Drift Risk (MEDIUM):** Plan 02 Task 1 uses a mocked `get_kline` callable to count available bars. While the plan mentions mirroring `LOWER_LEVELS` aggregation, there is a risk that the mock's simplified counting might diverge from `kline_fetcher.py`'s real-world behavior (e.g., handling of partial bars or inclusive/exclusive boundaries). This is partially mitigated by the deferred "real-path" tests in Phase 2.
+- **Staleness Threshold Ambiguity (LOW):** The validator includes `stale_prev_close` in its precedence list, but the specific "how stale is too stale" threshold is deferred to Phase 3. In Phase 1, the validator might lack a concrete threshold to trigger this reason code unless a temporary default is used.
+- **`con_id` Fuse Side Effects (LOW):** Since `trading_hours` uses a global `_fuse_until` dictionary keyed by `con_id`, the adapter's use of `is_rth_check` will trigger/update this fuse. While expected, this means a sufficiency check for one strategy could "fuse" the check for another strategy sharing the same contract if the market is detected as closed.
 
 ## 4. Suggestions
-*   **Diagnostics Boundedness:** In `DataSufficiencyDiagnostics`, consider explicitly including the `con_id` used for the check to facilitate easier correlation between sufficiency logs and the underlying `trading_hours` fuse state.
-*   **Timezone Fallback Warning:** Ensure the `fallback_utc` resolution metadata triggers a `logger.warning` in the orchestration layer (or the adapter) to alert operators that a symbol's timezone mapping might be missing from `_TZ_MAP`.
+- **Staleness Logic:** In `DataSufficiencyValidator`, explicitly document or implement a simple "fallback" threshold for `stale_prev_close` (e.g., > 2 * timeframe duration) so that the reason code can be exercised in Phase 1 integration tests even before Phase 3 policy is finalized.
+- **Epsilon in Tests:** Ensure that the "epsilon" used for float comparisons in `test_effective_lookback_seconds_boundary` is standardized (e.g., `1e-6`) across all new test files to prevent flaky results on different architectures.
+- **Aggregation Mocking:** In `test_aggregation_1h_from_5m_mocked_get_kline`, ensure the mock data explicitly includes "boundary" timestamps (exactly on the hour) to verify the integer bar count is precise.
 
-## 5. Risk Assessment: LOW
-The plan is exceptionally well-structured. It avoids "God object" patterns by splitting types, adapters, and validators. The risk of regression is minimized by requiring the full backend test suite to remain green after each wave. The clear separation of concerns ensures that Phase 1 stays within its "domain modeling" boundary, leaving execution enforcement and complex alerting for the subsequent phases.
+## 5. Risk Assessment
+**Overall Risk: LOW**
 
-**Verdict: APPROVED.** The plans are ready for execution.
+The plan is low-risk because it avoids "big bang" refactoring and instead builds a layer on top of existing, verified logic. The strict enforcement of pure-logic boundaries and the high level of detail in the test specifications significantly reduce the likelihood of integration issues in Phase 2.
+
+---
+**Reviewer Note:** The plans are ready for implementation. The phased approach correctly prioritizes the domain model, ensuring that the "truth" of data sufficiency is established before enforcement begins.
 
 ---
 
-## Claude Review（原文）
+## Claude Review
 
-# Cross-AI Plan Review: Phase 01 (Updated)
+Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.
+Now I have a complete picture of both plans and all implementations. Let me write my review.
+
+---
+
+## Plan Review — Phase 01 (Plans 01 + 02)
+
+### Summary
+
+Both plans are thorough, well-scoped, and correctly preserve the phase boundary between domain modeling (Plan 01) and classification + logging (Plan 02). The implementation is largely sound with one significant parameter-ordering bug in the service-to-validator call path, plus a few minor issues noted below.
+
+---
+
+### Strengths
+
+**Plan 01 — Contract + Adapter**
+- Clean split: types in `data_sufficiency_types.py`, adapter in `ibkr_schedule_provider.py`, reusing only public `trading_hours` symbols.
+- `schedule_unknown` is properly distinguishable from `schedule_known_closed` — the core Phase 1 contract requirement.
+- Timezone fallback semantics are documented in the adapter docstring (RE-REVIEW carryover item fulfilled).
+- All required test names are present; the `test_no_trading_hours_private_imports` static check is a good Trust Boundary enforcement.
+- `TIMEFRAME_SECONDS_MAP` mirrors `kline_fetcher's` `TIMEFRAME_SECONDS` correctly via `app.data_sources.base`.
+
+**Plan 02 — Validator + Logging + Service**
+- Validator is genuinely pure — no `logging`, no I/O imports, no `kline_fetcher` imports. The import boundary is correct and verified by acceptance criteria.
+- Deterministic precedence chain (`unknown_schedule` → `stale_prev_close` → `market_closed_gap` → `missing_bars` → `sufficient`) is explicit in code and covered by tests.
+- `compute_available_bars_from_kline_fetcher` correctly mirrors `kline_fetcher's` `LOWER_LEVELS` aggregation chain and documents the Phase 2 drift concern.
+- `emit_ibkr_data_sufficiency_check` is called exactly once per orchestration path (verified by `test_emit_once_per_call` and `test_evaluate_entrypoint_calls_emit_once`).
+- Float epsilon comparisons (`< 1e-6`) used throughout for `effective_lookback` and `missing_window`.
+
+---
+
+### Concerns
+
+**HIGH — Bug: `market_category` passed where `market` expected in service call**
+
+`data_sufficiency_service.py:50-56` passes positional args to `compute_available_bars_from_kline_fetcher`:
+```python
+available = compute_available_bars_from_kline_fetcher(
+    market_category,   # ← first positional arg
+    symbol,
+    timeframe,
+    required_bars,
+    before_time_utc,
+    get_kline_callable,
+)
+```
+
+But `compute_available_bars_from_kline_fetcher's` signature is:
+```python
+def compute_available_bars_from_kline_fetcher(
+    market: str,       # ← named "market"
+    symbol: str,
+    timeframe: str,
+    required_bars: int,
+    before_time_utc: Optional[int],
+    get_kline_callable: Callable[..., List[dict]],
+) -> int:
+```
+
+`market_category` values like `"USStock"` would be bound to `market` and `symbol` to `timeframe` — a type mismatch (`str` vs `int`) that would raise `TypeError` at call time. The function body never actually uses `market` (only `lower_sec` lookup uses `TIMEFRAME_SECONDS_MAP`), so this silently does the wrong thing: `symbol` is interpreted as `timeframe` and `timeframe` as `required_bars`. The aggregation chain would likely return an incorrect bar count or fall through to the default path.
+
+**Impact:** Both integration tests (`test_adapter_to_service_emits_ibkr_data_sufficiency_check` and `test_evaluate_entrypoint_calls_emit_once`) use `before_time_utc=None` with `symbol="SPY"`, which partially masks the bug because `before_time_utc=None` skips the `before_time` conditional in `compute_available_bars_from_kline_fetcher`. However, the wrong-argument issue still corrupts internal logic. Fix: use named keyword argument `market=market_category`.
+
+---
+
+**MEDIUM — `FreshnessMetadata.stale_prev_close` threshold is trivially permissive**
+
+`_caller_reports_stale_prev_close` in `data_sufficiency_validator.py:104-109` returns `True` for any `prev_close_age_seconds >= 1.0`. This means 1-second-old prev close triggers `stale_prev_close`. The plan defers threshold policy to Phase 3, so the placeholder is technically correct — but no test exercises the boundary near the threshold. `test_stale_prev_close` uses `3600.0` seconds, far from the `>= 1.0` edge. Consider adding a test at `0.999` to document the Phase 3 tightening expected behavior.
+
+---
+
+**MEDIUM — `resolve_time_zone_id_for_schedule` is not re-exported in `trading_hours` `__all__`**
+
+The RE-REVIEW carryover says the adapter should use only public `trading_hours` symbols. `resolve_time_zone_id_for_schedule` is not in `__all__` (if one exists) or is a private-ish helper. The adapter imports it directly. This is a minor coupling concern but not a functional bug — the function is public in the `trading_hours` module namespace and is correctly reused.
+
+---
+
+**LOW — Missing `test_cross_day_session` in Plan 02 acceptance criteria**
+
+The validator test `test_cross_day_session` exists in `test_data_sufficiency_validator.py:180-190` and is listed in Plan 02 use cases, but is absent from the acceptance criteria checklist. Coverage is preserved (the test exists and runs), so the plan's governance rule ("renaming or splitting for clarity is allowed when the same scenario remains covered") is satisfied — but the omission from acceptance criteria is an inconsistency.
+
+---
+
+**LOW — `test_stale_prev_close` never asserts `sufficient=False`**
+
+`test_stale_prev_close` in `test_data_sufficiency_validator.py:85-100` asserts `r.reason_code.value == "stale_prev_close"` but never checks `r.sufficient is False`. Given the implementation sets `sufficient=False` for this reason code, this is a test coverage gap, not a bug — but the acceptance criteria do not require this assertion.
+
+---
+
+### Suggestions
+
+1. **Fix the `market_category` / `market` parameter bug** in `data_sufficiency_service.py:50`: change to `market=market_category,` as a keyword argument to make the contract explicit and prevent silent positional binding errors.
+
+2. **Add boundary test for stale threshold**: `test_stale_prev_close_boundary` using `prev_close_age_seconds=0.999` (should NOT trigger stale) and `prev_close_age_seconds=1.0` (should trigger) to document Phase 3 threshold expectations.
+
+3. **Add `r.sufficient is False` assertion** to `test_stale_prev_close` to match the pattern used in other insufficiency tests (`test_missing_bars`, `test_unknown_schedule`, etc.).
+
+4. **Clarify RE-REVIEW carryover compliance in acceptance criteria**: add `test_cross_day_session` explicitly to Plan 02's acceptance criteria list to eliminate the minor gap between use cases and checklist.
+
+5. **Verify `resolve_time_zone_id_for_schedule` is a stable public symbol**: check `trading_hours.__all__` (if defined) to confirm the adapter's import is a supported public API, not an implementation detail subject to renaming.
+
+---
+
+### Risk Assessment
+
+**Overall Risk: MEDIUM**
+
+The `market_category` parameter bug is the only HIGH concern — it would cause a runtime `TypeError` in production and corrupt sufficiency decisions in the orchestration path. All other concerns are MEDIUM or LOW and are either deferred design decisions (stale threshold), documentation inconsistencies, or minor test coverage gaps.
+
+The phase boundary is well preserved: Plan 01 correctly avoids execution blocking, Plan 02 correctly keeps the validator pure. The typed contracts and reason taxonomy are complete and correct. Once the parameter bug is fixed, the phase is ready for Phase 2 integration.
+
+---
+
+**Recommendation**: Fix the `market_category` → `market` keyword argument in `data_sufficiency_service.py` before marking Phase 1 complete. All other issues are non-blocking but should be addressed for completeness.
+
+---
+
+## Codex Review
+
+*未执行：`codex` CLI 在当前环境中不可用（`--all` 已尝试）。可在安装 [OpenAI Codex CLI](https://github.com/openai/codex) 后重新运行 `/gsd/review --phase 1 --codex` 补全本节。*
+
+---
+
+## CodeRabbit Review
+
+*未执行：`coderabbit` CLI 在当前环境中不可用。*
+
+---
+
+## OpenCode Review
+
+> build · MiniMax-M2.5
+
+# Plan Review: Phase 1 (01-01-PLAN.md & 01-02-PLAN.md)
 
 ## Summary
 
-Both plans are substantially improved over the prior review cycle. The decomposition into **types (Plan 01) → validator + logging + orchestration (Plan 02)** is coherent and maps cleanly to the phase boundary. The explicit no-private-imports constraint on the adapter, the pure-validator/no-logging constraint, and the single-emission orchestration invariant together form a defensible architecture. The main residual risks are moderate: (1) the aggregation helper could drift from real `kline_fetcher` lower-level aggregation semantics without integration-level verification, and (2) the very rigid exact-test-function-name acceptance criteria risk becoming a compliance burden rather than a quality signal. Both are manageable.
+Both plans together form a coherent Phase 1 implementation for IBKR data sufficiency domain modeling. Plan 01 establishes typed contracts + IBKR schedule adapter (reusing existing `trading_hours.py`), while Plan 02 adds deterministic sufficiency classification + structured logging + orchestration. The plans correctly separate concerns and defer execution blocking to Phase 2.
 
 ---
 
-## Strengths
+## Plan 01-01-PLAN.md (Typed Contract + Adapter)
 
-1. **Clean component separation** — Plan 01 owns types + adapter; Plan 02 owns pure classifier, logging helper, and orchestration service. The phase boundary (no `signal_executor` mutation) is explicit and tested.
+### Strengths
 
-2. **Fail-safe schedule ambiguity preserved** — The `schedule_unknown` vs `schedule_known_closed` distinction is now a first-class typed field (`IBKRScheduleStatus`), not collapsed into a bare boolean. The adapter explicitly surfaces `timezone_resolution="fallback_utc"` and `schedule_failure_reason="timezone_id_unresolved"` for malformed inputs.
+1. **Proper reuse of existing `trading_hours.py`** — Adapter correctly imports only public symbols (`parse_liquid_hours`, `is_rth_check`) rather than replacing them, per D-09–D-11.
+2. **Comprehensive test coverage** — 10 explicit test scenarios covering unknown schedule, cross-day, cross-timezone, fuse transitions.
+3. **Fail-safe design** — Schedule failure explicitly surfaced via `schedule_failure_reason` + `timezone_resolution`, ensuring downstream guards can fail-closed.
+4. **Timeframe→seconds contract** — `effective_lookback` as float seconds is correctly specified; `TIMEFRAME_SECONDS_MAP` referenced.
 
-3. **Pure validator constraint is enforced** — Plan 02 Task 1 explicitly forbids `logging` imports and the `ibkr_data_sufficiency_check` event name in the validator, keeping side effects in orchestration. The acceptance criteria check this with static string checks.
+### Concerns
 
-4. **Deterministic precedence is explicit** — `unknown_schedule > stale_prev_close > market_closed_gap > missing_bars > sufficient` ordering prevents ambiguity in downstream guard branching.
+1. **`TIMEFRAME_SECONDS_MAP` not explicitly created** — Task 1 action mentions it should be documented but doesn't show an explicit step to create it. (Severity: **MEDIUM** — Risk of inconsistency if different modules define it differently.)
+2. **`FreshnessMetadata` referenced but not defined** — Task 1 mentions "optional FreshnessMetadata (or equivalent)" for staleness but Plan 01 doesn't include its definition — this is deferred to Plan 02 action but creates ambiguity. (Severity: **MEDIUM** — Plan 02 depends on a type it doesn't create.)
+3. **Test naming governance slightly unclear** — Acceptance says exact `test_*` names but allows renaming "for clarity" — could lead to acceptance criteria drift. (Severity: **LOW** — Minor process risk.)
 
-5. **Aggregation helper correctly scoped** — `compute_available_bars_from_kline_fetcher` is described as calling `get_kline` and counting bars (not reimplementing `_aggregate_bars`), which avoids forking `kline_fetcher` internals.
+### Suggestions
 
-6. **Single-emission invariant** — Plan 02 Task 3 requires integration tests to assert exactly-one `emit_ibkr_data_sufficiency_check` call per evaluation path.
-
-7. **No private API coupling** — The adapter explicitly cannot import `trading_hours._*` names, forcing it to compute next-session information from public `parse_liquid_hours` outputs.
-
-8. **Static string acceptance criteria are comprehensive for type existence** — Checking for exact class names, exact enum values, and forbidden substrings gives downstream code strong guarantees about the contract surface.
-
----
-
-## Concerns
-
-### MEDIUM: Aggregation helper drift from real `kline_fetcher` behavior
-
-**Location:** Plan 02, Task 1 — `compute_available_bars_from_kline_fetcher`
-
-The plan correctly says the helper must not reimplement `_aggregate_bars`. However, `kline_fetcher.py` has complex aggregation logic: it prefers 1m→5m fallback, range-hit semantics with `MAX_GAP` tolerance, and stale-tail refresh logic (see lines 513–539). The mocked-`get_kline` test (`test_aggregation_1h_from_5m_mocked_get_kline`) only verifies that a known-mocked series returns a deterministic bar count — it does not verify that the helper's bar-counting semantics match what `kline_fetcher.get_kline` would actually return for a given `(market, symbol, timeframe, limit)` call in production.
-
-**Risk:** Later integration tests (Phase 2 guard injection) may find that the helper undercounts or overcounts vs real `get_kline` behavior, causing false insufficient/false sufficient classifications.
-
-**Mitigation needed:** The integration test in Plan 02 Task 3 (`test_adapter_to_service_emits_ibkr_data_sufficiency_check`) should use a realistic mock of `get_kline` that mimics `LOWER_LEVELS` aggregation more faithfully, not just a flat list of bars. Alternatively, add a note that Phase 2 must add an integration test with a real `get_kline` call (or a more complete mock) to catch drift.
-
-### MEDIUM: Over-rigid acceptance criteria may cause unnecessary churn
-
-**Location:** Both plans — acceptance criteria specifying exact test function names
-
-Examples:
-- `test_unknown_schedule():`, `test_market_closed_gap():`, `test_cross_day_session():` (Plan 01 Task 2)
-- `test_available_bars_equals_required_bars():`, `test_stale_prev_close():` (Plan 02 Task 1)
-
-If during implementation a developer wants to split `test_unknown_schedule` into two focused cases (e.g., `test_unknown_schedule_empty_liquid_hours` + `test_unknown_schedule_garbage_segment`), the plan would require a formal amendment before the criteria can be satisfied. This is appropriate for a contract — but the acceptance criteria should distinguish **renaming for clarity** (acceptable) from **removing coverage** (not acceptable).
-
-**Suggestion:** Add a principle to both plans: "Acceptance criteria target substantive coverage. Renaming a test function without changing the scenario under test does not invalidate the criterion, provided the new name appears in the diff."
-
-### LOW: `effective_lookback` and `missing_window` semantics not exercisable until Plan 02
-
-**Location:** Plan 01 Task 1 — types define these fields but no code populates them until Plan 02
-
-`DataSufficiencyResult.effective_lookback` and `DataSufficiencyResult.missing_window` are declared in Plan 01 types but only computed in Plan 02's `data_sufficiency_validator`. The Plan 01 type tests can verify the fields exist but cannot verify correct values. This is expected (Phase 1 is domain modeling, not classification logic), but it means a whole class of bugs (wrong seconds computation, wrong field copying) won't be caught until Plan 02 — which is also when the phase regression gate runs.
-
-**No action needed** — this is correct phase sequencing. Just note that Plan 02's test suite should explicitly assert `effective_lookback` and `missing_window` values in its boundary and missing-bars cases.
-
-### LOW: `IBKRScheduleSnapshot.next_session_open_utc` computation not verified in isolation
-
-**Location:** Plan 01 Task 2 — adapter computes next session but no standalone test isolates this
-
-The adapter must compute `next_session_open_utc` from `parse_liquid_hours` outputs. The plan includes `test_fuse_transition_open_after_expiry` which exercises fuse boundary behavior, but there's no standalone test that directly asserts `next_session_open_utc` correctness for a known session schedule (e.g., HK morning/afternoon sessions, Forex Sunday 17:15 open).
-
-**Suggestion:** Add `test_next_session_open_utc_populated()` to `test_ibkr_schedule_provider.py` with a simple known schedule where next open is unambiguous (e.g., single-session US equity, next open is next calendar day 09:30 ET).
-
-### LOW: `timezone_resolution` and `schedule_failure_reason` values not locked as typed constants
-
-**Location:** Plan 01 Task 1 — types define fields but not the string values
-
-`timezone_resolution` uses literals `"explicit"` and `"fallback_utc"`, and `schedule_failure_reason` uses `"timezone_id_unresolved"` — these appear in the action text but are not declared as typed constants or validated in the type tests. If a future refactor changes these string values, type-level tests would still pass.
-
-**No action needed for Phase 1** — this is a hardening item for a later phase. The threat model already flags T-01-02 (enum values drift).
+- Add explicit step in Plan 01 Task 1 to create `TIMEFRAME_SECONDS_MAP` in `data_sufficiency_types.py` with documented keys.
+- Clarify where `FreshnessMetadata` is defined (either in Plan 01 or make Plan 02 action explicitly create it).
 
 ---
 
-## Suggestions
+## Plan 01-02-PLAN.md (Validator + Logging + Orchestration)
 
-1. **Add a note to Plan 02 Task 1**: The aggregation mock in `test_aggregation_1h_from_5m_mocked_get_kline` should document what it assumes about `LOWER_LEVELS` behavior, so future readers understand the gap between the mocked helper and real `kline_fetcher`.
+### Strengths
 
-2. **Add `test_next_session_open_utc_populated()`** to Plan 01 adapter tests — directly verify next-session computation for a known unambiguous schedule.
+1. **Pure validator design** — Correctly isolates side effects; validator imports no `logging`, no `kline_fetcher`, per review_carryover.
+2. **Deterministic precedence** — Explicit order: `unknown_schedule` → `stale_prev_close` → `market_closed_gap` → `missing_bars` → `sufficient`. Matches requirements.
+3. **Structured logging contract** — `ibkr_data_sufficiency_check` emitted with stable fields; raw broker payloads explicitly excluded.
+4. **Orchestration separation** — Service calls validator (pure) → logging (side effect), maintaining testability.
 
-3. **Distinguish test-function-name refactoring as acceptable** in the plan preamble — avoid forcing formal amendment for renames that don't reduce coverage.
+### Concerns
 
-4. **Consider adding a `test_missing_window_zero_when_sufficient()`** in Plan 02 validator tests to explicitly exercise the `missing_window == 0.0` when sufficient rule, since this is a D-07 requirement.
+1. **`FreshnessMetadata` dependency unresolved** — Task 1 references `FreshnessMetadata` for staleness but Plan 02 doesn't create it either. (Severity: **HIGH** — Blocks the `test_stale_prev_close` scenario.)
+2. **`get_kline` exception handling needs verification** — Review carryover says "document and implement one behavior" but task action doesn't show explicit docstring. (Severity: **MEDIUM** — Could mask insufficient data as zero bars.)
+3. **Aggregation mock documentation** — Review carryover requires docstring about `LOWER_LEVELS` assumptions — verified in test but critical for Phase 2 drift detection. (Severity: **LOW** — Already addressed.)
+4. **Float epsilon comparison** — Task action mentions epsilon but acceptance criteria doesn't verify it exists in tests. (Severity: **LOW** — Tests likely implement it.)
 
-5. **Flag `prev_close_stale_since` semantics for Plan 02** — the `stale_prev_close` reason code implies a freshness check, but no plan yet specifies where the stale-check threshold comes from. This is probably deferred to Phase 3 (alerting) but should be noted as an open question.
+### Suggestions
+
+- Add explicit `FreshnessMetadata` dataclass creation to Plan 02 Task 1 action.
+- Add explicit docstring in `compute_available_bars_from_kline_fetcher` about exception propagation behavior.
 
 ---
 
 ## Risk Assessment
 
-**Overall: LOW**
+| Area | Level | Justification |
+|------|-------|---------------|
+| Dependency gap (`FreshnessMetadata`) | **HIGH** | Referenced in both plans but created in neither; blocks `test_stale_prev_close` scenario |
+| Test execution ordering | **MEDIUM** | Plan 01 must pass before Plan 02 tests can meaningfully run |
+| Scope creep | **LOW** | Plans correctly defer execution blocking to Phase 2 |
+| Security (raw broker data leak) | **LOW** | Both plans explicitly exclude raw `liquidHours` from logs |
+| Integration test realism | **LOW** | Mocked `get_kline` acknowledged in review_carryover |
 
-- Phase 1 decomposition is sound and phase boundaries are respected.
-- Adapter has no private API coupling, no execution-path mutation, and explicit fail-safe semantics.
-- Pure validator has no logging side effects and deterministic precedence.
-- Structured logging keeps raw broker payloads out of the event stream.
-- Orchestration single-emission invariant is tested.
+**Overall Risk: MEDIUM**
 
-**Primary residual risk (MEDIUM)**: Aggregation helper drift from `kline_fetcher` semantics — mitigated by integration test in Plan 02 Task 3 but worth watching when Phase 2 (guard injection) exercises real data paths.
-
-**Secondary risk (MEDIUM)**: Over-rigid exact-test-name criteria could cause unnecessary churn — addressable by adding a refactoring-disclaimer in the plan preamble.
-
----
-
-## OpenCode Review（原文）
-
-# Cross-AI Plan Review: Phase 1 (RE-REVIEW)
-
-## Summary
-
-This is a **re-review** of updated Phase 1 plans for the IBKR data-sufficiency domain model. The plans decompose the work into: (1) typed contract + IBKR schedule adapter, and (2) pure validator + structured logging + orchestration service. The decomposition appears well-constrained by the locked decisions (D-01 through D-11) and addresses the prior review's concerns about keeping Phase 1 focused on classification only, not execution blocking. The key risk is whether the `compute_available_bars_from_kline_fetcher` helper can stay aligned with `kline_fetcher.py` without forking its internals—a risk partially mitigated by mocking at the `get_kline` boundary.
+Primary blocker: The `FreshnessMetadata` type used for stale-previous-close detection is referenced but not defined in either plan. This must be resolved before Plan 02 implementation can complete the `test_stale_prev_close` scenario.
 
 ---
 
-## Plan 01-01 (Typed Contract + IBKR Schedule Adapter)
+## Key Recommendations
 
-### Strengths
+1. **Add `FreshnessMetadata` creation** to Plan 02 Task 1 action with fields:
+   ```python
+   @dataclass
+   class FreshnessMetadata:
+       prev_close_timestamp_utc: datetime | None
+       prev_close_age_seconds: float | None  # Optional staleness threshold
+   ```
 
-1. **Explicit separation of concerns**: Plan 01 correctly isolates contract definition (types) from the schedule adapter, honoring D-09 (peer components) and D-11 (reuse not replace `trading_hours`).
+2. **Create `TIMEFRAME_SECONDS_MAP`** explicitly in `data_sufficiency_types.py`:
+   ```python
+   TIMEFRAME_SECONDS_MAP = {
+       "1m": 60.0,
+       "5m": 300.0,
+       "1H": 3600.0,
+       "4H": 14400.0,
+       "1D": 86400.0,
+   }
+   ```
 
-2. **Stable top-level fields**: `DataSufficiencyResult` includes required top-level fields per D-02, with `effective_lookback` and `missing_window` expressed in seconds—unambiguous per D-07.
+3. **Add missing acceptance criteria**: `test_types_import_smoke` should verify imports don't fail (already in plan but ensure it runs).
 
-3. **Fail-safe schedule handling**: The adapter explicitly distinguishes `schedule_unknown` from `schedule_known_closed`, addressing D-04/D-05 and the prior review's concern about schedule ambiguity.
-
-4. **Explicit test function names**: Acceptance criteria now enumerate exact test function names, making verification objective.
-
-5. **Adapter constraints well-specified**: No private `_` imports, explicit `server_time_utc` parameter, timezone fallback metadata, and fuse transition tests—all addressing potential drift risks.
-
-### Concerns
-
-1. **MEDIUM**: The `effective_lookback_seconds` and `missing_window_seconds` mapping from `{timeframe, bars}` needs deterministic in-code documentation. The plan mentions "deterministic timeframe→seconds mapping documented in-code" but doesn't specify the lookup table. If multiple timeframes are supported, this could become a source of inconsistency.
-
-2. **LOW**: The plan requires `effective_lookback` and `missing_window` as floats (seconds), but doesn't specify rounding behavior or precision expectations. Floating-point equality in tests may be fragile.
-
-3. **LOW**: The `timezone_fallback_metadata` use case requires `schedule_failure_reason="timezone_id_unresolved"` but the plan also says "still returning a coherent `schedule_status` based on parsed sessions" even when timezone is invalid. The interaction between `timezone_fallback` and `schedule_status` needs clarity—can you have `schedule_known_open` with a fallback timezone?
-
-### Suggestions
-
-1. Add a `TIMEFRAME_SECONDS_MAP` constant in `data_sufficiency_types.py` or a dedicated helper with explicit mappings for supported timeframes (e.g., `"1m": 60, "5m": 300, "1H": 3600, "1D": 86400`). Document rounding policy (e.g., floor or round-to-nearest).
-
-2. In acceptance criteria, add a tolerance for float comparison in tests (e.g., `abs(result.missing_window - expected) < 0.001`).
-
-3. Clarify the semantic: if `timezone_id` is invalid and falls back to UTC, can sessions still be considered "known"? Consider adding a secondary field like `timezone_trusted: bool` to make this explicit.
+4. **Verify the complete test pipeline**: Run combined Phase 1 suite before Plan 02 work begins:
+   ```bash
+   python3 -m pytest backend_api_python/tests/test_data_sufficiency_types.py backend_api_python/tests/test_ibkr_schedule_provider.py backend_api_python/tests/test_trading_hours.py -q
+   ```
 
 ---
 
-## Plan 01-02 (Pure Validator + Logging + Orchestration)
+## Consensus Summary
 
-### Strengths
+本次 `--all` 实际成功调用的外部 CLI 为 **Gemini、Claude Code（`claude -p`）、OpenCode**；**Codex** 与 **CodeRabbit** 未安装故跳过。
 
-1. **Clean decomposition**: Validator stays pure (no logging imports), logging helpers are separate, and orchestration owns side effects—matching the prior review's recommendation.
+### Agreed Strengths（2+ 评审一致）
 
-2. **Precedence explicit**: The plan specifies deterministic precedence order (`unknown_schedule` → `stale_prev_close` → `market_closed_gap` → `missing_bars` → `sufficient`), addressing the prior review's concern about ambiguous classification.
+- **阶段边界清晰**：Plan 01 定契约与 IBKR 日程适配器，Plan 02 做纯分类、结构化日志与编排，明确不把 open/add 拦截放进 Phase 1。
+- **架构分层合理**：适配器复用 `trading_hours` 公共接口；校验器保持纯函数、副作用集中在 orchestration / logging。
+- **可测试性强**：用例矩阵细（含 precedence、fuse、跨日、跨时区等），并与 R1/N3 等需求对齐。
+- **可观测性与安全面**：结构化事件、避免原始 `liquidHours` 进入日志契约，多份评审均认可。
 
-3. **Mocked kline aggregation**: The `compute_available_bars_from_kline_fetcher` helper uses mocked `get_kline` return values, not forking `kline_fetcher` internals—correct per the research findings.
+### Agreed Concerns（优先处理）
 
-4. **Single-emission invariant**: Integration tests assert `emit_ibkr_data_sufficiency_check` is called exactly once per evaluation, addressing T-01-07.
+1. **Mock 与真实 `get_kline` 漂移（MEDIUM）** — Gemini 明确；OpenCode 归为低风险但同属「Phase 1 单测不足以证明生产路径」类问题；与 ROADMAP Phase 2 carryover（真实路径对齐）一致。
+2. **`stale_prev_close` 阈值策略留白（LOW–MEDIUM）** — Phase 3 政策前，Phase 1 需文档化占位语义与边界测试是否足够；Claude 指出 1s 占位阈值与缺少边界测例的风险。
+3. **全局 fuse / `con_id` 副作用（LOW）** — Gemini：`is_rth_check` 经 `con_id` 共享 fuse 状态可能影响多策略并发语义，需在 Phase 2+ 运维或设计上心里有数。
 
-5. **No Phase 2/3 leakage**: The plan explicitly keeps `signal_executor.py` untouched and avoids execution-path blocking—correct for Phase 1 scope.
+### 与仓库事实的校准（共识段落补充）
 
-### Concerns
+- **Claude 所称「`market_category` 传错位置」HIGH 问题**：在当前实现中，首参即 `get_kline` 语义上的 **market**（如 `USStock`），与 `compute_available_bars_from_kline_fetcher(market, symbol, timeframe, ...)` 形参顺序一致；**更稳妥的改进**仍是使用关键字参数 `market=market_category` 提高可读性，但不宜再标为「参数错位导致 TypeError」类缺陷，除非评审明确对照了签名与调用。
+- **OpenCode 所称「计划中未定义 `FreshnessMetadata`」**：作为**仅针对 PLAN 文本**的批评部分成立（可写得更显式）；若对照已实现代码，类型已在 `data_sufficiency_types` 与 Plan 02 `review_carryover` 中覆盖，则「阻塞实现」的结论应降级为「计划文档应点名落文件与验收」。
 
-1. **HIGH**: The `compute_available_bars_from_kline_fetcher` helper could drift from real `kline_fetcher.py` behavior if `kline_fetcher` evolves (e.g., adding new aggregation logic, changing `LOWER_LEVELS`, or modifying `MAX_GAP` handling). The plan mitigates this by mocking at the `get_kline` callable boundary, but there's no integration test that verifies the helper's behavior matches actual `kline_fetcher` outputs. Consider adding a smoke test that uses a real (or realistic mock) `kline_fetcher.get_kline` to catch drift.
+### Divergent Views
 
-2. **MEDIUM**: The plan doesn't specify how to handle the case where `get_kline` returns fewer bars than `required_bars` due to data gaps vs. genuinely missing data. The helper may need to distinguish "available bars from storage" from "coverage window completeness"—this distinction matters for `missing_window` calculation.
-
-3. **LOW**: The `stale_prev_close` reason code requires "freshness metadata" as input, but the plan doesn't define the schema for that metadata. If callers don't provide it, what's the default behavior? This could lead to inconsistent classification.
-
-4. **LOW**: The plan requires the validator to NOT import logging, but doesn't forbid importing other modules that might have side effects (e.g., database connections). The "pure" requirement should be more explicit about what constitutes impurity.
-
-### Suggestions
-
-1. Add a dedicated integration test that uses a realistic `get_kline` mock (matching `kline_fetcher.py`'s return shape) to verify the helper's bar-counting logic aligns with actual behavior.
-
-2. Define an optional `FreshnessMetadata` input type with fields like `prev_close_timestamp: datetime | None`, `prev_close_age_seconds: float | None`, and document the default behavior when not provided.
-
-3. Add explicit purity checks: validator must not import any module that performs I/O (database, network, filesystem). Consider adding a test that asserts `data_sufficiency_validator` has no transitive dependency on `logging`, `kline_fetcher`, or similar.
-
-4. Document the helper's fallback behavior: if `get_kline` raises an exception, should the helper return 0 bars, raise, or use a sentinel value?
+- **总体风险档位**：Gemini 评 **LOW**；Claude / OpenCode 评 **MEDIUM**（Claude 部分建立在对服务调用的误判上；OpenCode 部分建立在对计划文本与实现状态混淆上）。
+- **Claude stdin 警告**：其输出可能混合「读到的仓库」与「本提示中的计划」，与 Gemini / OpenCode（主要按计划文本）不完全同质；后续重跑建议对 `claude` 使用文件重定向或官方支持的「从文件读入完整 prompt」方式，避免 3s stdin 超时。
 
 ---
 
-## Overall Risk Assessment
+## 后续
 
-**Risk Level: MEDIUM**
+将本文件反馈进规划迭代：
 
-**Justification:**
+```text
+/gsd-plan-phase 1 --reviews
+```
 
-- **Phase boundary integrity**: Both plans correctly restrict Phase 1 to classification + observability, not execution blocking or alert dispatch. This is a significant improvement over prior designs that leaked Phase 2 responsibilities.
+清理临时文件：
 
-- **Type safety**: `DataSufficiencyResult` and `IBKRScheduleSnapshot` provide stable top-level fields per D-01/D-02, and the explicit test function names in acceptance criteria make verification objective.
-
-- **Main risk**: The `compute_available_bars_from_kline_fetcher` helper could diverge from `kline_fetcher.py` behavior over time. The mocking strategy mitigates this for unit tests but doesn't catch integration drift.
-
-- **Secondary risk**: The `effective_lookback` and `missing_window` mapping from timeframe+bars to seconds needs explicit, version-controlled lookup logic to avoid ambiguity.
-
----
-
-## Overall Assessment
-
-**Summary**: The updated plans represent a solid Phase 1 implementation that honors all locked decisions (D-01 through D-11) and addresses prior review feedback about keeping Phase 1 focused on classification, not enforcement. The decomposition into types/adapter (Plan 01) and validator/logging/orchestration (Plan 02) is coherent. Key risks are manageable: (1) kline-fetcher alignment via mocked boundary, (2) timeframe→seconds mapping via explicit lookup, (3) schedule status semantics via explicit fallback metadata.
-
-**Acceptable for execution**: Yes, with the suggested additions to reduce drift risk and clarify edge cases.
+```bash
+rm -f /tmp/gsd-review-prompt-1.md /tmp/gsd-review-gemini-1.md /tmp/gsd-review-claude-1.md /tmp/gsd-review-opencode-1.md /tmp/gsd-review-opencode-1-clean.md
+```
