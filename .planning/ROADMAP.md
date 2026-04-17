@@ -9,8 +9,8 @@
 **Plans:** 2 plans
 
 Plans:
-- [ ] `01-01-PLAN.md` — typed sufficiency contract and IBKR schedule adapter
-- [ ] `01-02-PLAN.md` — deterministic validator and structured sufficiency logging
+- [x] `01-01-PLAN.md` — typed sufficiency contract and IBKR schedule adapter (2026-04-17)
+- [x] `01-02-PLAN.md` — deterministic validator and structured sufficiency logging (2026-04-17)
 
 **Tasks**
 

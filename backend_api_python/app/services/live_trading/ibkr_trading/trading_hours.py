@@ -13,7 +13,7 @@ immediately until that time is reached.
 import datetime
 import logging
 import time as _time
-from typing import Optional, List, Tuple
+from typing import Literal, Optional, List, Tuple
 
 import pytz
 
@@ -44,13 +44,27 @@ _TZ_MAP = {
 _fuse_until: dict = {}
 
 
-def _resolve_tz(tz_id: str) -> pytz.BaseTzInfo:
-    mapped = _TZ_MAP.get(tz_id, tz_id)
+def resolve_time_zone_id_for_schedule(
+    tz_id: Optional[str],
+) -> Tuple[pytz.BaseTzInfo, Literal["explicit", "fallback_utc"]]:
+    """Resolve IBKR ``timeZoneId`` for ``liquidHours`` parsing.
+
+    ``fallback_utc`` means the identifier could not be mapped to an Olson zone
+    and UTC is used (legacy fail-soft behavior). Downstream adapters may pair
+    this with ``schedule_failure_reason="timezone_id_unresolved"``.
+    """
+    raw = (tz_id or "").strip() or "UTC"
+    mapped = _TZ_MAP.get(raw, raw)
     try:
-        return pytz.timezone(mapped)
+        return pytz.timezone(mapped), "explicit"
     except pytz.UnknownTimeZoneError:
-        logger.warning("Unknown timezone '%s', falling back to UTC", tz_id)
-        return pytz.UTC
+        logger.warning("Unknown timezone '%s', falling back to UTC", raw)
+        return pytz.UTC, "fallback_utc"
+
+
+def _resolve_tz(tz_id: str) -> pytz.BaseTzInfo:
+    tz, _res = resolve_time_zone_id_for_schedule(tz_id)
+    return tz
 
 
 def parse_liquid_hours(liquid_hours: str, tz: pytz.BaseTzInfo) -> List[Tuple[datetime.datetime, datetime.datetime]]:
