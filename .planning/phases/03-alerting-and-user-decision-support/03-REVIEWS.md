@@ -163,9 +163,3 @@ The Phase 3 plans are well-structured and correctly identify the integration poi
 ---
 
 **下一步：** 将上述共识并入计划 → `/gsd/plan-phase 3 --reviews`
-
----
-
-## Temp cleanup
-
-Review prompt: `/tmp/gsd-review-prompt-3.md`（执行后可删除以节省空间；本文件 `prompt_notes` 已记录路径）。
