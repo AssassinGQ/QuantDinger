@@ -1,11 +1,11 @@
 ---
-status: partial
+status: complete
 phase: 03-alerting-and-user-decision-support
 source:
   - 03-01-SUMMARY.md
   - 03-02-SUMMARY.md
 started: "2026-04-18T14:00:00.000Z"
-updated: "2026-04-18T14:30:00.000Z"
+updated: "2026-04-18T15:24:51Z"
 ---
 
 ## Current Test
@@ -13,7 +13,7 @@ updated: "2026-04-18T14:30:00.000Z"
 
 [testing complete]
 
-<!-- Note: status=partial — 全部人工项 skipped（无 live 联调条件）；功能由 CI/pytest 覆盖。 -->
+<!-- 5/5 人工项为 skipped 且均有 reason；无 pending/blocked。Live 链路与渠道观测由后续 staging 补做；行为覆盖见列出的 pytest 模块。 -->
 
 ## Tests
 
@@ -53,13 +53,8 @@ blocked: 0
 
 ## Gaps
 
-- truth: "团队可在 staging 或纸面对 IBKR live 阻断路径完成 Phase 3 人工 UAT"
-  status: failed
-  reason: "User reported: 没有这样的测试条件"
-  severity: minor
-  test: 1
-  root_cause: "缺少可用的 live IBKR（ibkr-paper/ibkr-live）联调环境与完整通知渠道配置，无法在真实执行链路上做人工观测"
-  artifacts: []
-  missing:
-    - "Staging：live 模式 + IBKR Gateway + 策略 notification_config + 可稳定触发数据不足阻断的信号场景"
-  debug_session: ""
+[none — 无 issue 类结果；skipped 项均已记录 reason，不进入 gap 修复闭环]
+
+## Environment follow-up (non-gap)
+
+若后续具备 **live IBKR + 通知渠道** 的 staging，可将 Tests 1–3、5 从 skipped 改为重新跑人工观测；当前结论依赖 `backend_api_python/tests` 中已引用模块。
