@@ -5,7 +5,7 @@ reviewed_at: "2026-04-18T13:25:00Z"
 plans_reviewed:
   - 03-01-PLAN.md
   - 03-02-PLAN.md
-prompt_notes: "Full prompt at /tmp/gsd-review-prompt-3.md (~48k) including both PLAN bodies; Gemini blocked on interactive auth; Codex/CodeRabbit absent from PATH."
+prompt_notes: "Prompt assembled at review time (~48k) with both PLAN bodies + CONTEXT/RESEARCH/REQUIREMENTS; temp copy removed after run. Gemini blocked on interactive auth; Codex/CodeRabbit absent from PATH."
 ---
 
 # Cross-AI Plan Review — Phase 3
