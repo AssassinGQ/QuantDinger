@@ -53,8 +53,8 @@ blocked: 0
 
 ## Gaps
 
-[none — 无 issue 类结果；skipped 项均已记录 reason，不进入 gap 修复闭环]
+[none yet]
 
-## Environment follow-up (non-gap)
+## Notes
 
-若后续具备 **live IBKR + 通知渠道** 的 staging，可将 Tests 1–3、5 从 skipped 改为重新跑人工观测；当前结论依赖 `backend_api_python/tests` 中已引用模块。
+无 issue 类测试结果；全部 skipped 均带 `reason`。若日后具备 live IBKR + 通知渠道的 staging，可重开人工观测项 1–3、5；当前依赖 `backend_api_python/tests`（见各条 `reason`）。
