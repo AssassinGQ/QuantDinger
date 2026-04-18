@@ -47,6 +47,10 @@ Plans:
 - **False insufficient / false sufficient guard:** Tune or assert thresholds using production-like series so Phase 1 mocked-bar drift cannot hide silently behind Phase 1 unit tests alone.
 - **Orchestration / `get_kline` exception contract:** When wiring `evaluate_ibkr_data_sufficiency_and_log` (or its Phase 2 façade) into the open/add path, define whether a raised `get_kline` / adapter error maps to a fail-safe insufficient outcome (and which `reason_code` or synthetic diagnostic), is wrapped as a runner-visible error, or propagates unchanged. Phase 1 intentionally propagates without mapping (see `data_sufficiency_service.py`).
 
+#### Cross-AI review follow-ups (2026-04-18)
+
+Locked user decisions live in **`02-CONTEXT.md`**. Cross-AI review (`02-REVIEWS.md`) adds a **planning checklist (R-01–R-09)**: exception contract vs Phase 1 library docstring; N3 `ibkr_insufficient_data_alert_sent` → Phase 3; blocked-open log payload schema; bounded diagnostics; `target_weight`/signal-type guard rule; joint `execution_mode` + `exchange_id` gate; reduce-path negative test; mandatory `get_kline` alignment test; batch fetch performance note. Incorporate when writing Phase 2 `*-PLAN.md` (e.g. `/gsd-plan-phase 2 --reviews`).
+
 ### Phase 3: Alerting and user decision support
 
 **Objective:** notify users through strategy-configured channels and support close/hold decision.
