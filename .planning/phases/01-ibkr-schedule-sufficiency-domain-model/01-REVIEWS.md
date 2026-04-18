@@ -182,6 +182,21 @@ Both plans are well-structured and correctly implement the Phase 1 domain model 
 
 ---
 
+## 审查闭环（2026-04-18）
+
+以下条目由本次「改正或记入 phase」处理；与共识章节对照可视为 **已落实 / 已记录**。
+
+| 来源 | 处理 |
+|------|------|
+| Claude：`test_adapter_does_not_mutate_trading_hours_cache` 验收显式性 | **记录**：`01-01-PLAN.md` 增加 `<review_resolution>`，确认该用例已在 Task 2 验收列表具名。 |
+| Claude：`get_kline` / 编排异常契约 | **改正**：`data_sufficiency_service.py` 模块与 `evaluate_ibkr_data_sufficiency_and_log` docstring 写明 Phase 1 **传播异常**、失败时不发 `ibkr_data_sufficiency_check`。**记录**：`ROADMAP.md` Phase 2 carryover 增补「Orchestration / `get_kline` exception contract」。`01-02-PLAN.md` Task 3 `<action>` 与 `<review_resolution>` 对齐。 |
+| Claude：Phase 2 real-path `get_kline` | **记录**：ROADMAP 已有同类 carryover，本次仅补充编排异常一条，避免重复堆砌。 |
+| OpenCode：`FreshnessMetadata` / `market_category` | **改正**：`data_sufficiency_types.py` 模块文档说明二者语义。**记录**：`01-01-PLAN.md` `<review_resolution>` 指向仓库类型定义与调用方责任。 |
+| OpenCode：`con_id` 闭环 | **核验**：`test_data_sufficiency_logging.test_sufficient_log_payload` 已断言 payload 含 `con_id`；**记录**：`01-02-PLAN.md` `<review_resolution>` 说明不强制新增具名用例以免与现有验收冲突。 |
+| Gemini / Codex / CodeRabbit 缺失 | **记录**：保持本文件 `skipped` frontmatter；无 CLI 输出可合并。 |
+
+---
+
 ## 后续用法
 
 将本文件作为输入继续打磨计划：

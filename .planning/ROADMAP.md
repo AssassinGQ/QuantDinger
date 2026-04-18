@@ -45,6 +45,7 @@ Plans:
 
 - **Real-path `get_kline` alignment:** Add at least one integration or contract test on the execution-side data path that compares `compute_available_bars_from_kline_fetcher` (or the Phase 2 guard’s bar acquisition seam) against real or recorded `kline_fetcher.get_kline` behavior for representative `(market, symbol, timeframe, limit)` tuples, covering `LOWER_LEVELS` fallback and gap semantics where feasible.
 - **False insufficient / false sufficient guard:** Tune or assert thresholds using production-like series so Phase 1 mocked-bar drift cannot hide silently behind Phase 1 unit tests alone.
+- **Orchestration / `get_kline` exception contract:** When wiring `evaluate_ibkr_data_sufficiency_and_log` (or its Phase 2 façade) into the open/add path, define whether a raised `get_kline` / adapter error maps to a fail-safe insufficient outcome (and which `reason_code` or synthetic diagnostic), is wrapped as a runner-visible error, or propagates unchanged. Phase 1 intentionally propagates without mapping (see `data_sufficiency_service.py`).
 
 ### Phase 3: Alerting and user decision support
 

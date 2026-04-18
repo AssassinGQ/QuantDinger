@@ -80,6 +80,7 @@ Cross-AI RE-REVIEW feedback is folded into `01-01-PLAN.md`, `01-02-PLAN.md`, and
 | Validator purity | Static or import-time checks per plan: no `logging`, no `kline_fetcher` import in `data_sufficiency_validator.py`. |
 | `get_kline` errors | `test_get_kline_raises_documented_behavior` documents chosen propagation contract. |
 | Integration mock fidelity | `test_adapter_to_service_emits_ibkr_data_sufficiency_check` uses LOWER_LEVELS-plausible mock; production drift additionally tracked in ROADMAP Phase 2. |
+| Orchestration exceptions (2026-04-18) | `data_sufficiency_service` docstring + ROADMAP Phase 2 carryover document Phase 1 propagation; Phase 2 guard defines final open-path behavior when `get_kline` or adapter raises. |
 
 ---
 

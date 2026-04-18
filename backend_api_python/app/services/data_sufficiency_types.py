@@ -3,6 +3,14 @@
 ``TIMEFRAME_SECONDS_MAP`` is the single in-repo mapping of supported timeframe
 keys to per-bar duration in seconds; it mirrors ``app.data_sources.base.TIMEFRAME_SECONDS``
 used by ``kline_fetcher`` so lookback math stays aligned with storage aggregation.
+
+``market_category`` on ``DataSufficiencyResult`` / ``IBKRScheduleSnapshot`` is a
+caller-provided execution bucket (same semantics as the ``market`` argument to
+``kline_fetcher.get_kline``). Types do not infer venue from ``ContractDetails``.
+
+``FreshnessMetadata`` holds optional prior-close inputs; absence or ``None``
+fields must not alone imply ``stale_prev_close`` (threshold policy is Phase 3;
+see ROADMAP).
 """
 
 from __future__ import annotations
