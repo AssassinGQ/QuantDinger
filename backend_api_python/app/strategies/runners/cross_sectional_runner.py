@@ -44,7 +44,7 @@ class CrossSectionalRunner(BaseStrategyRunner):
                     continue
 
                 keep_running = self._run_single_tick(
-                    strategy_id, strategy, strat_instance, current_time
+                    strategy_id, strategy, strat_instance, current_time, exchange
                 )
                 if not keep_running:
                     break
@@ -84,7 +84,13 @@ class CrossSectionalRunner(BaseStrategyRunner):
         return ctx
 
     def _dispatch_signals(
-        self, strategy_id, strategy, signals, update_rebalance, metadata
+        self,
+        strategy_id,
+        strategy,
+        signals,
+        update_rebalance,
+        metadata,
+        exchange: Any,
     ):
         """执行信号、更新 rebalance 时间戳和 status_info。
 
@@ -106,6 +112,7 @@ class CrossSectionalRunner(BaseStrategyRunner):
                     signals=signals,
                     all_positions=positions,
                     current_time=int(self._last_current_time),
+                    exchange=exchange,
                 )
             except Exception as exc:
                 logger.error(
@@ -119,6 +126,7 @@ class CrossSectionalRunner(BaseStrategyRunner):
         strategy: Dict[str, Any],
         strat_instance: IStrategyLoop,
         current_time: float,
+        exchange: Any,
     ) -> bool:
         """截面策略的 tick 逻辑：受 rebalance 周期控制。"""
         self._last_current_time = current_time
@@ -133,6 +141,6 @@ class CrossSectionalRunner(BaseStrategyRunner):
             return False
 
         self._dispatch_signals(
-            strategy_id, strategy, signals, update_rebalance, metadata
+            strategy_id, strategy, signals, update_rebalance, metadata, exchange
         )
         return True

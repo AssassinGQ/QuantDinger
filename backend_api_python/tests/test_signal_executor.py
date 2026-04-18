@@ -2,6 +2,14 @@ import time
 from unittest.mock import MagicMock, patch
 import pytest
 
+from app.services.data_sufficiency_types import (
+    DataSufficiencyDiagnostics,
+    DataSufficiencyReasonCode,
+    DataSufficiencyResult,
+    IBKRScheduleStatus,
+    effective_lookback_seconds,
+    missing_window_seconds,
+)
 from app.services.signal_executor import SignalExecutor
 
 
@@ -729,4 +737,176 @@ class TestGetAvailableCapital:
 
         result = _get_available_capital(1, 10000.0)
         assert result == 10000.0
+
+
+def _missing_bars_result() -> DataSufficiencyResult:
+    diag = DataSufficiencyDiagnostics(
+        parsed_session_count=1,
+        schedule_failure_reason=None,
+        timezone_id="EST",
+        timezone_resolution="explicit",
+        prev_close_stale_since=None,
+        con_id=None,
+    )
+    return DataSufficiencyResult(
+        sufficient=False,
+        reason_code=DataSufficiencyReasonCode.MISSING_BARS,
+        required_bars=100,
+        available_bars=0,
+        effective_lookback=effective_lookback_seconds("1H", 100),
+        missing_window=missing_window_seconds("1H", 100, 0),
+        schedule_status=IBKRScheduleStatus.SCHEDULE_KNOWN_OPEN,
+        symbol="SPY",
+        timeframe="1H",
+        market_category="USStock",
+        diagnostics=diag,
+    )
+
+
+class TestIBKROpenSufficiencyGate:
+    """IBKR live open/add sufficiency choke point (Phase 2)."""
+
+    @patch("app.services.signal_executor.evaluate_ibkr_open_data_sufficiency")
+    @patch.object(SignalExecutor, "_resolve_ibkr_contract_details_for_symbol")
+    def test_ibkr_live_open_blocked_when_insufficient(
+        self, mock_resolve, mock_eval, signal_executor
+    ):
+        mock_resolve.return_value = MagicMock(contract=MagicMock(conId=99))
+        mock_eval.return_value = _missing_bars_result()
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {
+            "success": True
+        }
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "live",
+            "exchange_config": {"exchange_id": "ibkr-paper"},
+            "_market_category": "USStock",
+            "trading_config": {"timeframe": "1H", "required_bars": 100},
+        }
+        signal = {"type": "open_long"}
+
+        with patch(
+            "app.services.signal_executor._get_available_capital", return_value=10000.0
+        ):
+            result = signal_executor.execute(
+                strategy_ctx,
+                signal,
+                symbol="SPY",
+                current_price=100.0,
+                current_positions=[],
+                exchange=object(),
+            )
+
+        assert result is False
+        signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
+
+    @patch("app.services.signal_executor.evaluate_ibkr_open_data_sufficiency")
+    def test_reduce_not_blocked_by_sufficiency(self, mock_eval, signal_executor):
+        mock_eval.side_effect = AssertionError("reduce must not invoke sufficiency")
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {
+            "success": True
+        }
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "live",
+            "_market_type": "swap",
+            "exchange_config": {"exchange_id": "ibkr-live"},
+            "_market_category": "Crypto",
+        }
+        signal = {"type": "reduce_long", "position_size": 0.5}
+        positions = [{"side": "long", "size": 1.0, "entry_price": 50.0}]
+
+        with patch(
+            "app.services.signal_executor._get_available_capital", return_value=10000.0
+        ):
+            signal_executor.execute(
+                strategy_ctx,
+                signal,
+                symbol="BTC/USDT",
+                current_price=100.0,
+                current_positions=positions,
+                exchange=None,
+            )
+
+        mock_eval.assert_not_called()
+        signal_executor.pending_order_enqueuer.execute_exchange_order.assert_called_once()
+
+    @patch("app.services.signal_executor.evaluate_ibkr_open_data_sufficiency")
+    def test_non_ibkr_exchange_skips_sufficiency_guard(
+        self, mock_eval, signal_executor
+    ):
+        mock_eval.side_effect = AssertionError("non-IBKR must skip sufficiency")
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {
+            "success": True
+        }
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "live",
+            "exchange_config": {"exchange_id": "binance"},
+            "_market_category": "USStock",
+            "trading_config": {"entry_pct": 0.1},
+        }
+        signal = {"type": "open_long"}
+
+        with patch(
+            "app.services.signal_executor._get_available_capital", return_value=10000.0
+        ):
+            signal_executor.execute(
+                strategy_ctx,
+                signal,
+                symbol="BTC/USDT",
+                current_price=50000.0,
+                current_positions=[],
+                exchange=None,
+            )
+
+        mock_eval.assert_not_called()
+
+    @patch("app.services.signal_executor.evaluate_ibkr_open_data_sufficiency")
+    def test_joint_gate_skips_guard_when_not_live(self, mock_eval, signal_executor):
+        mock_eval.side_effect = AssertionError("non-live must skip sufficiency")
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {
+            "success": True
+        }
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "signal",
+            "exchange_config": {"exchange_id": "ibkr-paper"},
+            "_market_category": "USStock",
+            "trading_config": {"entry_pct": 0.1},
+        }
+        signal = {"type": "open_long"}
+
+        with patch(
+            "app.services.signal_executor._get_available_capital", return_value=10000.0
+        ):
+            signal_executor.execute(
+                strategy_ctx,
+                signal,
+                symbol="SPY",
+                current_price=100.0,
+                current_positions=[],
+                exchange=None,
+            )
+
+        mock_eval.assert_not_called()
+
+
+class TestExecuteBatchExchange:
+    def test_execute_batch_forwards_exchange_to_execute(self, signal_executor):
+        mock_ex = MagicMock()
+        with patch.object(signal_executor, "execute", return_value=True) as mock_exec:
+            with patch.object(
+                signal_executor, "_fetch_price_for_signal", return_value=50.0
+            ):
+                signal_executor.execute_batch(
+                    strategy_ctx={"id": 1, "_market_category": "Crypto"},
+                    signals=[
+                        {"symbol": "BTC/USDT", "type": "open_long", "timestamp": 1}
+                    ],
+                    all_positions=[],
+                    current_time=1,
+                    exchange=mock_ex,
+                )
+        assert mock_exec.call_args[1]["exchange"] is mock_ex
 
