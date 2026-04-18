@@ -5,8 +5,10 @@ from unittest.mock import MagicMock
 
 from app.services.data_sufficiency_logging import (
     build_ibkr_data_sufficiency_check_payload,
+    build_ibkr_insufficient_data_alert_sent_payload,
     build_ibkr_open_blocked_insufficient_data_payload,
     emit_ibkr_data_sufficiency_check,
+    emit_ibkr_insufficient_data_alert_sent,
     emit_ibkr_open_blocked_insufficient_data,
 )
 from app.services.data_sufficiency_types import (
@@ -197,8 +199,51 @@ def test_emit_blocked_open_log_smoke():
     assert call_kw.get("event") == "ibkr_open_blocked_insufficient_data"
 
 
-def test_logging_module_does_not_define_phase3_alert_event():
+def test_logging_module_defines_ibkr_insufficient_data_alert_sent_helpers():
     root = pathlib.Path(__file__).resolve().parents[1]
     src = (root / "app/services/data_sufficiency_logging.py").read_text(encoding="utf-8")
-    assert "ibkr_insufficient_data_alert_sent" not in src
+    assert "def build_ibkr_insufficient_data_alert_sent_payload" in src
+    assert "def emit_ibkr_insufficient_data_alert_sent" in src
     assert "persist_notification" not in src
+
+
+def test_insufficient_data_alert_sent_payload_shape():
+    key = (7, "SPY", "missing_bars", "ibkr-paper")
+    p = build_ibkr_insufficient_data_alert_sent_payload(
+        strategy_id=7,
+        symbol="SPY",
+        exchange_id="ibkr-paper",
+        execution_mode="live",
+        reason_code="missing_bars",
+        dedup_key=key,
+        channels_attempted=["browser"],
+        channels_ok={"browser": True},
+        signal_type="ibkr_data_insufficient_block",
+    )
+    assert p["event"] == "ibkr_insufficient_data_alert_sent"
+    assert p["strategy_id"] == 7
+    assert p["symbol"] == "SPY"
+    assert p["exchange_id"] == "ibkr-paper"
+    assert p["_execution_mode"] == "live"
+    assert p["dedup_reason_code"] == "missing_bars"
+
+
+def test_emit_insufficient_data_alert_sent_smoke():
+    key = (1, "SPY", "missing_bars", "ibkr-live")
+    p = build_ibkr_insufficient_data_alert_sent_payload(
+        strategy_id=1,
+        symbol="SPY",
+        exchange_id="ibkr-live",
+        execution_mode="live",
+        reason_code="missing_bars",
+        dedup_key=key,
+        channels_attempted=["browser"],
+        channels_ok={"browser": True},
+        signal_type="ibkr_data_insufficient_block",
+    )
+    log = MagicMock()
+    emit_ibkr_insufficient_data_alert_sent(p, logger=log)
+    assert log.info.call_count == 1
+    assert log.info.call_args[0][0] == "ibkr_insufficient_data_alert_sent"
+    extra = log.info.call_args[1]["extra"]
+    assert extra.get("event") == "ibkr_insufficient_data_alert_sent"

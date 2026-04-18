@@ -9,6 +9,9 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional
 
+from app.services.ibkr_insufficient_user_alert import (
+    dispatch_insufficient_user_alert_after_block,
+)
 from app.services.data_sufficiency_guard import (
     contract_details_missing_fail_closed,
     evaluate_ibkr_open_data_sufficiency,
@@ -25,8 +28,10 @@ from app.services.signal_processor import is_signal_allowed, position_state
 from app.services.entry_ai_filter import is_entry_ai_filter_enabled, entry_ai_filter_allows
 from app.services.pending_order_enqueuer import PendingOrderEnqueuer
 from app.services.data_handler import DataHandler
+from app.services.signal_notifier import SignalNotifier, _as_list
 from app.services.live_trading.forex_pip import pip_size_for_forex_symbol
 from app.services.live_trading.ibkr_trading.client import IBKRClient
+from app.services.live_trading.records import load_notification_config, load_strategy_name
 from app.services.live_trading.order_normalizer import get_market_pre_normalizer
 from app.utils.logger import get_logger
 
@@ -48,9 +53,13 @@ def _get_available_capital(strategy_id: int, initial_capital: float) -> float:
 
 class SignalExecutor:
     """信号执行器，负责将交易信号转化为实际的订单或模拟持仓更新。"""
-    def __init__(self):
+    def __init__(self, signal_notifier: Optional[SignalNotifier] = None):
         self.data_handler = DataHandler()
         self.pending_order_enqueuer = PendingOrderEnqueuer()
+        # Injected for tests; default constructs a fresh notifier per executor.
+        self.signal_notifier = (
+            signal_notifier if signal_notifier is not None else SignalNotifier()
+        )
 
     def _check_ai_filter(
         self, strategy_ctx: Dict[str, Any], symbol: str, sig: str, signal_ts: int
@@ -517,6 +526,48 @@ class SignalExecutor:
                         synthetic_evaluation_failure=syn_fail,
                     )
                     emit_ibkr_open_blocked_insufficient_data(payload, logger=logger)
+                    try:
+                        nc = strategy_ctx.get("_notification_config")
+                        if not isinstance(nc, dict):
+                            nc = {}
+                        if not _as_list(nc.get("channels")):
+                            nc = load_notification_config(strategy_id)
+                        sname = str(strategy_ctx.get("_strategy_name") or "").strip()
+                        if not sname:
+                            sname = load_strategy_name(strategy_id)
+                        # For flat alerts, direction is cosmetic: signal_type ==
+                        # IBKR_INSUFFICIENT_DATA_ALERT_SIGNAL_TYPE drives notifier meta (R-07).
+                        direction = "long"
+                        for pos in current_positions or []:
+                            if not isinstance(pos, dict):
+                                continue
+                            if str(pos.get("symbol") or "").strip() != str(symbol or "").strip():
+                                continue
+                            side = str(pos.get("side") or "").strip().lower()
+                            if side == "short":
+                                direction = "short"
+                            break
+                        dispatch_insufficient_user_alert_after_block(
+                            notifier=self.signal_notifier,
+                            strategy_id=strategy_id,
+                            strategy_name=sname,
+                            symbol=str(symbol or ""),
+                            exchange_id=str(ecfg.get("exchange_id") or ""),
+                            notification_config=nc,
+                            price=float(current_price or 0.0),
+                            direction=direction,
+                            blocked_payload=payload,
+                            suff_result=suff_result,
+                            strategy_ctx=strategy_ctx,
+                            current_positions=current_positions,
+                            logger=logger,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "insufficient_user_alert_orchestration_failed: strategy_id=%s err=%s",
+                            strategy_id,
+                            e,
+                        )
                     return False
 
             if not self._check_ai_filter(strategy_ctx, symbol, sig, signal_ts):

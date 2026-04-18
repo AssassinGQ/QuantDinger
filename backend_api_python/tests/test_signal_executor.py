@@ -10,6 +10,7 @@ from app.services.data_sufficiency_types import (
     effective_lookback_seconds,
     missing_window_seconds,
 )
+from app.services.ibkr_insufficient_user_alert import reset_insufficient_user_alert_dedup_state
 from app.services.signal_executor import SignalExecutor
 
 
@@ -890,6 +891,68 @@ class TestIBKROpenSufficiencyGate:
             )
 
         mock_eval.assert_not_called()
+
+    @patch.object(SignalExecutor, "_resolve_ibkr_contract_details_for_symbol", return_value=None)
+    @patch("app.services.signal_executor._get_available_capital", return_value=10000.0)
+    def test_ibkr_insufficient_block_triggers_user_notify(
+        self, _mock_capital, _mock_details, signal_executor
+    ):
+        reset_insufficient_user_alert_dedup_state()
+        sn = MagicMock()
+        sn.notify_signal.return_value = {"browser": {"ok": True, "error": ""}}
+        signal_executor.signal_notifier = sn
+        strategy_ctx = {
+            "id": 501,
+            "_execution_mode": "live",
+            "exchange_config": {"exchange_id": "ibkr-paper"},
+            "_market_category": "USStock",
+            "trading_config": {"timeframe": "1H", "required_bars": 100},
+            "_notification_config": {"channels": ["browser"], "targets": {}},
+        }
+        signal = {"type": "open_long", "timestamp": 1}
+        result = signal_executor.execute(
+            strategy_ctx,
+            signal,
+            symbol="SPY",
+            current_price=400.0,
+            current_positions=[],
+            exchange=MagicMock(),
+        )
+        assert result is False
+        sn.notify_signal.assert_called_once()
+        signal_executor.pending_order_enqueuer.execute_exchange_order.assert_not_called()
+
+    @patch("app.services.signal_executor.load_notification_config")
+    @patch.object(SignalExecutor, "_resolve_ibkr_contract_details_for_symbol", return_value=None)
+    @patch("app.services.signal_executor._get_available_capital", return_value=10000.0)
+    def test_ibkr_insufficient_block_loads_notification_config_when_missing(
+        self, _mock_capital, _mock_details, mock_load, signal_executor
+    ):
+        reset_insufficient_user_alert_dedup_state()
+        mock_load.return_value = {"channels": ["browser"], "targets": {}}
+        sn = MagicMock()
+        sn.notify_signal.return_value = {"browser": {"ok": True, "error": ""}}
+        signal_executor.signal_notifier = sn
+        strategy_ctx = {
+            "id": 502,
+            "_execution_mode": "live",
+            "exchange_config": {"exchange_id": "ibkr-paper"},
+            "_market_category": "USStock",
+            "trading_config": {"timeframe": "1H", "required_bars": 100},
+            "_notification_config": {"channels": [], "targets": {}},
+        }
+        signal = {"type": "open_long", "timestamp": 1}
+        result = signal_executor.execute(
+            strategy_ctx,
+            signal,
+            symbol="SPY",
+            current_price=400.0,
+            current_positions=[],
+            exchange=MagicMock(),
+        )
+        assert result is False
+        mock_load.assert_called_with(502)
+        sn.notify_signal.assert_called_once()
 
 
 class TestExecuteBatchExchange:
