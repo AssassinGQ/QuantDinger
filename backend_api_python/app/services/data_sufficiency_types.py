@@ -11,6 +11,12 @@ caller-provided execution bucket (same semantics as the ``market`` argument to
 ``FreshnessMetadata`` holds optional prior-close inputs; absence or ``None``
 fields must not alone imply ``stale_prev_close`` (threshold policy is Phase 3;
 see ROADMAP).
+
+``DataSufficiencyReasonCode.DATA_EVALUATION_FAILED`` (``data_evaluation_failed``)
+is produced when the Phase 2 execution guard translates orchestration exceptions
+into a synthetic insufficient outcome. Phase 1 ``evaluate_ibkr_data_sufficiency_and_log``
+in ``data_sufficiency_service.py`` still propagates exceptions before classification;
+only the execution façade applies this reason code.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ class DataSufficiencyReasonCode(str, Enum):
     STALE_PREV_CLOSE = "stale_prev_close"
     MARKET_CLOSED_GAP = "market_closed_gap"
     UNKNOWN_SCHEDULE = "unknown_schedule"
+    DATA_EVALUATION_FAILED = "data_evaluation_failed"
 
 
 class IBKRScheduleStatus(str, Enum):
@@ -61,6 +68,8 @@ class DataSufficiencyDiagnostics:
     timezone_resolution: Optional[Literal["explicit", "fallback_utc"]] = None
     prev_close_stale_since: Optional[datetime] = None
     con_id: Optional[int] = None
+    evaluation_error_summary: Optional[str] = None
+    evaluation_error_category: Optional[Literal["schedule", "kline", "unknown"]] = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +104,24 @@ class DataSufficiencyResult:
     timeframe: str
     market_category: str
     diagnostics: DataSufficiencyDiagnostics
+
+
+def truncate_evaluation_error_summary(
+    text: str | None, *, max_chars: int = 200
+) -> Optional[str]:
+    """Trim operator-visible evaluation error text; never store stack traces here."""
+    if text is None:
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    if len(stripped) <= max_chars:
+        return stripped
+    suffix = "…"
+    keep = max_chars - len(suffix)
+    if keep <= 0:
+        return suffix[:max_chars]
+    return stripped[:keep] + suffix
 
 
 def effective_lookback_seconds(timeframe: str, required_bars: int) -> float:
