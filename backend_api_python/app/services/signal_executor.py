@@ -21,6 +21,10 @@ from app.services.data_sufficiency_logging import (
     emit_ibkr_open_blocked_insufficient_data,
 )
 from app.services.data_sufficiency_types import DataSufficiencyReasonCode
+from app.config.sufficiency_rollout import (
+    is_ibkr_sufficiency_guard_enabled,
+    maybe_log_ibkr_sufficiency_guard_disabled,
+)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.services.server_side_risk import to_ratio
@@ -472,103 +476,119 @@ class SignalExecutor:
             )
 
             if self._should_run_ibkr_open_sufficiency_gate(strategy_ctx, effective_intent):
-                trading_config = strategy_ctx.get("trading_config") or {}
-                timeframe = str(trading_config.get("timeframe", "1H"))
-                try:
-                    required_bars = int(
-                        trading_config.get(
-                            "ibkr_data_required_bars",
-                            trading_config.get("required_bars", 100),
-                        )
-                    )
-                except (TypeError, ValueError):
-                    required_bars = 100
-                details = self._resolve_ibkr_contract_details_for_symbol(
-                    exchange, symbol, market_category
-                )
-                if details is None:
-                    suff_result = contract_details_missing_fail_closed(
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        market_category=market_category,
-                        required_bars=required_bars,
-                        con_id=0,
+                if not is_ibkr_sufficiency_guard_enabled():
+                    maybe_log_ibkr_sufficiency_guard_disabled(
+                        logger,
+                        strategy_id=strategy_id if strategy_id else None,
                     )
                 else:
-                    con_obj = getattr(details, "contract", None)
-                    con_id = int(getattr(con_obj, "conId", 0) or 0)
-                    before_u = self._signal_before_time_unix(signal_ts)
-                    suff_result = evaluate_ibkr_open_data_sufficiency(
-                        details,
-                        server_time_utc=datetime.datetime.now(datetime.timezone.utc),
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        market_category=market_category,
-                        required_bars=required_bars,
-                        before_time_utc=before_u,
-                        con_id=con_id,
-                        logger=logger,
-                    )
-                if not suff_result.sufficient:
-                    syn_fail = (
-                        suff_result.reason_code
-                        == DataSufficiencyReasonCode.DATA_EVALUATION_FAILED
-                    )
-                    ecfg = strategy_ctx.get("exchange_config") or {}
-                    payload = build_ibkr_open_blocked_insufficient_data_payload(
-                        result=suff_result,
-                        strategy_id=strategy_id,
-                        symbol=symbol,
-                        exchange_id=str(ecfg.get("exchange_id") or ""),
-                        execution_mode=str(strategy_ctx.get("_execution_mode") or ""),
-                        signal_type_raw=str(signal.get("type") or ""),
-                        effective_intent=effective_intent,
-                        synthetic_evaluation_failure=syn_fail,
-                    )
-                    emit_ibkr_open_blocked_insufficient_data(payload, logger=logger)
+                    trading_config = strategy_ctx.get("trading_config") or {}
+                    timeframe = str(trading_config.get("timeframe", "1H"))
                     try:
-                        nc = strategy_ctx.get("_notification_config")
-                        if not isinstance(nc, dict):
-                            nc = {}
-                        if not _as_list(nc.get("channels")):
-                            nc = load_notification_config(strategy_id)
-                        sname = str(strategy_ctx.get("_strategy_name") or "").strip()
-                        if not sname:
-                            sname = load_strategy_name(strategy_id)
-                        # For flat alerts, direction is cosmetic: signal_type ==
-                        # IBKR_INSUFFICIENT_DATA_ALERT_SIGNAL_TYPE drives notifier meta (R-07).
-                        direction = "long"
-                        for pos in current_positions or []:
-                            if not isinstance(pos, dict):
-                                continue
-                            if str(pos.get("symbol") or "").strip() != str(symbol or "").strip():
-                                continue
-                            side = str(pos.get("side") or "").strip().lower()
-                            if side == "short":
-                                direction = "short"
-                            break
-                        dispatch_insufficient_user_alert_after_block(
-                            notifier=self.signal_notifier,
-                            strategy_id=strategy_id,
-                            strategy_name=sname,
-                            symbol=str(symbol or ""),
-                            exchange_id=str(ecfg.get("exchange_id") or ""),
-                            notification_config=nc,
-                            price=float(current_price or 0.0),
-                            direction=direction,
-                            blocked_payload=payload,
-                            suff_result=suff_result,
-                            strategy_ctx=strategy_ctx,
-                            current_positions=current_positions,
+                        required_bars = int(
+                            trading_config.get(
+                                "ibkr_data_required_bars",
+                                trading_config.get("required_bars", 100),
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        required_bars = 100
+                    details = self._resolve_ibkr_contract_details_for_symbol(
+                        exchange, symbol, market_category
+                    )
+                    ecfg_gate = strategy_ctx.get("exchange_config") or {}
+                    raw_ex_id = ecfg_gate.get("exchange_id")
+                    gate_exchange_id = (
+                        str(raw_ex_id).strip()
+                        if raw_ex_id is not None and str(raw_ex_id).strip()
+                        else None
+                    )
+                    gate_strategy_id = strategy_id if strategy_id else None
+                    if details is None:
+                        suff_result = contract_details_missing_fail_closed(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            market_category=market_category,
+                            required_bars=required_bars,
+                            con_id=0,
+                        )
+                    else:
+                        con_obj = getattr(details, "contract", None)
+                        con_id = int(getattr(con_obj, "conId", 0) or 0)
+                        before_u = self._signal_before_time_unix(signal_ts)
+                        suff_result = evaluate_ibkr_open_data_sufficiency(
+                            details,
+                            server_time_utc=datetime.datetime.now(datetime.timezone.utc),
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            market_category=market_category,
+                            required_bars=required_bars,
+                            before_time_utc=before_u,
+                            con_id=con_id,
                             logger=logger,
+                            exchange_id=gate_exchange_id,
+                            strategy_id=gate_strategy_id,
                         )
-                    except Exception as e:
-                        logger.warning(
-                            "insufficient_user_alert_orchestration_failed: strategy_id=%s err=%s",
-                            strategy_id,
-                            e,
+                    if not suff_result.sufficient:
+                        syn_fail = (
+                            suff_result.reason_code
+                            == DataSufficiencyReasonCode.DATA_EVALUATION_FAILED
                         )
-                    return False
+                        ecfg = strategy_ctx.get("exchange_config") or {}
+                        payload = build_ibkr_open_blocked_insufficient_data_payload(
+                            result=suff_result,
+                            strategy_id=strategy_id,
+                            symbol=symbol,
+                            exchange_id=str(ecfg.get("exchange_id") or ""),
+                            execution_mode=str(strategy_ctx.get("_execution_mode") or ""),
+                            signal_type_raw=str(signal.get("type") or ""),
+                            effective_intent=effective_intent,
+                            synthetic_evaluation_failure=syn_fail,
+                        )
+                        emit_ibkr_open_blocked_insufficient_data(payload, logger=logger)
+                        try:
+                            nc = strategy_ctx.get("_notification_config")
+                            if not isinstance(nc, dict):
+                                nc = {}
+                            if not _as_list(nc.get("channels")):
+                                nc = load_notification_config(strategy_id)
+                            sname = str(strategy_ctx.get("_strategy_name") or "").strip()
+                            if not sname:
+                                sname = load_strategy_name(strategy_id)
+                            # For flat alerts, direction is cosmetic: signal_type ==
+                            # IBKR_INSUFFICIENT_DATA_ALERT_SIGNAL_TYPE drives notifier meta (R-07).
+                            direction = "long"
+                            for pos in current_positions or []:
+                                if not isinstance(pos, dict):
+                                    continue
+                                if str(pos.get("symbol") or "").strip() != str(symbol or "").strip():
+                                    continue
+                                side = str(pos.get("side") or "").strip().lower()
+                                if side == "short":
+                                    direction = "short"
+                                break
+                            dispatch_insufficient_user_alert_after_block(
+                                notifier=self.signal_notifier,
+                                strategy_id=strategy_id,
+                                strategy_name=sname,
+                                symbol=str(symbol or ""),
+                                exchange_id=str(ecfg.get("exchange_id") or ""),
+                                notification_config=nc,
+                                price=float(current_price or 0.0),
+                                direction=direction,
+                                blocked_payload=payload,
+                                suff_result=suff_result,
+                                strategy_ctx=strategy_ctx,
+                                current_positions=current_positions,
+                                logger=logger,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "insufficient_user_alert_orchestration_failed: strategy_id=%s err=%s",
+                                strategy_id,
+                                e,
+                            )
+                        return False
 
             if not self._check_ai_filter(strategy_ctx, symbol, sig, signal_ts):
                 return False

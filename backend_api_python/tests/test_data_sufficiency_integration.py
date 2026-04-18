@@ -75,4 +75,5 @@ def test_adapter_to_service_emits_ibkr_data_sufficiency_check():
     _args, kwargs = log.info.call_args
     extra = kwargs["extra"]
     assert extra["event"] == "ibkr_data_sufficiency_check"
+    assert extra["event_lane"] == "sufficiency_evaluation"
     assert extra["reason_code"] == "sufficient"

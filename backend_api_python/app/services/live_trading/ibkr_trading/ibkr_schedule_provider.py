@@ -15,6 +15,10 @@ from typing import List, Optional, Tuple
 import pytz
 
 from app.services.data_sufficiency_types import IBKRScheduleSnapshot, IBKRScheduleStatus
+from app.services.schedule_metadata import (
+    SCHEDULE_FAILURE_EMPTY_OR_UNPARSABLE,
+    SCHEDULE_FAILURE_TIMEZONE_ID_UNRESOLVED,
+)
 from app.services.live_trading.ibkr_trading.trading_hours import (
     is_rth_check,
     parse_liquid_hours,
@@ -80,7 +84,7 @@ def get_ibkr_schedule_snapshot(
     tz, tz_resolution = resolve_time_zone_id_for_schedule(tz_id_raw)
     schedule_failure_reason: Optional[str] = None
     if tz_resolution == "fallback_utc":
-        schedule_failure_reason = "timezone_id_unresolved"
+        schedule_failure_reason = SCHEDULE_FAILURE_TIMEZONE_ID_UNRESOLVED
         logger.warning(
             "IBKR schedule: unresolved timeZoneId for symbol=%s con_id=%s; "
             "using UTC fallback for liquidHours parsing.",
@@ -95,7 +99,7 @@ def get_ibkr_schedule_snapshot(
     if not sessions:
         st = _empty_sessions_schedule_status(lh_raw)
         if st == IBKRScheduleStatus.SCHEDULE_UNKNOWN and schedule_failure_reason is None:
-            schedule_failure_reason = "empty_or_unparsable_schedule"
+            schedule_failure_reason = SCHEDULE_FAILURE_EMPTY_OR_UNPARSABLE
         return IBKRScheduleSnapshot(
             symbol=symbol,
             timeframe=timeframe,
