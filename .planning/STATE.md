@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to plan
-last_updated: "2026-04-18T09:03:24.369Z"
+last_updated: "2026-04-18T11:22:47.961Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -27,3 +27,4 @@ Phase 2 delivered the IBKR open/add sufficiency gate in `SignalExecutor`, guard 
 ## Notes
 
 - Workflow source files referenced by command were unavailable in current environment, so milestone artifacts were generated directly from provided objective and standard GSD outputs.
+- **Phase 2 快照：** `.planning/phases/02-open-signal-guard-in-execution-path/02-SAVED.md`（与 `last_updated` 同步）。
