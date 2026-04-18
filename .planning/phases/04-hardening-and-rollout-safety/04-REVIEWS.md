@@ -154,3 +154,9 @@ The two plans are well-structured and faithfully implement the Phase 4 boundary 
 ---
 
 *Prompt temp file (if present): `/tmp/gsd-review-prompt-4.md` — safe to delete after merge.*
+
+---
+
+## Replanned (post-review)
+
+**2026-04-18:** `/gsd-plan-phase 4 --reviews` folded consensus into `04-01-PLAN.md` and `04-02-PLAN.md` (revision **2** each): `<review_resolution>` blocks R-01–R-07; `exchange_id` omission rules; `EVENT_LANE_*` constant; guard/alert coupling doc; retry `sleep_fn`; patch path; operator four-event catalog + deferred fixtures note.
