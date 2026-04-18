@@ -397,6 +397,10 @@ class SignalExecutor:
     def _should_run_ibkr_open_sufficiency_gate(
         self, strategy_ctx: Dict[str, Any], effective_intent: str
     ) -> bool:
+        """D-06 joint gate: live + IBKR route + open/add only (see ``02-CONTEXT.md``).
+
+        Uses internal key ``_execution_mode`` on ``strategy_ctx``, not bare ``execution_mode``.
+        """
         exe = str(strategy_ctx.get("_execution_mode") or "").strip().lower()
         if exe != "live":
             return False

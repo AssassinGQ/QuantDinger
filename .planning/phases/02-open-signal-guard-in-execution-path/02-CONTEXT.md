@@ -21,7 +21,7 @@ For IBKR execution strategies (`ibkr-paper`, `ibkr-live`) in **live** execution 
 
 ### Guard injection point and ordering — **User: 2B**
 - **D-05:** Implement the gate in **`SignalExecutor.execute`** as the **single** integration point for this phase (not a second independent gate inside `pending_order_enqueuer` / worker).
-- **D-06:** Run the guard only when **all** hold: `execution_mode` is **`live`**, strategy `exchange_config.exchange_id` is **`ibkr-paper` or `ibkr-live`**, and the signal type (after initial normalization) is **open/add** (`open_*`, `add_*`, including paths that ultimately size as add). Do **not** run for `signal` / non-IBKR modes.
+- **D-06:** Run the guard only when **all** hold: internal strategy context key **`_execution_mode`** (string) equals **`live`** — i.e. `str(strategy_ctx.get("_execution_mode") or "").strip().lower() == "live"` (same convention as `SignalExecutor.execute` today; not a bare `execution_mode` top-level key). Strategy `exchange_config.exchange_id` must be **`ibkr-paper` or `ibkr-live`**. Effective signal intent (after normalization / `target_weight` handling per R-05) must be **open/add** (`open_*`, `add_*`). Do **not** run for non-live modes, non-IBKR `exchange_id`, or reduce/close paths (**D-08**).
 - **D-07:** Ordering relative to existing gates: after the **position state machine** allows the signal, run sufficiency **before** `_check_ai_filter`, then proceed with `_calculate_order_amount`, normalizer, and `pending_order_enqueuer.execute_exchange_order`. **Rationale (user choice 2B):** avoid AI/LLM work when data is already insufficient; sufficiency does not depend on computed order size.
 - **D-08:** Close/reduce/close-like signals must **bypass** the sufficiency gate entirely (only intercept risk-increasing actions).
 
@@ -84,7 +84,7 @@ These items elaborate locked decisions (D-xx) for **plan authors and implementer
 
 ### Reusable Assets
 - `evaluate_ibkr_data_sufficiency_and_log`: Phase 1 end-to-end evaluator + `ibkr_data_sufficiency_check` logging.
-- `SignalExecutor.execute` / `execute_batch`: Unified live enqueue path (`pending_order_enqueuer.execute_exchange_order`) for IBKR live/paper when `execution_mode == live`.
+- `SignalExecutor.execute` / `execute_batch`: Unified live enqueue path (`pending_order_enqueuer.execute_exchange_order`) for IBKR live/paper when **`_execution_mode == live`**. IBKR **`exchange`** (contract resolution) is threaded **`CrossSectionalRunner.run(exchange)` → `_run_single_tick(..., exchange)` → `_dispatch_signals(..., exchange)` → `execute_batch(..., exchange=...)` → `execute(..., exchange=...)`** so batch strategies do not silently pass `exchange=None` through the sufficiency gate.
 - `DataHandler` / strategy payload: `exchange_config.exchange_id` available via strategy config loader for IBKR detection.
 
 ### Established Patterns

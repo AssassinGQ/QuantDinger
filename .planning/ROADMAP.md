@@ -73,6 +73,10 @@ Locked user decisions live in **`02-CONTEXT.md`**. Cross-AI review (`02-REVIEWS.
 - **`stale_prev_close` policy:** Define operator-facing staleness thresholds, cooldown interactions, and how `FreshnessMetadata` from Phase 1 maps to user-visible alerts (Phase 1 only defines schema + safe defaults).
 - **Large `missing_window` (seconds) across multi-day gaps:** Document alert copy / severity so operators interpret `market_closed_gap` + large `missing_window` as expected wall-clock shortfall, not only “missing last bar.”
 
+#### Carryover from Phase 02 cross-AI review (2026-04-18, retro)
+
+- **Alert payload field names:** When mapping Phase 2 logs (`ibkr_open_blocked_insufficient_data`, `ibkr_data_sufficiency_check`) to user-visible text, reuse stable keys from the blocked-open payload builder and document **`_execution_mode`** vs account paper/live naming so operators are not confused with `exchange_id` (`ibkr-paper` / `ibkr-live`).
+
 ### Phase 4: Hardening and rollout safety
 
 **Objective:** reduce false blocks and ensure production-safe rollout.
@@ -94,3 +98,9 @@ Locked user decisions live in **`02-CONTEXT.md`**. Cross-AI review (`02-REVIEWS.
 
 - **Typed constants for metadata strings:** Replace free-string `timezone_resolution` / `schedule_failure_reason` literals with enums or const objects shared across adapter, logs, and guards to prevent silent drift (extends T-01-02 hardening).
 - **Optional `timezone_trusted` (or equivalent):** If operators still confuse `schedule_known_open` with UTC fallback, add an explicit boolean to the contract behind a compatibility-conscious migration.
+
+#### Carryover from Phase 02 cross-AI review (2026-04-18, retro)
+
+- **Doc vs runtime keys:** When writing operator runbooks or Phase 3 alert copy, always reference **`strategy_ctx["_execution_mode"]`** and `exchange_config.exchange_id` as implemented — avoid ambiguous prose `execution_mode` without the underscore (see `02-CONTEXT.md` D-06 clarification).
+- **Shared kline / sufficiency fixtures (optional hardening):** Consider extracting reusable LOWER_LEVELS stub patterns (used in `test_data_sufficiency_integration.py` and `test_ibkr_open_guard_execution.py`) into `tests/fixtures/` or a small shared helper module to reduce mock drift as tests grow.
+- **False insufficient / false sufficient (Phase 01 carryover still open):** Phase 2 added execution-path seam tests; Phase 4 should still own production-like threshold tuning and broader regression (see Phase 2 carryover bullets above).

@@ -141,6 +141,17 @@ To fold this into plans: `/gsd-plan-phase 2 --reviews` (or Phase 3 planning if P
 
 ---
 
+## Follow-up applied (2026-04-18)
+
+| Review item | Resolution |
+|---------------|--------------|
+| D-06 prose `execution_mode` vs code `_execution_mode` | **`02-CONTEXT.md` D-06** rewritten with canonical key and grep-friendly expression; **Code Insights** updated; **`_should_run_ibkr_open_sufficiency_gate`** docstring in `signal_executor.py` references D-06. |
+| `exchange` threading path under-specified in docs | **`02-CONTEXT.md` Code Insights** now spells `run → _run_single_tick → _dispatch_signals → execute_batch → execute`. |
+| R-05 / R-08 plan specificity for future readers | **Deferred:** ROADMAP **Phase 4** carryover — shared kline fixtures + ongoing doc/runtime alignment; **Phase 3** carryover — alert copy vs `_execution_mode` / `exchange_id` naming. |
+| Claude “missing test file” snapshot | **Closed in tree:** `test_ibkr_open_guard_execution.py` exists post-Phase-2 execution; no code change. |
+
+---
+
 ## Hygiene
 
 Temporary prompt files may be removed locally:
