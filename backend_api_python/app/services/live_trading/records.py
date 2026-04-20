@@ -643,6 +643,16 @@ def ibkr_save_position(
     value: float = 0.0,
 ) -> bool:
     _ensure_tables()
+    # 双层防护：与 ibkr_save_pnl 对齐，夹紧到 DECIMAL(20,*) 可表示范围内，
+    # 兜底 IBKR 偶发的 sentinel 值（sys.float_info.max ≈ 1.797e308）穿透 _safe_pnl_float
+    # 的情况，避免写入时触发 "numeric field overflow"。
+    MAX_VALUE = 1e15
+    daily_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(daily_pnl)))
+    unrealized_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(unrealized_pnl)))
+    realized_pnl = max(-MAX_VALUE, min(MAX_VALUE, float(realized_pnl)))
+    value = max(-MAX_VALUE, min(MAX_VALUE, float(value)))
+    avg_cost = max(-MAX_VALUE, min(MAX_VALUE, float(avg_cost)))
+    position = max(-MAX_VALUE, min(MAX_VALUE, float(position)))
     try:
         with get_db_connection() as db:
             cur = db.cursor()
