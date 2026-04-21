@@ -102,6 +102,34 @@ class TestPriceFetcher:
             assert price == 100.0
             mock_ticker.assert_called_once()
 
+    def test_get_last_ticker_meta_from_cache(self):
+        fetcher = PriceFetcher()
+        fetcher._price_cache_ttl_sec = 10
+
+        with patch("app.services.price_fetcher.DataSourceFactory.get_ticker") as mock_ticker:
+            mock_ticker.return_value = {
+                "last": 31.5,
+                "previousClose": 31.3,
+                "previousCloseAgeDays": 1.2,
+                "previousCloseFresh": False,
+            }
+            price = fetcher.fetch_current_price(None, "XAGUSD", market_category="Forex")
+            assert price == 31.5
+
+        meta = fetcher.get_last_ticker_meta("XAGUSD", market_category="Forex")
+        assert meta.get("previousClose") == 31.3
+        assert meta.get("previousCloseAgeDays") == 1.2
+        assert meta.get("previousCloseFresh") is False
+
+    def test_get_last_ticker_meta_expired_returns_empty(self):
+        fetcher = PriceFetcher()
+        fetcher._price_cache_ttl_sec = 10
+        cache_key = "Forex:XAGUSD"
+        fetcher._ticker_meta_cache[cache_key] = ({"last": 31.5}, time.time() - 1)
+
+        meta = fetcher.get_last_ticker_meta("XAGUSD", market_category="Forex")
+        assert meta == {}
+
 
 class TestPriceFetcherSingleton:
     def test_get_price_fetcher_returns_singleton(self):

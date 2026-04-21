@@ -19,6 +19,7 @@ class PriceFetcher:
         # Local-only lightweight in-memory price cache (symbol -> (price, expiry_ts)).
         # This replaces the old Redis-based PriceCache for local deployments.
         self._price_cache = {}
+        self._ticker_meta_cache = {}
         self._price_cache_lock = threading.Lock()
         # Default to 10s to match the unified tick cadence.
         self._price_cache_ttl_sec = int(os.getenv("PRICE_CACHE_TTL_SEC", "10"))
@@ -65,6 +66,7 @@ class PriceFetcher:
                             with self._price_cache_lock:
                                 exp = time.time() + self._price_cache_ttl_sec
                                 self._price_cache[cache_key] = (float(price), exp)
+                                self._ticker_meta_cache[cache_key] = (dict(ticker), exp)
                         except Exception:
                             pass
                     return price
@@ -75,6 +77,25 @@ class PriceFetcher:
                 symbol,
                 e,
             )
+
+    def get_last_ticker_meta(self, symbol: str, market_category: str = "Crypto") -> dict:
+        """读取最近一次 fetch_current_price 成功缓存的 ticker 元数据。"""
+        cache_key = f"{market_category}:{(symbol or '').strip().upper()}"
+        if not cache_key or self._price_cache_ttl_sec <= 0:
+            return {}
+        now = time.time()
+        try:
+            with self._price_cache_lock:
+                item = self._ticker_meta_cache.get(cache_key)
+                if not item:
+                    return {}
+                meta, expiry = item
+                if expiry > now and isinstance(meta, dict):
+                    return dict(meta)
+                del self._ticker_meta_cache[cache_key]
+        except Exception:
+            return {}
+        return {}
 
 _price_fetcher_instance = None
 

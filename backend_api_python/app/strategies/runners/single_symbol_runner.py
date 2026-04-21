@@ -4,6 +4,7 @@
 import os
 import time
 import traceback
+import threading
 from typing import Any, Dict
 
 from app.strategies.runners.base_runner import BaseStrategyRunner
@@ -13,6 +14,8 @@ from app.utils.logger import get_logger
 from app.utils.console import console_print
 
 logger = get_logger(__name__)
+_stale_prev_close_alert_ts: Dict[int, float] = {}
+_stale_prev_close_alert_lock = threading.Lock()
 
 
 class SingleSymbolRunner(BaseStrategyRunner):
@@ -75,6 +78,7 @@ class SingleSymbolRunner(BaseStrategyRunner):
         current_price = self.price_fetcher.fetch_current_price(
             exchange, symbol, market_type=market_type, market_category=market_category
         )
+        self._maybe_notify_prev_close_stale(strategy_id, strategy, symbol, market_category)
         if current_price is None:
             logger.warning(
                 "Strategy %s failed to fetch current price for %s:%s",
@@ -129,6 +133,113 @@ class SingleSymbolRunner(BaseStrategyRunner):
             f"[strategy:{strategy_id}] tick price={price_str} pending_signals={pending_count}"
         )
         return True
+
+    def _maybe_notify_prev_close_stale(
+        self,
+        strategy_id: int,
+        strategy: Dict[str, Any],
+        symbol: str,
+        market_category: str,
+    ) -> None:
+        """Fail-safe: 昨收新鲜度>1天时按策略通知渠道告警（带冷却，避免刷屏）。"""
+        should_alert, age_days, meta = self._check_prev_close_stale(
+            symbol=symbol,
+            market_category=market_category,
+        )
+        if not should_alert:
+            return
+        if self._is_prev_close_alert_throttled(strategy_id):
+            return
+        logger.warning(
+            "Strategy %s prev_close stale detected for %s:%s age_days=%.3f",
+            strategy_id,
+            market_category,
+            symbol,
+            age_days,
+        )
+        self._send_prev_close_stale_alert(
+            strategy_id=strategy_id,
+            strategy=strategy,
+            symbol=symbol,
+            market_category=market_category,
+            age_days=age_days,
+            meta=meta,
+        )
+
+    def _check_prev_close_stale(
+        self,
+        symbol: str,
+        market_category: str,
+    ) -> tuple[bool, float, Dict[str, Any]]:
+        """读取 ticker 元信息并判断是否需要触发 stale 告警。"""
+        if str(market_category or "").strip() not in ("Forex", "Metals"):
+            return False, 0.0, {}
+        meta = self.price_fetcher.get_last_ticker_meta(symbol, market_category=market_category)
+        if not isinstance(meta, dict):
+            return False, 0.0, {}
+        try:
+            age_days = float(meta.get("previousCloseAgeDays") or 0.0)
+        except (TypeError, ValueError):
+            return False, 0.0, {}
+        return age_days > 1.0, age_days, meta
+
+    def _is_prev_close_alert_throttled(self, strategy_id: int) -> bool:
+        """检查并更新节流窗口；返回 True 表示本次应抑制告警。"""
+        try:
+            cooldown_sec = max(
+                60,
+                int(os.getenv("FOREX_PREV_CLOSE_STALE_ALERT_COOLDOWN_SEC", "3600")),
+            )
+        except (TypeError, ValueError):
+            cooldown_sec = 3600
+        now = time.time()
+        sid = int(strategy_id)
+        with _stale_prev_close_alert_lock:
+            last_ts = _stale_prev_close_alert_ts.get(sid, 0.0)
+            if now - last_ts < cooldown_sec:
+                return True
+            _stale_prev_close_alert_ts[sid] = now
+        return False
+
+    def _send_prev_close_stale_alert(
+        self,
+        strategy_id: int,
+        strategy: Dict[str, Any],
+        symbol: str,
+        market_category: str,
+        age_days: float,
+        meta: Dict[str, Any],
+    ) -> None:
+        """通过策略配置的通知渠道发送 stale 告警。"""
+        try:
+            from app.services.signal_notifier import SignalNotifier
+
+            notifier = SignalNotifier()
+            notifier.notify_signal(
+                strategy_id=int(strategy_id),
+                strategy_name=str(strategy.get("_strategy_name") or ""),
+                symbol=str(symbol or ""),
+                signal_type="risk_data_stale_prev_close",
+                price=float(meta.get("last") or 0.0),
+                stake_amount=0.0,
+                direction="",
+                notification_config=(strategy.get("_notification_config") or {}),
+                extra={
+                    "status": "warning",
+                    "mode": str(strategy.get("_execution_mode") or ""),
+                    "market_category": str(market_category or ""),
+                    "error": f"previousClose stale: age_days={age_days:.3f} > 1.0",
+                    "prev_close_age_days": age_days,
+                    "prev_close": float(meta.get("previousClose") or 0.0),
+                    "prev_close_source": str(meta.get("previousCloseSource") or ""),
+                },
+            )
+        except Exception as e:
+            logger.warning(
+                "Strategy %s stale prev_close notify failed: %s",
+                strategy_id,
+                e,
+            )
 
     def _process_and_execute_signals(
         self,
