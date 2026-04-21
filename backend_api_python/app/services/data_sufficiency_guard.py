@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Literal, Optional
+from typing import Callable, List, Literal, Optional
 
 from app.services import kline_fetcher
 from app.services.data_sufficiency_service import evaluate_ibkr_data_sufficiency_and_log
@@ -127,6 +127,9 @@ def evaluate_ibkr_open_data_sufficiency(
     before_time_utc: Optional[int],
     con_id: int,
     logger: Optional[logging.Logger] = None,
+    exchange_id: Optional[str] = None,
+    strategy_id: Optional[int] = None,
+    sleep_fn: Optional[Callable[[float], None]] = None,
 ) -> DataSufficiencyResult:
     """Evaluate sufficiency for IBKR execution path; never raises — maps failures to synthetic results."""
 
@@ -157,6 +160,9 @@ def evaluate_ibkr_open_data_sufficiency(
             con_id=con_id,
             freshness=None,
             logger=log,
+            exchange_id=exchange_id,
+            strategy_id=strategy_id,
+            sleep_fn=sleep_fn,
         )
     except Exception as exc:
         log.exception(

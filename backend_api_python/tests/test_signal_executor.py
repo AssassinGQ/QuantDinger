@@ -954,6 +954,48 @@ class TestIBKROpenSufficiencyGate:
         mock_load.assert_called_with(502)
         sn.notify_signal.assert_called_once()
 
+    @patch("app.services.signal_executor.evaluate_ibkr_open_data_sufficiency")
+    @patch.object(SignalExecutor, "_resolve_ibkr_contract_details_for_symbol")
+    def test_ibkr_sufficiency_guard_env_disabled_skips_evaluator(
+        self, mock_resolve, mock_eval, signal_executor, monkeypatch
+    ):
+        from app.config import sufficiency_rollout
+
+        monkeypatch.setenv("QUANTDINGER_IBKR_SUFFICIENCY_GUARD_ENABLED", "false")
+        sufficiency_rollout.reset_ibkr_sufficiency_guard_rollout_log_for_tests()
+        mock_resolve.return_value = MagicMock(contract=MagicMock(conId=99))
+        mock_eval.side_effect = AssertionError(
+            "sufficiency must not run when guard disabled via env"
+        )
+        signal_executor.pending_order_enqueuer.execute_exchange_order.return_value = {
+            "success": True
+        }
+        strategy_ctx = {
+            "id": 1,
+            "_execution_mode": "live",
+            "exchange_config": {"exchange_id": "ibkr-paper"},
+            "_market_category": "USStock",
+            "_market_type": "swap",
+            "trading_config": {"timeframe": "1H", "required_bars": 100, "entry_pct": 0.1},
+        }
+        signal = {"type": "open_long"}
+
+        with patch(
+            "app.services.signal_executor._get_available_capital", return_value=10000.0
+        ):
+            result = signal_executor.execute(
+                strategy_ctx,
+                signal,
+                symbol="SPY",
+                current_price=100.0,
+                current_positions=[],
+                exchange=object(),
+            )
+
+        mock_eval.assert_not_called()
+        assert result is True
+        signal_executor.pending_order_enqueuer.execute_exchange_order.assert_called_once()
+
 
 class TestExecuteBatchExchange:
     def test_execute_batch_forwards_exchange_to_execute(self, signal_executor):

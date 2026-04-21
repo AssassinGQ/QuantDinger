@@ -3,18 +3,30 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Final, List, Optional, Tuple
 
 from app.services.data_sufficiency_types import DataSufficiencyResult
 from app.utils.logger import get_logger
 
 _LOG = get_logger(__name__)
 
+EVENT_LANE_SUFFICIENCY_EVALUATION: Final[str] = "sufficiency_evaluation"
 
-def build_ibkr_data_sufficiency_check_payload(result: DataSufficiencyResult) -> Dict[str, object]:
-    """Pure: stable machine payload for ``ibkr_data_sufficiency_check``."""
+
+def build_ibkr_data_sufficiency_check_payload(
+    result: DataSufficiencyResult,
+    *,
+    exchange_id: Optional[str] = None,
+    strategy_id: Optional[int] = None,
+) -> Dict[str, object]:
+    """Pure: stable machine payload for ``ibkr_data_sufficiency_check``.
+
+    ``exchange_id`` / ``strategy_id`` are omitted when unset or blank (after strip) so
+    log pipelines do not see spurious ``exchange_id: ""`` buckets.
+    """
     payload: Dict[str, object] = {
         "event": "ibkr_data_sufficiency_check",
+        "event_lane": EVENT_LANE_SUFFICIENCY_EVALUATION,
         "symbol": result.symbol,
         "timeframe": result.timeframe,
         "market_category": result.market_category,
@@ -28,6 +40,11 @@ def build_ibkr_data_sufficiency_check_payload(result: DataSufficiencyResult) -> 
     }
     if result.diagnostics.con_id is not None:
         payload["con_id"] = result.diagnostics.con_id
+    ex = (exchange_id or "").strip() if exchange_id is not None else ""
+    if ex:
+        payload["exchange_id"] = ex
+    if strategy_id is not None:
+        payload["strategy_id"] = strategy_id
     return payload
 
 

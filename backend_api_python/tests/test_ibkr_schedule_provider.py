@@ -8,6 +8,10 @@ import pytz
 import pytest
 
 from app.services.data_sufficiency_types import IBKRScheduleStatus
+from app.services.schedule_metadata import (
+    SCHEDULE_FAILURE_EMPTY_OR_UNPARSABLE,
+    SCHEDULE_FAILURE_TIMEZONE_ID_UNRESOLVED,
+)
 from app.services.live_trading.ibkr_trading.ibkr_schedule_provider import (
     get_ibkr_schedule_snapshot,
 )
@@ -47,6 +51,7 @@ def test_unknown_schedule():
     assert snap.schedule_status == IBKRScheduleStatus.SCHEDULE_UNKNOWN
     assert snap.next_session_open_utc is None
     assert snap.parsed_session_count == 0
+    assert snap.schedule_failure_reason == SCHEDULE_FAILURE_EMPTY_OR_UNPARSABLE
 
 
 def test_market_closed_gap():
@@ -134,7 +139,7 @@ def test_timezone_fallback_metadata():
         con_id=6,
     )
     assert snap.timezone_resolution == "fallback_utc"
-    assert snap.schedule_failure_reason == "timezone_id_unresolved"
+    assert snap.schedule_failure_reason == SCHEDULE_FAILURE_TIMEZONE_ID_UNRESOLVED
     assert snap.schedule_status in (
         IBKRScheduleStatus.SCHEDULE_KNOWN_OPEN,
         IBKRScheduleStatus.SCHEDULE_KNOWN_CLOSED,

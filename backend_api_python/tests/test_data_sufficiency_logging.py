@@ -4,6 +4,7 @@ import pathlib
 from unittest.mock import MagicMock
 
 from app.services.data_sufficiency_logging import (
+    EVENT_LANE_SUFFICIENCY_EVALUATION,
     build_ibkr_data_sufficiency_check_payload,
     build_ibkr_insufficient_data_alert_sent_payload,
     build_ibkr_open_blocked_insufficient_data_payload,
@@ -49,6 +50,8 @@ def test_sufficient_log_payload():
     r = _result(DataSufficiencyReasonCode.SUFFICIENT, IBKRScheduleStatus.SCHEDULE_KNOWN_OPEN)
     p = build_ibkr_data_sufficiency_check_payload(r)
     assert p["event"] == "ibkr_data_sufficiency_check"
+    assert p["event_lane"] == "sufficiency_evaluation"
+    assert EVENT_LANE_SUFFICIENCY_EVALUATION == "sufficiency_evaluation"
     assert p["reason_code"] == "sufficient"
     assert p["required_bars"] == 10
     assert p["available_bars"] == 10
@@ -94,6 +97,21 @@ def test_market_closed_gap_log_payload():
     p = build_ibkr_data_sufficiency_check_payload(r)
     assert p["reason_code"] == "market_closed_gap"
     assert p["schedule_status"] == "schedule_known_closed"
+
+
+def test_check_payload_joinable_keys_when_present():
+    r = _result(DataSufficiencyReasonCode.SUFFICIENT, IBKRScheduleStatus.SCHEDULE_KNOWN_OPEN)
+    p = build_ibkr_data_sufficiency_check_payload(
+        r, exchange_id="ibkr-paper", strategy_id=42
+    )
+    assert p["exchange_id"] == "ibkr-paper"
+    assert p["strategy_id"] == 42
+    assert "exchange_id" not in build_ibkr_data_sufficiency_check_payload(
+        r, exchange_id="", strategy_id=None
+    )
+    assert "exchange_id" not in build_ibkr_data_sufficiency_check_payload(
+        r, exchange_id="   ", strategy_id=None
+    )
 
 
 def test_emit_once_per_call():
