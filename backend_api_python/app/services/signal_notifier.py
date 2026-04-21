@@ -410,6 +410,10 @@ class SignalNotifier:
         title = ctx["title"]
         opt_rows = self._build_optional_rows(ctx)
 
+        ex = (payload or {}).get("extra") or {}
+        user_title = str(ex.get("user_alert_title") or "").strip() if isinstance(ex, dict) else ""
+        user_plain = str(ex.get("user_alert_plain") or "").strip() if isinstance(ex, dict) else ""
+
         # -- plain text --
         plain_lines = [
             "QuantDinger Signal",
@@ -419,42 +423,58 @@ class SignalNotifier:
             f"Ref Price: {ctx['price_s']}",
             f"Amount: {ctx['stake_s']}",
         ]
-        for label, val in opt_rows:
-            plain_lines.append(f"{label}: {val}")
+        if user_title:
+            title = user_title
+        if user_plain:
+            plain_lines = [user_plain]
+        else:
+            for label, val in opt_rows:
+                plain_lines.append(f"{label}: {val}")
 
         # -- Telegram (HTML) message --
-        telegram_lines = [
-            "<b>QuantDinger Signal</b>",
-            "",
-            f"<b>Strategy</b>: <code>{html.escape(ctx['t_strategy'])}</code>",
-            f"<b>Symbol</b>: <code>{html.escape(ctx['symbol_label'])}</code>",
-            f"<b>Signal</b>: <code>{html.escape(ctx['stype'])}</code>",
-            f"<b>Ref Price</b>: <code>{html.escape(ctx['price_s'])}</code>",
-            f"<b>Amount</b>: <code>{html.escape(ctx['stake_s'])}</code>",
-        ]
-        _STATUS_EMOJI = {"filled": "\u2705", "failed": "\u274c", "deferred": "\u23f3"}
-        for label, val in opt_rows:
-            v_esc = html.escape(str(val))
-            if label == "Status":
-                emoji = _STATUS_EMOJI.get(val.lower(), "\u2139\ufe0f")
-                telegram_lines.append(f"<b>{label}</b>: {emoji} <code>{v_esc}</code>")
-            elif label == "P&L":
-                pnl_emoji = "\U0001f4c8" if val.startswith("+") else "\U0001f4c9"
-                telegram_lines.append(f"{pnl_emoji} <b>P&amp;L</b>: <code>{v_esc}</code>")
-            elif label == "Error":
-                telegram_lines.append(f"\n\u26a0\ufe0f <b>Error</b>: <code>{v_esc}</code>")
-            else:
-                telegram_lines.append(f"<b>{html.escape(label)}</b>: <code>{v_esc}</code>")
-        telegram_html = "\n".join(telegram_lines)
+        if user_plain:
+            telegram_lines = [
+                f"<b>{html.escape(user_title or title)}</b>",
+                "",
+                f"<pre>{html.escape(user_plain)}</pre>",
+            ]
+            telegram_html = "\n".join(telegram_lines)
+        else:
+            telegram_lines = [
+                "<b>QuantDinger Signal</b>",
+                "",
+                f"<b>Strategy</b>: <code>{html.escape(ctx['t_strategy'])}</code>",
+                f"<b>Symbol</b>: <code>{html.escape(ctx['symbol_label'])}</code>",
+                f"<b>Signal</b>: <code>{html.escape(ctx['stype'])}</code>",
+                f"<b>Ref Price</b>: <code>{html.escape(ctx['price_s'])}</code>",
+                f"<b>Amount</b>: <code>{html.escape(ctx['stake_s'])}</code>",
+            ]
+            _STATUS_EMOJI = {"filled": "\u2705", "failed": "\u274c", "deferred": "\u23f3"}
+            for label, val in opt_rows:
+                v_esc = html.escape(str(val))
+                if label == "Status":
+                    emoji = _STATUS_EMOJI.get(val.lower(), "\u2139\ufe0f")
+                    telegram_lines.append(f"<b>{label}</b>: {emoji} <code>{v_esc}</code>")
+                elif label == "P&L":
+                    pnl_emoji = "\U0001f4c8" if val.startswith("+") else "\U0001f4c9"
+                    telegram_lines.append(f"{pnl_emoji} <b>P&amp;L</b>: <code>{v_esc}</code>")
+                elif label == "Error":
+                    telegram_lines.append(f"\n\u26a0\ufe0f <b>Error</b>: <code>{v_esc}</code>")
+                else:
+                    telegram_lines.append(f"<b>{html.escape(label)}</b>: <code>{v_esc}</code>")
+            telegram_html = "\n".join(telegram_lines)
 
         # -- Email (HTML) message --
-        email_rows: List[Tuple[str, str]] = [
-            ("Strategy", ctx["t_strategy"]),
-            ("Symbol", ctx["symbol_label"]),
-            ("Signal", ctx["stype"]),
-            ("Ref Price", ctx["price_s"]),
-            ("Amount", ctx["stake_s"]),
-        ] + opt_rows
+        if user_plain:
+            email_rows = [("Message", user_plain)]
+        else:
+            email_rows = [
+                ("Strategy", ctx["t_strategy"]),
+                ("Symbol", ctx["symbol_label"]),
+                ("Signal", ctx["stype"]),
+                ("Ref Price", ctx["price_s"]),
+                ("Amount", ctx["stake_s"]),
+            ] + opt_rows
 
         email_html = self._build_email_html(
             title_text=title,
@@ -864,5 +884,3 @@ class SignalNotifier:
         except Exception as e:
             logger.error('phone.error\n%s', traceback.format_exc())
             return False, str(e)
-
-

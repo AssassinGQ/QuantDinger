@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_sufficiency_types import DataSufficiencyResult
 from app.utils.logger import get_logger
@@ -99,3 +99,44 @@ def emit_ibkr_open_blocked_insufficient_data(
     log = logger or _LOG
     extra: Dict[str, Any] = {k: v for k, v in payload.items()}
     log.info("ibkr_open_blocked_insufficient_data", extra=extra)
+
+
+def build_ibkr_insufficient_data_alert_sent_payload(
+    *,
+    strategy_id: int,
+    symbol: str,
+    exchange_id: str,
+    execution_mode: str,
+    reason_code: str,
+    dedup_key: Tuple[int, str, str, str],
+    channels_attempted: List[str],
+    channels_ok: Dict[str, bool],
+    signal_type: str,
+) -> Dict[str, object]:
+    """Pure builder for ``ibkr_insufficient_data_alert_sent`` (N3 user-channel audit)."""
+    sid_k, sym_k, rc_k, ex_k = dedup_key
+    return {
+        "event": "ibkr_insufficient_data_alert_sent",
+        "strategy_id": strategy_id,
+        "symbol": symbol,
+        "exchange_id": exchange_id,
+        "_execution_mode": execution_mode,
+        "reason_code": reason_code,
+        "dedup_strategy_id": sid_k,
+        "dedup_symbol": sym_k,
+        "dedup_reason_code": rc_k,
+        "dedup_exchange_id": ex_k,
+        "channels_attempted": list(channels_attempted),
+        "channels_ok": dict(channels_ok),
+        "signal_type": signal_type,
+    }
+
+
+def emit_ibkr_insufficient_data_alert_sent(
+    payload: Dict[str, object],
+    logger: Optional[logging.Logger] = None,
+) -> None:
+    """Emit one structured info line after a user alert cleared dedup and notify completed."""
+    log = logger or _LOG
+    extra: Dict[str, Any] = {k: v for k, v in payload.items()}
+    log.info("ibkr_insufficient_data_alert_sent", extra=extra)
