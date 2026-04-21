@@ -1,4 +1,16 @@
-"""Phase-1 orchestration: schedule snapshot → bars → classify → log."""
+"""Phase-1 orchestration: schedule snapshot → bars → classify → log.
+
+`market_category` is supplied by the caller and threaded through the adapter
+and classifier unchanged; it must align with the first argument passed to
+``kline_fetcher.get_kline`` (often labeled ``market``) when wiring production.
+
+Exception contract (Phase 1): ``get_ibkr_schedule_snapshot`` and
+``compute_available_bars_from_kline_fetcher`` may raise; this module does not
+catch them or substitute zero bars. Callers receive the exception as-is.
+Phase 2 open-signal guard must define fail-safe mapping or propagation when
+this orchestration is embedded in the execution path (see ROADMAP Phase 2
+carryover: orchestration / ``get_kline`` exception contract).
+"""
 
 from __future__ import annotations
 
@@ -38,7 +50,14 @@ def evaluate_ibkr_data_sufficiency_and_log(
     freshness: Optional[FreshnessMetadata] = None,
     logger: Optional[logging.Logger] = None,
 ) -> DataSufficiencyResult:
-    """End-to-end sufficiency for IBKR: adapter + kline bar count + pure classify + one log."""
+    """End-to-end sufficiency for IBKR: adapter + kline bar count + pure classify + one log.
+
+    Raises:
+        Exception: Any exception raised by ``get_ibkr_schedule_snapshot`` or
+            ``compute_available_bars_from_kline_fetcher`` (including a mocked
+            ``get_kline_callable``) propagates; no log emission occurs after a
+            failed bar-count step because classification is not reached.
+    """
     snap = get_ibkr_schedule_snapshot(
         contract_details,
         server_time_utc=server_time_utc,
