@@ -197,17 +197,10 @@ class IBKRClient(BaseStatefulClient):
     ) -> str:
         """Get TIF (Time in Force) based on signal type, market type, and order kind.
 
-        **Limit orders (automation / default REST):** ``order_type=="limit"`` → ``"DAY"``
-        for every market (resting until session end or fill); ``signal_type`` and
-        ``market_type`` do not change TIF for limits.
+        **Limit orders:** ``order_type=="limit"`` → ``"DAY"`` for every market.
 
-        **Market orders:** For ``market_type`` in ``("Forex", "USStock", "HShare", "Metals")``,
-        all signal types use ``"IOC"`` (unified policy; ``signal_type`` is ignored).
-        IBKR lists IOC for the relevant venues including SEHK; see
-        https://www.interactivebrokers.com/en/trading/order-type-exchanges.php?ot=ioc
-
-        For any other ``market_type`` not explicitly handled here, returns ``"DAY"``
-        as a conservative default until support is added.
+        **Market orders:** Forex and Metals use ``"IOC"``; USStock, HShare, and
+        all other market types use ``"DAY"``.
         """
         if (order_type or "").lower() == "limit":
             return "DAY"
@@ -238,6 +231,10 @@ class IBKRClient(BaseStatefulClient):
 
         # Per-(symbol, market_type) cache for successful qualifyContractsAsync (TTL via monotonic clock).
         self._qualify_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+        # Single persistent accountSummary subscription; cache updated by _on_account_summary.
+        self._acct_summary_req_id: Optional[int] = None
+        self._acct_summary_cache: Dict[str, Dict[str, str]] = {}
 
     # ── signal mapping ──────────────────────────────────────────────
 
@@ -343,6 +340,7 @@ class IBKRClient(BaseStatefulClient):
         def _do():
             if self._ib is not None:
                 try:
+                    self._cancel_account_summary_subscription()
                     self._ib.disconnect()
                 except Exception as e:
                     logger.warning("IBKR disconnect exception: %s", e)
@@ -472,6 +470,43 @@ class IBKRClient(BaseStatefulClient):
             logger.info("[IBKR] reqPositionsAsync returned %d positions", len(positions))
         except Exception as e:
             logger.error("[IBKR] Failed to activate reqPositionsAsync: %s", e)
+
+        await self._activate_account_summary_subscription()
+
+    async def _activate_account_summary_subscription(self):
+        """Start a single persistent accountSummary subscription.
+
+        If one is already active, cancel it first to avoid leaking request IDs.
+        The streaming updates are handled by ``_on_account_summary`` which
+        populates ``_acct_summary_cache``.
+        """
+        self._cancel_account_summary_subscription()
+        try:
+            summary = await self._ib.accountSummaryAsync(self._account)
+            for item in summary:
+                if item.tag:
+                    self._acct_summary_cache[item.tag] = {
+                        "value": item.value,
+                        "currency": item.currency,
+                    }
+            self._acct_summary_req_id = getattr(self._ib.wrapper, '_reqId', None)
+            logger.info(
+                "[IBKR] Account summary subscription activated (%d tags cached)",
+                len(self._acct_summary_cache),
+            )
+        except Exception as e:
+            logger.error("[IBKR] Failed to activate account summary subscription: %s", e)
+
+    def _cancel_account_summary_subscription(self):
+        """Cancel the persistent accountSummary subscription if active."""
+        self._acct_summary_cache = {}
+        if self._ib is not None and self._acct_summary_req_id is not None:
+            try:
+                self._ib.cancelAccountSummary(self._acct_summary_req_id)
+                logger.info("[IBKR] Cancelled account summary subscription (reqId=%s)", self._acct_summary_req_id)
+            except Exception as e:
+                logger.debug("[IBKR] cancelAccountSummary ignored: %s", e)
+            self._acct_summary_req_id = None
 
     # ── event callbacks: business logic ───────────────────────────
 
@@ -865,6 +900,11 @@ class IBKRClient(BaseStatefulClient):
             "[IBKR-Event] accountSummary: tag=%s value=%s currency=%s account=%s",
             value.tag, value.value, value.currency, value.account,
         )
+        if value.tag:
+            self._acct_summary_cache[value.tag] = {
+                "value": value.value,
+                "currency": value.currency,
+            }
 
     def _on_pending_tickers(self, tickers):
         logger.debug("[IBKR-Event] pendingTickers: %d tickers updated", len(tickers))
@@ -1503,19 +1543,11 @@ class IBKRClient(BaseStatefulClient):
     # ── query ──────────────────────────────────────────────────────
 
     def get_account_summary(self) -> Dict[str, Any]:
-        async def _task():
-            await self._ensure_connected_async()
-            summary = await self._ib.accountSummaryAsync(self._account)
-            result = {}
-            for item in summary:
-                result[item.tag] = {"value": item.value, "currency": item.currency}
-            return {"account": self._account, "summary": result, "success": True}
-
-        try:
-            return self._submit(_task(), timeout=15.0)
-        except Exception as e:
-            logger.error("Get account summary failed: %s", e)
-            return {"success": False, "error": str(e)}
+        return {
+            "account": self._account,
+            "summary": dict(self._acct_summary_cache),
+            "success": True,
+        }
 
     def get_pnl(self) -> Dict[str, Any]:
         if not self.connected:

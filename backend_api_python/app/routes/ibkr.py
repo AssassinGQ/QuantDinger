@@ -475,13 +475,13 @@ def ibkr_dashboard():
                         """
                         SELECT symbol, SUM(commission) as total_commission
                         FROM qd_strategy_trades
-                        WHERE user_id = ? AND commission > 0
+                        WHERE user_id = %s AND commission > 0
                         GROUP BY symbol
                         """,
                         (user_id,),
                     )
                     for row in cur.fetchall():
-                        symbol_commission_map[row[0]] = float(row[1] or 0)
+                        symbol_commission_map[row["symbol"]] = float(row["total_commission"] or 0)
                     cur.close()
 
                 for pos in data["positions"]:

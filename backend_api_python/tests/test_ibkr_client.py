@@ -171,6 +171,10 @@ def _make_client_with_mock_ib():
     client._subscribed_conids = set()
     client._qualify_cache = {}
 
+    # Account summary subscription cache
+    client._acct_summary_req_id = None
+    client._acct_summary_cache = {}
+
     import asyncio
 
     async def _noop_ensure(*_a, **_kw):
@@ -1018,39 +1022,58 @@ _TIF_MATRIX_MARKETS = ("Forex", "USStock", "HShare", "Metals")
 
 
 class TestTifMatrix:
-    """8×4 matrix: every signal × (Forex, USStock, HShare, Metals) → IOC; unknown market → DAY."""
+    """8×4 matrix: Forex/Metals → IOC; USStock/HShare → DAY; unknown → DAY."""
+
+    _IOC_MARKETS = ("Forex", "Metals")
+    _DAY_MARKETS = ("USStock", "HShare")
 
     @pytest.mark.parametrize(
         "signal_type, market_type",
         [
             (sig, mkt)
-            for mkt in _TIF_MATRIX_MARKETS
+            for mkt in ("Forex", "Metals")
             for sig in _TIF_MATRIX_SIGNALS
         ],
         ids=[
             f"{mkt.lower()}_{sig}"
-            for mkt in _TIF_MATRIX_MARKETS
+            for mkt in ("Forex", "Metals")
             for sig in _TIF_MATRIX_SIGNALS
         ],
     )
-    def test_tif_matrix(self, signal_type, market_type):
+    def test_tif_ioc_markets(self, signal_type, market_type):
         assert IBKRClient._get_tif_for_signal(signal_type, market_type) == "IOC"
+
+    @pytest.mark.parametrize(
+        "signal_type, market_type",
+        [
+            (sig, mkt)
+            for mkt in ("USStock", "HShare")
+            for sig in _TIF_MATRIX_SIGNALS
+        ],
+        ids=[
+            f"{mkt.lower()}_{sig}"
+            for mkt in ("USStock", "HShare")
+            for sig in _TIF_MATRIX_SIGNALS
+        ],
+    )
+    def test_tif_day_markets(self, signal_type, market_type):
+        assert IBKRClient._get_tif_for_signal(signal_type, market_type) == "DAY"
 
     def test_unknown_market_returns_day(self):
         assert IBKRClient._get_tif_for_signal("open_long", "CryptoFuture") == "DAY"
 
 
 class TestTifDay:
-    """USStock: market orders IOC; limit orders DAY (TRADE-01 / Phase 17)."""
+    """USStock: market orders DAY; limit orders DAY (TRADE-01 / Phase 17)."""
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_market_order_sets_tif_ioc(self):
+    def test_market_order_sets_tif_day(self):
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=400)
         client._ib.placeOrder.return_value = trade_mock
         client.place_market_order("AAPL", "buy", 10, "USStock")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "IOC"
+        assert placed_order.tif == "DAY"
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_limit_order_sets_tif_day_default(self):
@@ -1082,14 +1105,14 @@ class TestTifForexPolicy:
     def test_forex_signal_returns_ioc(self, signal_type):
         assert IBKRClient._get_tif_for_signal(signal_type, "Forex") == "IOC"
 
-    def test_uc_e1_usstock_open_uses_ioc(self):
-        assert IBKRClient._get_tif_for_signal("open_long", "USStock") == "IOC"
+    def test_uc_e1_usstock_open_uses_day(self):
+        assert IBKRClient._get_tif_for_signal("open_long", "USStock") == "DAY"
 
-    def test_uc_e2_usstock_close_uses_ioc(self):
-        assert IBKRClient._get_tif_for_signal("close_long", "USStock") == "IOC"
+    def test_uc_e2_usstock_close_uses_day(self):
+        assert IBKRClient._get_tif_for_signal("close_long", "USStock") == "DAY"
 
-    def test_uc_e3_hshare_close_uses_ioc(self):
-        assert IBKRClient._get_tif_for_signal("close_long", "HShare") == "IOC"
+    def test_uc_e3_hshare_close_uses_day(self):
+        assert IBKRClient._get_tif_for_signal("close_long", "HShare") == "DAY"
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
     def test_forex_market_order_passes_tif_ioc(self):
@@ -1317,24 +1340,24 @@ class TestPlaceMarketOrderForex:
         assert client._ib.placeOrder.call_count == 0
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_uc_r1_usstock_open_long_uses_ioc_tif(self):
-        """UC-R1: USStock open_long market order uses tif IOC."""
+    def test_uc_r1_usstock_open_long_uses_day_tif(self):
+        """UC-R1: USStock open_long market order uses tif DAY."""
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=605)
         client._ib.placeOrder.return_value = trade_mock
         client.place_market_order("AAPL", "buy", 100.0, "USStock", signal_type="open_long")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "IOC"
+        assert placed_order.tif == "DAY"
 
     @patch("app.services.live_trading.ibkr_trading.client.ib_insync", _make_mock_ib_insync())
-    def test_uc_r2_hshare_open_long_uses_ioc_tif(self):
-        """UC-R2: HShare open_long market order uses tif IOC."""
+    def test_uc_r2_hshare_open_long_uses_day_tif(self):
+        """UC-R2: HShare open_long market order uses tif DAY."""
         client = _make_client_with_mock_ib()
         trade_mock = _make_trade_mock(status="Submitted", filled=0, avg_price=0, order_id=606)
         client._ib.placeOrder.return_value = trade_mock
         client.place_market_order("00005", "buy", 400.0, "HShare", signal_type="open_long")
         placed_order = client._ib.placeOrder.call_args[0][1]
-        assert placed_order.tif == "IOC"
+        assert placed_order.tif == "DAY"
 
 
 # ===========================================================================
@@ -2663,6 +2686,116 @@ def ibkr_client():
         pytest.skip(f"Cannot connect to IBKR at {host}:{port}")
     yield client
     client.shutdown()
+
+
+class TestAccountSummaryCache:
+    """Verify account summary uses persistent subscription + cache."""
+
+    def test_get_account_summary_returns_cache(self):
+        """Cache populated → get_account_summary returns cached data, no IB API call."""
+        client = _make_client_with_mock_ib()
+        client._acct_summary_cache = {
+            "NetLiquidation": {"value": "100000", "currency": "USD"},
+            "TotalCashValue": {"value": "50000", "currency": "USD"},
+        }
+        result = client.get_account_summary()
+        assert result["success"] is True
+        assert result["account"] == "DU123456"
+        assert result["summary"]["NetLiquidation"]["value"] == "100000"
+        assert result["summary"]["TotalCashValue"]["currency"] == "USD"
+
+    def test_get_account_summary_empty_cache(self):
+        """Empty cache → returns empty summary, still success."""
+        client = _make_client_with_mock_ib()
+        client._acct_summary_cache = {}
+        result = client.get_account_summary()
+        assert result["success"] is True
+        assert result["summary"] == {}
+
+    def test_on_account_summary_populates_cache(self):
+        """_on_account_summary event callback writes tag into cache."""
+        client = _make_client_with_mock_ib()
+        assert client._acct_summary_cache == {}
+
+        event = MagicMock()
+        event.tag = "NetLiquidation"
+        event.value = "150000.50"
+        event.currency = "USD"
+        event.account = "DU123456"
+
+        client._on_account_summary(event)
+
+        assert "NetLiquidation" in client._acct_summary_cache
+        assert client._acct_summary_cache["NetLiquidation"]["value"] == "150000.50"
+        assert client._acct_summary_cache["NetLiquidation"]["currency"] == "USD"
+
+    def test_on_account_summary_updates_existing(self):
+        """Subsequent events for the same tag overwrite the cache entry."""
+        client = _make_client_with_mock_ib()
+        client._acct_summary_cache = {
+            "NetLiquidation": {"value": "100000", "currency": "USD"},
+        }
+
+        event = MagicMock()
+        event.tag = "NetLiquidation"
+        event.value = "120000"
+        event.currency = "USD"
+        event.account = "DU123456"
+
+        client._on_account_summary(event)
+        assert client._acct_summary_cache["NetLiquidation"]["value"] == "120000"
+
+    def test_on_account_summary_ignores_empty_tag(self):
+        """Event with empty/None tag does not write to cache."""
+        client = _make_client_with_mock_ib()
+
+        for tag_val in (None, "", 0):
+            event = MagicMock()
+            event.tag = tag_val
+            event.value = "999"
+            event.currency = "USD"
+            event.account = "DU123456"
+            client._on_account_summary(event)
+
+        assert client._acct_summary_cache == {}
+
+    def test_cancel_clears_cache(self):
+        """_cancel_account_summary_subscription clears cache and resets req_id."""
+        client = _make_client_with_mock_ib()
+        client._acct_summary_cache = {"NetLiquidation": {"value": "100", "currency": "USD"}}
+        client._acct_summary_req_id = 42
+
+        client._cancel_account_summary_subscription()
+
+        assert client._acct_summary_cache == {}
+        assert client._acct_summary_req_id is None
+
+    def test_activate_subscription_populates_cache(self):
+        """_activate_account_summary_subscription fills cache from initial response."""
+        client = _make_client_with_mock_ib()
+
+        item1 = MagicMock()
+        item1.tag = "NetLiquidation"
+        item1.value = "200000"
+        item1.currency = "USD"
+        item2 = MagicMock()
+        item2.tag = "BuyingPower"
+        item2.value = "800000"
+        item2.currency = "USD"
+
+        async def _mock_account_summary_async(account=None):
+            return [item1, item2]
+
+        client._ib.accountSummaryAsync = _mock_account_summary_async
+        client._ib.wrapper = MagicMock()
+        client._ib.wrapper._reqId = 99
+
+        import asyncio
+        asyncio.run(client._activate_account_summary_subscription())
+
+        assert len(client._acct_summary_cache) == 2
+        assert client._acct_summary_cache["NetLiquidation"]["value"] == "200000"
+        assert client._acct_summary_cache["BuyingPower"]["value"] == "800000"
 
 
 @pytest.mark.integration

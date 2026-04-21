@@ -404,3 +404,42 @@ class TestIbkrDashboardEndpoint:
             assert perf["total_profit"] == 160.0
             assert perf["total_loss"] == 40.0
             assert perf["profit_factor"] == 4.0
+
+    @patch("app.utils.auth.verify_token", return_value=_MOCK_TOKEN_PAYLOAD)
+    @patch("app.routes.ibkr.get_ibkr_client")
+    @patch("app.routes.ibkr.get_db_connection")
+    def test_position_commission_uses_dict_rows(self, mock_db, mock_client, _vt):
+        """Commission aggregation query uses dict-style row access (not tuple index)."""
+        client = MagicMock()
+        client.connected = True
+        client.get_connection_status.return_value = {"connected": True, "engine_id": "ibkr", "account": "DU123"}
+        client.get_account_summary.return_value = {
+            "success": True, "account": "DU123",
+            "summary": {"NetLiquidation": {"value": "100000", "currency": "USD"}},
+        }
+        client.get_pnl.return_value = {"success": True, "dailyPnL": 0, "unrealizedPnL": 0, "realizedPnL": 0}
+        client.get_positions.return_value = [
+            {"symbol": "AAPL", "ib_symbol": "AAPL", "quantity": 10, "avgCost": 150.0},
+        ]
+        client.get_open_orders.return_value = []
+        mock_client.return_value = client
+
+        from tests.conftest import make_db_ctx
+
+        call_count = {"n": 0}
+        commission_rows = [{"symbol": "AAPL", "total_commission": 12.5}]
+
+        def _side_effect_db():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return make_db_ctx(fetchall_result=commission_rows)
+            return make_db_ctx(fetchall_result=[])
+
+        mock_db.side_effect = _side_effect_db
+
+        app = _make_flask_app()
+        with app.test_client() as tc:
+            resp = tc.get("/api/ibkr/dashboard", headers=_auth_headers())
+            assert resp.status_code == 200
+            data = resp.get_json()["data"]
+            assert data["positions"][0]["commission"] == 12.5

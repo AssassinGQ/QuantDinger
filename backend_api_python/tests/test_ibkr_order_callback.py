@@ -33,6 +33,8 @@ def _make_client():
     client._conid_to_symbol = {}
     client._subscribed_conids = set()
     client._qualify_cache = {}
+    client._acct_summary_req_id = None
+    client._acct_summary_cache = {}
     client._tq = MagicMock()
     client._ib_executor = MagicMock()
     client._io_executor = MagicMock()
