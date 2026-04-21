@@ -232,9 +232,9 @@
           </span>
           <span v-else class="text-muted">0</span>
         </template>
-        <template slot="unrealizedPnL" slot-scope="text, record">
-          <span :class="(text - (record.commission || 0)) >= 0 ? 'positive' : 'negative'">
-            {{ (text - (record.commission || 0)) >= 0 ? '+' : '' }}{{ formatNumber(text - (record.commission || 0)) }}
+        <template slot="unrealizedPnL" slot-scope="text">
+          <span :class="text >= 0 ? 'positive' : 'negative'">
+            {{ text >= 0 ? '+' : '' }}{{ formatNumber(text) }}
           </span>
         </template>
       </a-table>
