@@ -28,6 +28,31 @@ from app.services.live_trading import records
 
 logger = get_logger(__name__)
 
+# IBKR 用 sys.float_info.max (≈1.797e308) 作为 "不可用" 的 sentinel 值
+# （例如合约无交易数据、订阅刚建立未就绪等场景）。这类值是合法有限浮点数，
+# 不会被 math.isnan/isinf 拦截，但落到 DECIMAL(20,4) 列会触发 numeric overflow。
+# 用 1e18 作门槛：正常 PnL 远低于此，IBKR sentinel 远高于此。
+_IBKR_SENTINEL_ABS_THRESHOLD = 1e18
+
+
+def _safe_pnl_float(val) -> float:
+    """解析 IBKR 数值字段：None/NaN/Inf/sentinel 值统一归零。
+
+    IBKR 偶尔推送 sys.float_info.max (~1.797e308) 作为 "N/A" 占位符，
+    必须在入口处清洗，否则后续 DB 写入会溢出 DECIMAL(20,4)。
+    """
+    if val is None:
+        return 0.0
+    try:
+        f = float(val)
+    except (ValueError, TypeError):
+        return 0.0
+    if math.isnan(f) or math.isinf(f):
+        return 0.0
+    if abs(f) >= _IBKR_SENTINEL_ABS_THRESHOLD:
+        return 0.0
+    return f
+
 # Invariant: abs(filled + remaining - totalQuantity) must be within this (see _on_order_status PartiallyFilled).
 _ORDER_QTY_EPS_ABS = 1e-4
 _ORDER_QTY_EPS_REL = 1e-6
@@ -769,20 +794,9 @@ class IBKRClient(BaseStatefulClient):
     # ── event callbacks: observation (DEBUG, high-frequency) ──────
 
     def _on_pnl(self, entry):
-        def _safe_float(val):
-            if val is None:
-                return 0.0
-            try:
-                f = float(val)
-                if math.isnan(f) or math.isinf(f):
-                    return 0.0
-                return f
-            except (ValueError, TypeError):
-                return 0.0
-
-        daily_pnl = _safe_float(entry.dailyPnL)
-        unrealized_pnl = _safe_float(entry.unrealizedPnL)
-        realized_pnl = _safe_float(entry.realizedPnL)
+        daily_pnl = _safe_pnl_float(entry.dailyPnL)
+        unrealized_pnl = _safe_pnl_float(entry.unrealizedPnL)
+        realized_pnl = _safe_pnl_float(entry.realizedPnL)
 
         logger.debug(
             "[IBKR-Event] pnl: dailyPnL=%.2f unrealizedPnL=%.2f realizedPnL=%.2f",
@@ -806,22 +820,11 @@ class IBKRClient(BaseStatefulClient):
         self._fire_submit(_save_to_db, is_blocking=True)
 
     def _on_pnl_single(self, entry):
-        def _safe_float(val):
-            if val is None:
-                return 0.0
-            try:
-                f = float(val)
-                if math.isnan(f) or math.isinf(f):
-                    return 0.0
-                return f
-            except (ValueError, TypeError):
-                return 0.0
-
-        daily_pnl = _safe_float(entry.dailyPnL)
-        unrealized_pnl = _safe_float(entry.unrealizedPnL)
-        realized_pnl = _safe_float(entry.realizedPnL)
-        position = _safe_float(entry.position)
-        value = _safe_float(entry.value)
+        daily_pnl = _safe_pnl_float(entry.dailyPnL)
+        unrealized_pnl = _safe_pnl_float(entry.unrealizedPnL)
+        realized_pnl = _safe_pnl_float(entry.realizedPnL)
+        position = _safe_pnl_float(entry.position)
+        value = _safe_pnl_float(entry.value)
 
         logger.debug(
             "[IBKR-Event] pnlSingle: conId=%s dailyPnL=%.2f unrealizedPnL=%.2f realizedPnL=%.2f pos=%s value=%.2f",

@@ -43,6 +43,21 @@ def _get_max_gap(market: str, interval_sec: int) -> int:
     return MAX_GAP.get((market, 60), 3 * 86400)
 
 
+def _is_realtime_request(before_time: Optional[int], now_sec: int, interval_sec: int) -> bool:
+    """是否属于实时查询场景（需要触发增量尾巴拉取）。
+
+    历史场景 (before_time 远早于 now) 无需刷新：时间窗已经过去，缓存即终态。
+    实时场景 (before_time=None 或 before_time ≈ now) 则需要补最新数据。
+
+    DataHandler._fetch_latest_kline 会传 before_time=int(time.time())，
+    之前的判断是 `before_time is None`，会错过这种情形，导致 range hit 后
+    直接返回陈旧缓存。
+    """
+    if before_time is None:
+        return True
+    return (now_sec - int(before_time)) < interval_sec * 2
+
+
 # ---------------------------------------------------------------------------
 # qd_kline_ranges: 记录已存储数据的实际 min/max 时间
 # ---------------------------------------------------------------------------
@@ -413,7 +428,7 @@ def get_kline(
                 from_points = _read_points_range_from_db(market, symbol, need_start_ts, need_end_ts, interval_sec=60)
                 if from_points:
                     # 实时场景：范围命中但数据可能不够新，检查是否需要拉增量尾巴
-                    if before_time is None and from_points:
+                    if _is_realtime_request(before_time, now_sec, interval_sec) and from_points:
                         max_ts_db = max(b['time'] for b in from_points)
                         if (now_sec - max_ts_db) > 600:
                             tail_limit = min((now_sec - max_ts_db) // interval_sec + 20, 2000)
@@ -435,7 +450,8 @@ def get_kline(
 
         # 1) 条数命中（兼容旧数据无 range 记录）
         from_points = _read_points_range_from_db(market, symbol, need_start_ts, need_end_ts, interval_sec=60)
-        if len(from_points) < limit and before_time is None:
+        is_realtime = _is_realtime_request(before_time, now_sec, interval_sec)
+        if len(from_points) < limit and is_realtime:
             max_ts = _read_points_max_time(market, symbol)
             if max_ts is not None and max_ts < need_end_ts:
                 tail_start = max_ts - (limit * interval_sec)
@@ -449,14 +465,15 @@ def get_kline(
             else:
                 result = merged[-limit:] if len(merged) > limit else merged
             last_bar_fresh = result and (now_sec - result[-1]['time']) <= interval_sec * 2
-            if len(result) >= limit and (before_time is not None or last_bar_fresh):
+            # 非实时或尾部数据已新鲜则直接返回；否则走步骤 2 补尾巴
+            if len(result) >= limit and (not is_realtime or last_bar_fresh):
                 logger.info("Kline from points 1m: %s %s count=%d", market, symbol, len(result))
                 return result
 
         # 2) 增量尾巴
         from_db = from_points
         need_tail = (
-            before_time is None
+            is_realtime
             and len(from_db) > 0
             and (len(from_db) < limit or (now_sec - max(b['time'] for b in from_db)) > 600)
         )
@@ -511,7 +528,7 @@ def get_kline(
                 )
                 if from_same:
                     # 实时场景：范围命中但数据可能过期，补充增量尾巴（1m 有同样逻辑，非 1m 此前缺失）
-                    if before_time is None and len(from_same) > 0:
+                    if _is_realtime_request(before_time, now_sec, interval_sec) and len(from_same) > 0:
                         max_ts_db = max(b["time"] for b in from_same)
                         stale_threshold = interval_sec * 2  # 1D=2天、1H=2小时
                         if (now_sec - max_ts_db) > stale_threshold:
@@ -545,7 +562,7 @@ def get_kline(
         )
         if len(from_same) >= limit:
             # 实时场景：数据可能过期，补充增量尾巴
-            if before_time is None and len(from_same) > 0:
+            if _is_realtime_request(before_time, now_sec, interval_sec) and len(from_same) > 0:
                 max_ts_db = max(b["time"] for b in from_same)
                 stale_threshold = interval_sec * 2
                 if (now_sec - max_ts_db) > stale_threshold:
