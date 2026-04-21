@@ -4,7 +4,20 @@ Signal executor: 执行交易信号（状态机校验、下单、持仓更新）
 重构为类 `SignalExecutor`，封装了外部依赖（data_handler, pending_order_enqueuer 等），
 从而简化每次执行信号时的传参。
 """
-from typing import Any, Dict, List
+from __future__ import annotations
+
+import datetime
+from typing import Any, Dict, List, Optional
+
+from app.services.data_sufficiency_guard import (
+    contract_details_missing_fail_closed,
+    evaluate_ibkr_open_data_sufficiency,
+)
+from app.services.data_sufficiency_logging import (
+    build_ibkr_open_blocked_insufficient_data_payload,
+    emit_ibkr_open_blocked_insufficient_data,
+)
+from app.services.data_sufficiency_types import DataSufficiencyReasonCode
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.services.server_side_risk import to_ratio
@@ -317,6 +330,83 @@ class SignalExecutor:
             )
             return
 
+    def _signal_before_time_unix(self, signal_ts: int) -> Optional[int]:
+        """Map signal timestamp to unix seconds for kline ``before_time`` (ms or s)."""
+        if signal_ts <= 0:
+            return None
+        if signal_ts > 10_000_000_000:
+            return int(signal_ts // 1000)
+        return int(signal_ts)
+
+    def _resolve_ibkr_contract_details_for_symbol(
+        self, exchange: Any, symbol: str, market_category: str
+    ) -> Any:
+        """Best-effort ``ContractDetails`` for IBKR schedule/kline evaluation."""
+        if exchange is None:
+            return None
+        try:
+            if hasattr(exchange, "_submit") and hasattr(exchange, "_create_contract"):
+                async def _task():
+                    await exchange._ensure_connected_async()
+                    contract = exchange._create_contract(symbol, market_category)
+                    ok = await exchange._qualify_contract_async(
+                        contract, symbol, market_category
+                    )
+                    if not ok:
+                        return None
+                    details_list = await exchange._ib.reqContractDetailsAsync(contract)
+                    if not details_list:
+                        return None
+                    return details_list[0]
+
+                return exchange._submit(_task(), timeout=30.0)
+        except Exception:
+            logger.debug(
+                "IBKR contract resolution failed symbol=%s market=%s",
+                symbol,
+                market_category,
+                exc_info=True,
+            )
+        return None
+
+    def _effective_intent_label(
+        self,
+        strategy_ctx: Dict[str, Any],
+        signal: Dict[str, Any],
+        sig: str,
+        current_price: float,
+        current_positions: List[Dict[str, Any]],
+        available_capital: float,
+    ) -> str:
+        """Aligned with ``_calculate_target_weight_amount`` for ``target_weight`` signals (R-05)."""
+        if signal.get("target_weight") is None:
+            return sig.strip().lower()
+        market_type = strategy_ctx.get("_market_type", "swap")
+        leverage = float(strategy_ctx.get("_leverage", 1.0))
+        _, eff = self._calculate_target_weight_amount(
+            signal,
+            sig,
+            current_price,
+            current_positions,
+            available_capital,
+            market_type,
+            leverage,
+        )
+        return str(eff).strip().lower()
+
+    def _should_run_ibkr_open_sufficiency_gate(
+        self, strategy_ctx: Dict[str, Any], effective_intent: str
+    ) -> bool:
+        exe = str(strategy_ctx.get("_execution_mode") or "").strip().lower()
+        if exe != "live":
+            return False
+        ec = strategy_ctx.get("exchange_config") or {}
+        exchange_id = str(ec.get("exchange_id") or "").strip().lower()
+        if exchange_id not in ("ibkr-paper", "ibkr-live"):
+            return False
+        ei = effective_intent.strip().lower()
+        return ei.startswith("open_") or ei.startswith("add_")
+
     def execute(
         self,
         strategy_ctx: Dict[str, Any],
@@ -356,6 +446,74 @@ class SignalExecutor:
                 return False
 
             sig = signal_type.strip().lower()
+
+            initial_capital = float(strategy_ctx.get("_initial_capital", 10000.0))
+            available_capital = _get_available_capital(strategy_id, initial_capital)
+            effective_intent = self._effective_intent_label(
+                strategy_ctx,
+                signal,
+                sig,
+                current_price,
+                current_positions,
+                available_capital,
+            )
+
+            if self._should_run_ibkr_open_sufficiency_gate(strategy_ctx, effective_intent):
+                trading_config = strategy_ctx.get("trading_config") or {}
+                timeframe = str(trading_config.get("timeframe", "1H"))
+                try:
+                    required_bars = int(
+                        trading_config.get(
+                            "ibkr_data_required_bars",
+                            trading_config.get("required_bars", 100),
+                        )
+                    )
+                except (TypeError, ValueError):
+                    required_bars = 100
+                details = self._resolve_ibkr_contract_details_for_symbol(
+                    exchange, symbol, market_category
+                )
+                if details is None:
+                    suff_result = contract_details_missing_fail_closed(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        market_category=market_category,
+                        required_bars=required_bars,
+                        con_id=0,
+                    )
+                else:
+                    con_obj = getattr(details, "contract", None)
+                    con_id = int(getattr(con_obj, "conId", 0) or 0)
+                    before_u = self._signal_before_time_unix(signal_ts)
+                    suff_result = evaluate_ibkr_open_data_sufficiency(
+                        details,
+                        server_time_utc=datetime.datetime.now(datetime.timezone.utc),
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        market_category=market_category,
+                        required_bars=required_bars,
+                        before_time_utc=before_u,
+                        con_id=con_id,
+                        logger=logger,
+                    )
+                if not suff_result.sufficient:
+                    syn_fail = (
+                        suff_result.reason_code
+                        == DataSufficiencyReasonCode.DATA_EVALUATION_FAILED
+                    )
+                    ecfg = strategy_ctx.get("exchange_config") or {}
+                    payload = build_ibkr_open_blocked_insufficient_data_payload(
+                        result=suff_result,
+                        strategy_id=strategy_id,
+                        symbol=symbol,
+                        exchange_id=str(ecfg.get("exchange_id") or ""),
+                        execution_mode=str(strategy_ctx.get("_execution_mode") or ""),
+                        signal_type_raw=str(signal.get("type") or ""),
+                        effective_intent=effective_intent,
+                        synthetic_evaluation_failure=syn_fail,
+                    )
+                    emit_ibkr_open_blocked_insufficient_data(payload, logger=logger)
+                    return False
 
             if not self._check_ai_filter(strategy_ctx, symbol, sig, signal_ts):
                 return False
@@ -452,6 +610,7 @@ class SignalExecutor:
         signals: List[Dict[str, Any]],
         all_positions: List[Dict[str, Any]],
         current_time: int,
+        exchange: Any = None,
     ) -> None:
         """并发执行批量信号"""
         strategy_id = strategy_ctx.get("id", "?")
@@ -493,7 +652,7 @@ class SignalExecutor:
                     symbol=signal["symbol"],
                     current_price=price,
                     current_positions=symbol_positions,
-                    exchange=None,
+                    exchange=exchange,
                 )
                 futures[future] = signal
 
