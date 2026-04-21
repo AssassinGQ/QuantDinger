@@ -11,10 +11,48 @@ from app.services.data_sufficiency_types import (
     IBKRScheduleStatus,
     effective_lookback_seconds,
     missing_window_seconds,
+    truncate_evaluation_error_summary,
 )
 
 
 def test_reason_enum_values_match_requirement_literals():
+    assert DataSufficiencyReasonCode.SUFFICIENT.value == "sufficient"
+    assert DataSufficiencyReasonCode.MISSING_BARS.value == "missing_bars"
+    assert DataSufficiencyReasonCode.STALE_PREV_CLOSE.value == "stale_prev_close"
+    assert DataSufficiencyReasonCode.MARKET_CLOSED_GAP.value == "market_closed_gap"
+    assert DataSufficiencyReasonCode.UNKNOWN_SCHEDULE.value == "unknown_schedule"
+
+
+def test_data_evaluation_failed_reason_value():
+    assert DataSufficiencyReasonCode.DATA_EVALUATION_FAILED.value == "data_evaluation_failed"
+
+
+def test_truncate_evaluation_error_summary_bounds():
+    long_text = "a" * 300
+    out = truncate_evaluation_error_summary(long_text)
+    assert out is not None
+    assert len(out) <= 200
+    assert out.endswith("…")
+
+
+def test_truncate_evaluation_error_summary_none_and_empty():
+    assert truncate_evaluation_error_summary(None) is None
+    assert truncate_evaluation_error_summary("") is None
+    assert truncate_evaluation_error_summary("   ") is None
+
+
+def test_diagnostics_optional_evaluation_fields_default_none():
+    diag = DataSufficiencyDiagnostics(
+        parsed_session_count=1,
+        schedule_failure_reason=None,
+        timezone_id="EST",
+    )
+    assert diag.evaluation_error_summary is None
+    assert diag.evaluation_error_category is None
+
+
+def test_existing_reason_codes_unchanged():
+    """Phase 1 literal strings must remain stable after adding DATA_EVALUATION_FAILED."""
     assert DataSufficiencyReasonCode.SUFFICIENT.value == "sufficient"
     assert DataSufficiencyReasonCode.MISSING_BARS.value == "missing_bars"
     assert DataSufficiencyReasonCode.STALE_PREV_CLOSE.value == "stale_prev_close"
