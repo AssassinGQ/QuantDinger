@@ -427,12 +427,16 @@ class TestIbkrDashboardEndpoint:
         from tests.conftest import make_db_ctx
 
         call_count = {"n": 0}
-        commission_rows = [{"symbol": "AAPL", "commission": 12.5}]
+        leg_rows = [{
+            "id": 100, "strategy_id": 1, "symbol": "AAPL", "type": "open_long",
+            "price": 150.0, "amount": 10.0, "commission": 12.5,
+            "commission_ccy": "USD", "created_at": "2026-01-01 00:00:00",
+        }]
 
         def _side_effect_db():
             call_count["n"] += 1
             if call_count["n"] == 1:
-                return make_db_ctx(fetchall_result=commission_rows)
+                return make_db_ctx(fetchall_result=leg_rows)
             return make_db_ctx(fetchall_result=[])
 
         mock_db.side_effect = _side_effect_db
@@ -443,3 +447,79 @@ class TestIbkrDashboardEndpoint:
             assert resp.status_code == 200
             data = resp.get_json()["data"]
             assert data["positions"][0]["commission"] == 12.5
+            assert data["positions"][0]["qd_trade_id"] == 100
+            assert data["positions"][0]["qd_trade_type"] == "open_long"
+
+    @patch("app.utils.auth.verify_token", return_value=_MOCK_TOKEN_PAYLOAD)
+    @patch("app.routes.ibkr.get_ibkr_client")
+    @patch("app.routes.ibkr.get_db_connection")
+    def test_positions_are_split_by_qd_trades(self, mock_db, mock_client, _vt):
+        """Single IB position is split into multiple QD trade rows."""
+        client = MagicMock()
+        client.connected = True
+        client.get_connection_status.return_value = {"connected": True, "engine_id": "ibkr", "account": "DU123"}
+        client.get_account_summary.return_value = {
+            "success": True, "account": "DU123",
+            "summary": {"NetLiquidation": {"value": "100000", "currency": "USD"}},
+        }
+        client.get_pnl.return_value = {"success": True, "dailyPnL": 0, "unrealizedPnL": 10.0, "realizedPnL": 0}
+        client.get_positions.return_value = [
+            {
+                "symbol": "AAPL",
+                "ib_symbol": "AAPL",
+                "quantity": 2.0,
+                "avgCost": 150.0,
+                "marketValue": 310.0,
+                "unrealizedPnL": 10.0,
+            },
+        ]
+        client.get_open_orders.return_value = []
+        mock_client.return_value = client
+
+        from tests.conftest import make_db_ctx
+
+        leg_rows = [
+            {
+                "id": 201,
+                "strategy_id": 1,
+                "symbol": "AAPL",
+                "type": "open_long",
+                "price": 155.0,
+                "amount": 1.0,
+                "commission": 0.2,
+                "commission_ccy": "USD",
+                "created_at": "2026-01-02 00:00:00",
+            },
+            {
+                "id": 200,
+                "strategy_id": 1,
+                "symbol": "AAPL",
+                "type": "open_long",
+                "price": 145.0,
+                "amount": 1.0,
+                "commission": 0.1,
+                "commission_ccy": "USD",
+                "created_at": "2026-01-01 00:00:00",
+            },
+        ]
+
+        call_count = {"n": 0}
+
+        def _side_effect_db():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return make_db_ctx(fetchall_result=leg_rows)
+            return make_db_ctx(fetchall_result=[])
+
+        mock_db.side_effect = _side_effect_db
+
+        app = _make_flask_app()
+        with app.test_client() as tc:
+            resp = tc.get("/api/ibkr/dashboard", headers=_auth_headers())
+            assert resp.status_code == 200
+            data = resp.get_json()["data"]
+            positions = data["positions"]
+            assert len(positions) == 2
+            assert {p["qd_trade_id"] for p in positions} == {200, 201}
+            assert round(sum(float(p["commission"]) for p in positions), 8) == 0.3
+            assert round(sum(float(p["quantity"]) for p in positions), 8) == 2.0

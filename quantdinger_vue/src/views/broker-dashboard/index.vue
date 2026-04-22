@@ -201,7 +201,7 @@
       <a-table
         :columns="positionColumns"
         :data-source="positions"
-        :rowKey="(r, i) => r.symbol + '-' + i"
+        :rowKey="(r, i) => (r.qd_trade_id ? `qd-${r.qd_trade_id}` : `${r.symbol}-${i}`)"
         :pagination="false"
         size="small"
         :scroll="{ x: 'max-content' }"
@@ -226,7 +226,6 @@
           <div>{{ record.currency }} {{ formatNumber(text) }}</div>
         </template>
         <template slot="commission" slot-scope="text">
-          <!-- eslint-disable-next-line vue/no-unused-vars -->
           <span v-if="text" class="negative">
             -{{ formatNumber(text) }}
           </span>
@@ -494,7 +493,7 @@ export default {
         { title: this.$t('broker.col.symbol'), dataIndex: 'symbol', scopedSlots: { customRender: 'symbol' }, width: 120 },
         { title: '币种', dataIndex: 'currency', width: 80 },
         { title: this.$t('broker.col.quantity'), dataIndex: 'quantity', scopedSlots: { customRender: 'quantity' }, width: 100, align: 'right' },
-        { title: this.$t('broker.col.avgCost'), dataIndex: 'avgCost', scopedSlots: { customRender: 'avgCost' }, width: 100, align: 'right' },
+        { title: '成交价', dataIndex: 'avgCost', scopedSlots: { customRender: 'avgCost' }, width: 100, align: 'right' },
         { title: this.$t('broker.col.marketValue'), dataIndex: 'marketValue', scopedSlots: { customRender: 'marketValue' }, width: 140, align: 'right' },
         { title: '佣金', dataIndex: 'commission', scopedSlots: { customRender: 'commission' }, width: 100, align: 'right' },
         { title: this.$t('broker.unrealizedPnl'), dataIndex: 'unrealizedPnL', scopedSlots: { customRender: 'unrealizedPnL' }, width: 120, align: 'right' }

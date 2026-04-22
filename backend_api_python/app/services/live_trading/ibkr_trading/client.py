@@ -607,11 +607,13 @@ class IBKRClient(BaseStatefulClient):
             commission, currency, realized_pnl,
         )
 
+        exec_id = fill.execution.execId or ""
         ctx = self._commission_contexts.get(order_id)
         if ctx and ctx.strategy_id and commission > 0:
             strategy_id = ctx.strategy_id
             symbol = ctx.symbol
             signal_type = ctx.signal_type
+            pending_oid = ctx.pending_order_id
 
             def _do_update():
                 from app.services.live_trading import records
@@ -621,8 +623,13 @@ class IBKRClient(BaseStatefulClient):
                     trade_type=signal_type,
                     commission=commission,
                     commission_ccy=currency,
+                    exec_id=exec_id,
+                    pending_order_id=pending_oid,
                 )
-                logger.info("[IBKR-Commission] Updated commission for strategy=%s symbol=%s", strategy_id, symbol)
+                logger.info(
+                    "[IBKR-Commission] Updated commission for strategy=%s symbol=%s execId=%s",
+                    strategy_id, symbol, exec_id,
+                )
 
             self._submit_with_retry(
                 _do_update,

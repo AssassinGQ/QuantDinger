@@ -468,7 +468,61 @@ def ibkr_dashboard():
             data["positions"] = client.get_positions()
 
             if data["positions"]:
-                symbol_commission_map = {}
+                def _select_active_legs(all_legs: List[Dict[str, Any]], quantity: float) -> List[Dict[str, Any]]:
+                    """Pick only legs that still contribute to current open quantity."""
+                    if not all_legs:
+                        return []
+                    remaining = abs(float(quantity or 0.0))
+                    if remaining <= 0:
+                        return []
+
+                    if quantity > 0:
+                        open_types = {"open_long", "add_long"}
+                        close_types = {"close_long", "reduce_long"}
+                    else:
+                        open_types = {"open_short", "add_short"}
+                        close_types = {"close_short", "reduce_short"}
+
+                    close_buffer = 0.0
+                    selected: List[Dict[str, Any]] = []
+
+                    for leg in all_legs:
+                        leg_type = (leg.get("type") or "").lower()
+                        leg_amount = abs(float(leg.get("amount") or 0.0))
+                        if leg_amount <= 0:
+                            continue
+
+                        if leg_type in close_types:
+                            close_buffer += leg_amount
+                            continue
+
+                        if leg_type not in open_types:
+                            continue
+
+                        effective_amount = leg_amount
+                        if close_buffer > 0:
+                            matched = min(close_buffer, effective_amount)
+                            close_buffer -= matched
+                            effective_amount -= matched
+
+                        if effective_amount <= 0:
+                            continue
+
+                        take_amount = min(effective_amount, remaining)
+                        if take_amount <= 0:
+                            continue
+
+                        ratio = take_amount / leg_amount
+                        selected_leg = dict(leg)
+                        selected_leg["amount"] = round(take_amount, 8)
+                        selected_leg["commission"] = round(float(leg.get("commission") or 0.0) * ratio, 8)
+                        selected.append(selected_leg)
+                        remaining -= take_amount
+                        if remaining <= 0:
+                            break
+
+                    return selected
+
                 _eid_ph = ','.join(['%s'] * len(exchange_ids))
                 _strat_sub = f"""
                     SELECT id FROM qd_strategies_trading
@@ -481,26 +535,66 @@ def ibkr_dashboard():
                         'ibkr-paper'
                       ) IN ({_eid_ph})
                 """
+                symbol_legs: Dict[str, list] = {}
                 with get_db_connection() as db:
                     cur = db.cursor()
                     cur.execute(
                         f"""
-                        SELECT DISTINCT ON (symbol) symbol, commission
+                        SELECT id, strategy_id, symbol, type, price, amount,
+                               commission, commission_ccy, created_at
                         FROM qd_strategy_trades
                         WHERE user_id = %s
-                          AND type IN ('open_long', 'open_short')
+                          AND type IN (
+                            'open_long', 'open_short', 'add_long', 'add_short',
+                            'close_long', 'close_short', 'reduce_long', 'reduce_short'
+                          )
                           AND strategy_id IN ({_strat_sub})
                         ORDER BY symbol, created_at DESC
                         """,
                         (user_id, user_id) + tuple(exchange_ids),
                     )
                     for row in cur.fetchall():
-                        symbol_commission_map[row["symbol"]] = float(row["commission"] or 0)
+                        sym = row["symbol"]
+                        symbol_legs.setdefault(sym, []).append({
+                            "trade_id": row["id"],
+                            "strategy_id": row["strategy_id"],
+                            "type": row["type"],
+                            "price": float(row["price"] or 0),
+                            "amount": float(row["amount"] or 0),
+                            "commission": float(row["commission"] or 0),
+                            "commission_ccy": row["commission_ccy"] or "",
+                            "created_at": _format_dt(row["created_at"]),
+                        })
                     cur.close()
 
+                split_positions: List[Dict[str, Any]] = []
                 for pos in data["positions"]:
                     ib_symbol = pos.get("ib_symbol") or pos.get("symbol", "")
-                    pos["commission"] = symbol_commission_map.get(ib_symbol, 0.0)
+                    legs = _select_active_legs(
+                        symbol_legs.get(ib_symbol, []),
+                        float(pos.get("quantity") or 0.0),
+                    )
+                    total_qty = abs(float(pos.get("quantity") or 0.0))
+                    unit_mv = float(pos.get("marketValue") or 0.0) / total_qty if total_qty > 0 else 0.0
+                    unit_upnl = float(pos.get("unrealizedPnL") or 0.0) / total_qty if total_qty > 0 else 0.0
+
+                    if legs:
+                        for leg in legs:
+                            leg_qty = float(leg.get("amount") or 0.0)
+                            row = dict(pos)
+                            row["quantity"] = leg_qty if float(pos.get("quantity") or 0.0) >= 0 else -leg_qty
+                            row["avgCost"] = float(leg.get("price") or row.get("avgCost") or 0.0)
+                            row["commission"] = round(float(leg.get("commission") or 0.0), 8)
+                            row["marketValue"] = round(unit_mv * leg_qty, 8)
+                            row["unrealizedPnL"] = round(unit_upnl * leg_qty, 8)
+                            row["qd_trade_id"] = leg.get("trade_id")
+                            row["qd_trade_type"] = leg.get("type")
+                            split_positions.append(row)
+                    else:
+                        row = dict(pos)
+                        row["commission"] = 0.0
+                        split_positions.append(row)
+                data["positions"] = split_positions
         except Exception as e:
             logger.warning("IBKR positions failed: %s", e)
 

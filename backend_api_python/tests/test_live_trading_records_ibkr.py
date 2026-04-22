@@ -70,3 +70,35 @@ def test_uc_schema_ibkr_save_position_includes_contract_metadata(mock_get_db):
             found = True
             break
     assert found
+
+
+@patch("app.services.live_trading.records.get_db_connection")
+def test_update_trade_commission_uses_exec_id_idempotency(mock_get_db):
+    """Same exec_id should not be double-counted."""
+    import app.services.live_trading.records as records
+
+    ctx = make_db_ctx()
+    mock_get_db.return_value = ctx
+    conn = ctx.__enter__.return_value
+    cursor = conn.cursor.return_value
+
+    # first select trade_id
+    # second branch: insert commission exec row
+    # then update trade commission sum
+    cursor.fetchone.return_value = {"id": 123}
+    cursor.rowcount = 1
+
+    records.update_trade_commission(
+        strategy_id=1,
+        symbol="AAPL",
+        trade_type="open_long",
+        commission=0.25,
+        commission_ccy="USD",
+        exec_id="exec-1",
+        pending_order_id=999,
+    )
+
+    sql_calls = [str(c[0][0]) for c in cursor.execute.call_args_list if c[0]]
+    assert any("INSERT INTO qd_commission_execs" in s for s in sql_calls)
+    assert any("ON CONFLICT (exec_id) DO NOTHING" in s for s in sql_calls)
+    assert any("UPDATE qd_strategy_trades" in s for s in sql_calls)

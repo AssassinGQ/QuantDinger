@@ -66,6 +66,21 @@ def _ensure_tables() -> None:
             cur.execute(
                 "ALTER TABLE qd_ibkr_pnl_single ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT ''"
             )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS qd_commission_execs (
+                    id          SERIAL PRIMARY KEY,
+                    trade_id    INTEGER REFERENCES qd_strategy_trades(id) ON DELETE CASCADE,
+                    exec_id     VARCHAR(80) NOT NULL,
+                    commission  DECIMAL(20,8) NOT NULL DEFAULT 0,
+                    currency    VARCHAR(20) DEFAULT '',
+                    created_at  TIMESTAMP DEFAULT NOW(),
+                    UNIQUE (exec_id)
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_commission_execs_trade_id"
+                " ON qd_commission_execs(trade_id)"
+            )
             db.commit()
             cur.close()
         _IBKR_TABLES_ENSURED = True
@@ -417,23 +432,75 @@ def update_trade_commission(
     trade_type: str,
     commission: float,
     commission_ccy: str,
+    exec_id: str = "",
+    pending_order_id: int = 0,
 ) -> None:
+    """Idempotent commission accumulation keyed by IB execId.
+
+    1. Locate the target trade row via pending_order_id (preferred)
+       or fall back to strategy_id+symbol+type newest row.
+    2. Insert into qd_commission_execs with UNIQUE(exec_id) guard.
+       If the exec_id already exists the INSERT is a no-op.
+    3. Recompute the trade's total commission from the child rows.
+    """
     with get_db_connection() as db:
         cur = db.cursor()
-        cur.execute(
-            """
-            UPDATE qd_strategy_trades
-            SET commission = %s, commission_ccy = %s
-            WHERE id = (
-                SELECT id FROM qd_strategy_trades
-                WHERE strategy_id = %s AND symbol = %s AND type = %s
-                  AND commission = 0
-                ORDER BY created_at DESC
-                LIMIT 1
+
+        if pending_order_id:
+            cur.execute(
+                """SELECT id FROM qd_strategy_trades
+                   WHERE pending_order_id = %s
+                   ORDER BY created_at DESC LIMIT 1""",
+                (int(pending_order_id),),
             )
-            """,
-            (float(commission), str(commission_ccy), int(strategy_id), str(symbol), str(trade_type)),
-        )
+        else:
+            cur.execute(
+                """SELECT id FROM qd_strategy_trades
+                   WHERE strategy_id = %s AND symbol = %s AND type = %s
+                   ORDER BY created_at DESC LIMIT 1""",
+                (int(strategy_id), str(symbol), str(trade_type)),
+            )
+        row = cur.fetchone()
+        if not row:
+            logger.warning(
+                "[Commission] No trade row found for strategy=%s symbol=%s type=%s pending=%s",
+                strategy_id, symbol, trade_type, pending_order_id,
+            )
+            cur.close()
+            return
+
+        trade_id = row["id"] if isinstance(row, dict) else row[0]
+
+        if exec_id:
+            cur.execute(
+                """INSERT INTO qd_commission_execs (trade_id, exec_id, commission, currency)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (exec_id) DO NOTHING""",
+                (int(trade_id), str(exec_id), float(commission), str(commission_ccy)),
+            )
+            if cur.rowcount == 0:
+                logger.info("[Commission] Duplicate execId=%s skipped", exec_id)
+                db.commit()
+                cur.close()
+                return
+
+            cur.execute(
+                """UPDATE qd_strategy_trades
+                   SET commission = COALESCE((
+                         SELECT SUM(commission) FROM qd_commission_execs WHERE trade_id = %s
+                       ), 0),
+                       commission_ccy = %s
+                   WHERE id = %s""",
+                (int(trade_id), str(commission_ccy), int(trade_id)),
+            )
+        else:
+            cur.execute(
+                """UPDATE qd_strategy_trades
+                   SET commission = commission + %s, commission_ccy = %s
+                   WHERE id = %s AND commission = 0""",
+                (float(commission), str(commission_ccy), int(trade_id)),
+            )
+
         db.commit()
         cur.close()
 
