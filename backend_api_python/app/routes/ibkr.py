@@ -469,19 +469,33 @@ def ibkr_dashboard():
 
             if data["positions"]:
                 symbol_commission_map = {}
+                _eid_ph = ','.join(['%s'] * len(exchange_ids))
+                _strat_sub = f"""
+                    SELECT id FROM qd_strategies_trading
+                    WHERE user_id = %s
+                      AND market_category IN ('USStock', 'HShare')
+                      AND COALESCE(
+                        CASE WHEN exchange_config IS NOT NULL AND exchange_config != ''
+                             THEN exchange_config::jsonb->>'exchange_id'
+                             ELSE NULL END,
+                        'ibkr-paper'
+                      ) IN ({_eid_ph})
+                """
                 with get_db_connection() as db:
                     cur = db.cursor()
                     cur.execute(
-                        """
-                        SELECT symbol, SUM(commission) as total_commission
+                        f"""
+                        SELECT DISTINCT ON (symbol) symbol, commission
                         FROM qd_strategy_trades
-                        WHERE user_id = %s AND commission > 0
-                        GROUP BY symbol
+                        WHERE user_id = %s
+                          AND type IN ('open_long', 'open_short')
+                          AND strategy_id IN ({_strat_sub})
+                        ORDER BY symbol, created_at DESC
                         """,
-                        (user_id,),
+                        (user_id, user_id) + tuple(exchange_ids),
                     )
                     for row in cur.fetchall():
-                        symbol_commission_map[row["symbol"]] = float(row["total_commission"] or 0)
+                        symbol_commission_map[row["symbol"]] = float(row["commission"] or 0)
                     cur.close()
 
                 for pos in data["positions"]:

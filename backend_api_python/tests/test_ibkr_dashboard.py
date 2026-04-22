@@ -427,7 +427,7 @@ class TestIbkrDashboardEndpoint:
         from tests.conftest import make_db_ctx
 
         call_count = {"n": 0}
-        commission_rows = [{"symbol": "AAPL", "total_commission": 12.5}]
+        commission_rows = [{"symbol": "AAPL", "commission": 12.5}]
 
         def _side_effect_db():
             call_count["n"] += 1
