@@ -352,9 +352,33 @@ class SignalExecutor:
         return int(signal_ts)
 
     def _resolve_ibkr_contract_details_for_symbol(
-        self, exchange: Any, symbol: str, market_category: str
+        self, exchange: Any, symbol: str, market_category: str,
+        exchange_id: Optional[str] = None,
     ) -> Any:
-        """Best-effort ``ContractDetails`` for IBKR schedule/kline evaluation."""
+        """Best-effort ``ContractDetails`` for IBKR schedule/kline evaluation.
+
+        When ``exchange`` is None but ``exchange_id`` indicates IBKR (ibkr-paper/ibkr-live),
+        attempts to obtain the global IBKR client singleton for contract resolution.
+        """
+        # 如果 exchange 是 None，但配置为 IBKR，尝试获取全局 client singleton
+        if exchange is None and exchange_id:
+            eid = str(exchange_id).strip().lower()
+            if eid in ("ibkr-paper", "ibkr-live"):
+                try:
+                    from app.services.live_trading.ibkr_trading.client import get_ibkr_client
+                    mode = "live" if eid == "ibkr-live" else "paper"
+                    exchange = get_ibkr_client(mode=mode)
+                    logger.info(
+                        "IBKR contract resolution: obtained global client for mode=%s symbol=%s",
+                        mode, symbol,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "IBKR global client unavailable: exchange_id=%s symbol=%s err=%s",
+                        exchange_id, symbol, e,
+                    )
+                    return None
+
         if exchange is None:
             return None
         try:
@@ -493,9 +517,7 @@ class SignalExecutor:
                         )
                     except (TypeError, ValueError):
                         required_bars = 100
-                    details = self._resolve_ibkr_contract_details_for_symbol(
-                        exchange, symbol, market_category
-                    )
+                    # 提前获取 exchange_id，用于在 exchange=None 时获取 IBKR client singleton
                     ecfg_gate = strategy_ctx.get("exchange_config") or {}
                     raw_ex_id = ecfg_gate.get("exchange_id")
                     gate_exchange_id = (
@@ -504,6 +526,27 @@ class SignalExecutor:
                         else None
                     )
                     gate_strategy_id = strategy_id if strategy_id else None
+                    # DEBUG: 记录 exchange 对象状态，验证合约解析失败原因
+                    logger.info(
+                        "IBKR sufficiency gate: strategy_id=%s symbol=%s market_category=%s "
+                        "exchange_is_none=%s exchange_type=%s exchange_has_submit=%s gate_exchange_id=%s",
+                        strategy_id,
+                        symbol,
+                        market_category,
+                        exchange is None,
+                        type(exchange).__name__ if exchange is not None else "None",
+                        hasattr(exchange, "_submit") if exchange is not None else False,
+                        gate_exchange_id,
+                    )
+                    details = self._resolve_ibkr_contract_details_for_symbol(
+                        exchange, symbol, market_category, exchange_id=gate_exchange_id
+                    )
+                    logger.info(
+                        "IBKR contract details result: strategy_id=%s symbol=%s details_is_none=%s",
+                        strategy_id,
+                        symbol,
+                        details is None,
+                    )
                     if details is None:
                         suff_result = contract_details_missing_fail_closed(
                             symbol=symbol,
