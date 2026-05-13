@@ -43,6 +43,26 @@ def _get_max_gap(market: str, interval_sec: int) -> int:
     return MAX_GAP.get((market, 60), 3 * 86400)
 
 
+def _range_window_seconds_multiplier(market: str, interval_sec: int) -> float:
+    """Scale wall-clock span for ``need_start_ts`` when bars are not 24/7.
+
+    ``get_kline`` uses ``limit * interval_sec`` as naive lookback (24h days).
+    RTH equities have ~6.5 trading hours per *session*; only ~5/7 of calendar
+    days are sessions. Without scaling, ``limit`` hourly bars need ~``limit``
+    trading hours but the code only looks back ``limit`` wall-clock hours —
+    far too short once weekends are included (typical IBKR sufficiency misses).
+
+    Combined factor: ``(24/6.5) * (7/5)`` ≈ calendar stretch for RTH + weekends.
+    Daily+ timeframes unchanged.
+    """
+    if interval_sec >= 86400:
+        return 1.0
+    m = (market or "").strip()
+    if m in ("USStock", "HShare", "AShare"):
+        return (24.0 / 6.5) * (7.0 / 5.0) * 2
+    return 1.0
+
+
 def _is_realtime_request(before_time: Optional[int], now_sec: int, interval_sec: int) -> bool:
     """是否属于实时查询场景（需要触发增量尾巴拉取）。
 
@@ -403,12 +423,17 @@ def get_kline(
     """
     interval_sec = TIMEFRAME_SECONDS.get(timeframe, 86400)
     now_sec = int(time.time())
+    span_sec = int(
+        limit
+        * interval_sec
+        * _range_window_seconds_multiplier(market, interval_sec)
+    )
     if before_time is not None:
         need_end_ts = before_time - interval_sec
-        need_start_ts = before_time - limit * interval_sec
+        need_start_ts = before_time - span_sec
     else:
         need_end_ts = now_sec
-        need_start_ts = now_sec - limit * interval_sec
+        need_start_ts = now_sec - span_sec
 
     if timeframe == '1m':
         # 1m: 0) 范围命中 1) 条数命中 2) 增量尾巴 3) fallback

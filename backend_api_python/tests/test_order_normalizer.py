@@ -1,6 +1,8 @@
 """Tests for MarketPreNormalizer hierarchy."""
 
 import importlib
+import importlib.util
+import sys
 
 import pytest
 
@@ -262,6 +264,11 @@ def test_uc_16_t2_03_metals_pre_check_rejects_non_positive():
 
 def test_tc_15_t4_02_shim_module_removed():
     """TC-15-T4-02: legacy shim package under live_trading.ibkr_trading is removed."""
-    _shim = "app.services.live_trading." + "ibkr_trading" + "." + "order_normalizer"
+    # Build module path via string concat (TC-15-T5-02).
+    name = "app.services.live_trading." + "ibkr_trading" + "." + "order_normalizer"
+    for k in list(sys.modules):
+        if k == name or k.startswith(name + "."):
+            del sys.modules[k]
+    assert importlib.util.find_spec(name) is None
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module(_shim)
+        importlib.import_module(name)
