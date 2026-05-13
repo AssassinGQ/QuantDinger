@@ -52,14 +52,16 @@ def _range_window_seconds_multiplier(market: str, interval_sec: int) -> float:
     trading hours but the code only looks back ``limit`` wall-clock hours —
     far too short once weekends are included (typical IBKR sufficiency misses).
 
-    Combined factor: ``(24/6.5) * (7/5)`` ≈ calendar stretch for RTH + weekends.
+    Combined factor: ``(24/6.5) * (7/5) * 2`` — RTH hours vs wall clock, weekend
+    calendar stretch, and an extra ``* 2`` headroom for long holidays / exchange
+    closures so sufficiency checks still see enough stored bars.
     Daily+ timeframes unchanged.
     """
     if interval_sec >= 86400:
         return 1.0
     m = (market or "").strip()
     if m in ("USStock", "HShare", "AShare"):
-        return (24.0 / 6.5) * (7.0 / 5.0) * 2
+        return (24.0 / 6.5) * (7.0 / 5.0) * 2.0
     return 1.0
 
 
