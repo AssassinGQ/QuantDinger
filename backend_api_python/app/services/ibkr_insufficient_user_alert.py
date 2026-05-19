@@ -97,20 +97,75 @@ def build_insufficient_user_alert_title_body(
     has_position: bool,
     symbol: str,
     strategy_name: str,
+    reason_code: str = "",
 ) -> Tuple[str, str]:
+    """Build alert title/body differentiated by reason_code.
+
+    reason_code values (from DataSufficiencyReasonCode):
+    - market_closed_gap: 非交易时段下单被拦截
+    - missing_bars: 历史K线数据条数不足
+    - unknown_schedule: 无法获取交易时段信息
+    - stale_prev_close: 前一日收盘价过期
+    - data_evaluation_failed: 数据评估过程失败
+    """
     sname = strategy_name or "未命名"
-    if has_position:
-        title = f"IBKR 数据不足（有持仓）| {symbol}"
-        body = (
-            f"策略《{sname}》标的 {symbol} 因 IBKR 历史数据不足已阻止开仓/加仓。\n"
-            "您当前有持仓，请自行决定平仓或继续持有，并留意数据恢复后的风险。"
-        )
+
+    # 根据 reason_code 选择文案
+    if reason_code == "market_closed_gap":
+        if has_position:
+            title = f"非交易时段下单被拦截（有持仓）| {symbol}"
+            body = (
+                f"策略《{sname}》标的 {symbol} 信号触发于非交易时段（盘前/盘后/休市），"
+                "已阻止下单。\n"
+                "您当前有持仓，请自行决定平仓或继续持有。"
+            )
+        else:
+            title = f"非交易时段下单被拦截 | {symbol}"
+            body = (
+                f"策略《{sname}》标的 {symbol} 信号触发于非交易时段（盘前/盘后/休市），"
+                "当前无法下单。\n"
+                "请等待下一交易时段开盘后自动执行。"
+            )
+    elif reason_code == "unknown_schedule":
+        if has_position:
+            title = f"交易时段信息获取失败（有持仓）| {symbol}"
+            body = (
+                f"策略《{sname}》标的 {symbol} 无法获取交易时段信息，已阻止下单。\n"
+                "您当前有持仓，请自行决定平仓或继续持有，并检查 IBKR 连接状态。"
+            )
+        else:
+            title = f"交易时段信息获取失败 | {symbol}"
+            body = (
+                f"策略《{sname}》标的 {symbol} 无法获取交易时段信息，当前无法下单。\n"
+                "请检查 IBKR Gateway 连接状态或合约配置。"
+            )
+    elif reason_code == "data_evaluation_failed":
+        if has_position:
+            title = f"数据评估失败（有持仓）| {symbol}"
+            body = (
+                f"策略《{sname}》标的 {symbol} 数据评估过程异常，已阻止下单。\n"
+                "您当前有持仓，请自行决定平仓或继续持有。"
+            )
+        else:
+            title = f"数据评估失败 | {symbol}"
+            body = (
+                f"策略《{sname}》标的 {symbol} 数据评估过程异常，当前无法下单。\n"
+                "请检查数据源连接或稍后重试。"
+            )
     else:
-        title = f"IBKR 数据不足 | {symbol}"
-        body = (
-            f"策略《{sname}》标的 {symbol} 因 IBKR 历史数据不足，当前无法新开/加仓。\n"
-            "请等待数据补齐或检查合约/时段配置。"
-        )
+        # missing_bars, stale_prev_close, 其他情况统一用"数据不足"
+        if has_position:
+            title = f"IBKR 数据不足（有持仓）| {symbol}"
+            body = (
+                f"策略《{sname}》标的 {symbol} 因 IBKR 历史数据不足已阻止开仓/加仓。\n"
+                "您当前有持仓，请自行决定平仓或继续持有，并留意数据恢复后的风险。"
+            )
+        else:
+            title = f"IBKR 数据不足 | {symbol}"
+            body = (
+                f"策略《{sname}》标的 {symbol} 因 IBKR 历史数据不足，当前无法新开/加仓。\n"
+                "请等待数据补齐或检查合约/时段配置。"
+            )
     return title, body
 
 
@@ -131,6 +186,7 @@ def build_insufficient_user_alert_extra(
         has_position=has_pos,
         symbol=sym,
         strategy_name=strategy_name,
+        reason_code=suff_result.reason_code.value,
     )
     snap: List[Dict[str, Any]] = []
     for p in current_positions or []:
