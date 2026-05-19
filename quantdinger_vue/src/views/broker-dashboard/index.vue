@@ -463,7 +463,7 @@ export default {
       executionFilter: 'all',
       performance: {},
       refreshTimer: null,
-      currentGateway: 'ibkr-paper',
+      currentGateway: 'ibkr-live',
       gatewayStatus: {
         paper: { connected: false },
         live: { connected: false }
