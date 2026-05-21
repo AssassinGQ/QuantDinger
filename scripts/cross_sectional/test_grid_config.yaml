@@ -1,0 +1,26 @@
+# Minimal test config for Phase 23 grid search script tests
+search_space:
+  factors:
+    - MOM_1M
+    - MOM_3M
+    - VOL_20D
+    - SHARPE_60D
+  combo_min: 1
+  combo_max: 2
+  n_long_options: [10, 20]
+
+walk_forward:
+  enabled: false  # Disabled for simple tests
+  train_months: 36
+  test_months: 12
+  step_months: 12
+
+backtest_defaults:
+  universe: "nq100"
+  timeframe: "1D"
+  initial_capital: 100000
+  market: "USStock"
+
+output:
+  results_dir: "results"
+  progress_interval: 10

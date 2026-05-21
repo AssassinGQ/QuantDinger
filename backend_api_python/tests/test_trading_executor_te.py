@@ -688,7 +688,11 @@ class TestTESP04RunIndicatorCross:
             "close": [100.5, 101], "volume": [1000, 1200],
         }, index=idx)
         data = {"A": df, "B": df.copy()}
-        code = "scores={'A': 0.9, 'B': 0.5}; rankings=['A', 'B']"
+        code = (
+            "scores={'A': 0.9, 'B': 0.5}; "
+            "weights={'A': 0.5, 'B': 0.5}; "
+            "rankings=['A', 'B']"
+        )
         raw = run_cross_sectional_indicator(code, data, {})
         assert raw and "scores" in raw and "rankings" in raw
         assert raw["scores"]["A"] == 0.9 and raw["rankings"] == ["A", "B"]

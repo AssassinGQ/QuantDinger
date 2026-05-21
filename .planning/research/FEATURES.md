@@ -1,131 +1,216 @@
-# Feature Landscape — v1.1 (Tech Debt + Limit Orders + Metals + Caching + TIF + E2E)
+# Feature Research
 
-**Domain:** IBKR TWS API / `ib_insync` — Forex (`CASH` / IDEALPRO), precious metals (`CMDTY`), contract qualification, automated execution  
-**Researched:** 2026-04-11  
-**Scope:** **NEW work in v1.1 only** — limit orders on IDEALPRO, precious-metal contracts (XAU/XAG-style), qualify-result caching, TIF policy unification (opens → IOC across markets where supported), timing-normalization fixes, E2E test improvements. Assumes v1.0 already ships **Forex market orders**, eight-signal mapping, Forex `IOC` TIF, qualify + post-qualify validation, `ForexNormalizer` + `_align_qty_to_contract`, and frontend/strategy automation for Forex + IBKR.
+**Domain:** Cross-sectional equity strategy backtesting (NASDAQ 100 universe) on QuantDinger  
+**Researched:** 2026-04-13  
+**Confidence:** MEDIUM–HIGH for equity factor/portfolio practice; HIGH for Nasdaq governance dates below; MEDIUM for “perfect” historical NQ100 membership without a vendor
 
-## Table Stakes (v1.1 — users expect these for “production-grade” limits + metals)
+## Feature Landscape
 
-| Feature | Why expected | Complexity | Notes / expected behavior |
-|--------|----------------|------------|---------------------------|
-| **Forex limit orders (`LMT`) on IDEALPRO** | Limit is the standard way to control price vs MKT; IB supports `LimitOrder` with `lmtPrice`, `totalQuantity`, `tif`. | Med | **Price grid:** use **`ContractDetails.minTick`** (and related fields) after qualify — IB rejects or rounds off-grid prices; pair-dependent (e.g. many majors use **0.00005** increments; JPY quotes differ). **Partials:** IB emits **`orderStatus` / `openOrder`** updates with **`filled`**, **`remaining`**; **IOC** limits behave like IOC MKT — **immediate match + cancel rest** → terminal **`Cancelled` with `filled > 0`** is normal for under-filled IOC (this repo already treats that as a fill path). **Lifecycle (typical):** non-terminal states include **`PreSubmitted`**, **`Submitted`**; may pass through **`PartiallyFilled`** before **`Filled`** or **`Cancelled`**; terminal set should match **`IBKRClient._TERMINAL_STATUSES`** in code. |
-| **Limit price validation before submit** | Avoid predictable rejects and noisy logs. | Low–Med | Round or reject when `lmtPrice` not on **`minTick`**; optional spread sanity (bid/ask) is **differentiator**, not table stakes. |
-| **Partial-fill handling in strategy semantics** | IOC/DAY limits may not complete size. | Med | Table stakes = **correct accounting** (`filled` vs requested) and **clear completion reason** (filled vs cancelled-incomplete); **auto-resubmit** is a **differentiator** / later milestone. |
-| **GTC vs DAY for Forex limits** | Operators need orders that survive the day or not. | Med | **DAY** = rest until day/session rules; **GTC** = persists until filled/cancelled (subject to IB product rules). For v1.1, pick **one default** per product + document; **supporting both** as config is table stakes if you expose limit automation to end users. |
-| **Precious metals: correct `secType` + routing** | Wrong type breaks qualify and orders. | Med | **Official TWS API example:** spot gold **`XAUUSD`** uses **`SecType = CMDTY`**, **`Exchange = SMART`**, **`Currency = USD`** ([TWS API — Basic Contracts — Commodities](https://interactivebrokers.github.io/tws-api/basic_contracts.html)). **Not** IDEALPRO **`CASH`** like `EUR.USD`. **XAGUSD:** treat as **same pattern (CMDTY + SMART + USD)** at **MEDIUM confidence** until verified via **`reqContractDetails` / qualify** on your account — do not assume parity with EURUSD construction. |
-| **Qualify caching (TTL + invalidation)** | Repeated `qualifyContracts` on hot paths wastes API and latency. | Med | **Not an IB API feature** — app responsibility. **Typical patterns:** TTL **5–60 minutes** per `(symbol, market_type)` or **`conId`**; **invalidate** on qualify error, session reconnect, explicit symbol change, or **stale** flag after N failures. **Depends on:** non-zero **`conId`** and validated **`secType`** (existing `_validate_qualified_contract`). |
-| **TIF unification: “open → IOC” across markets** | Single policy reduces surprise vs per-asset special cases. | Med–High | **Expected broker behavior:** **IOC** = work immediately and **do not leave a resting order** (remainder cancelled). **Stocks:** venue/exchange may **reject IOC** on some order types or sessions — **must be validated** per exchange (HK already forced **DAY** in v1.0 for close; **HShare may stay DAY-only**). **Forex** already **IOC** for all signals. **Unification** = product decision: if **USStock open** moves from **DAY → IOC**, resting day orders disappear; **GTC limits** are orthogonal (persistence ≠ DAY open MKT). |
-| **Timing normalization fix** | Correct ordering of time-based gates vs IB server time. | Low–Med | Table stakes for **correct RTH / session** behavior when mixed with **cached** contract details — exact fix belongs in implementation phase; dependency: **`reqCurrentTimeAsync`** and existing **`_rth_details_cache`**. |
-| **E2E / integration confidence** | Regressions on order path are costly. | Med | **Table stakes:** repeatable **mocked** event chains (**`orderStatus` → `execDetails` → position → PnL**) matching production callbacks; **optional** paper smoke **non-deterministic** — mark **manual / nightly**, not CI gate. |
+### Table Stakes (Users Expect These)
 
-## Differentiators (nice-to-have; not required to ship v1.1)
+Features quants assume exist for **credible** cross-sectional equity backtests. Missing these makes results hard to defend or replicate.
 
-| Feature | Value | Complexity | Notes |
-|--------|-------|------------|--------|
-| **Bracket / OCO / stop-loss on IBKR FX/metals** | Risk overlays | High | Multi-order state machines; defer if v1.1 is “plain LMT” only. |
-| **Auto-retry or re-price on IOC partial** | Better fill rate | Med–High | Policy-heavy; easy to fight the market. |
-| **Rich pre-trade risk (margin, notional caps)** | Safer automation | Med–High | Portfolio-dependent on IB. |
-| **Deterministic E2E with recorded FIX/API replay** | CI-grade live parity | High | Most teams use **mocks + selective paper** instead. |
-| **Bid/ask spread check before limit submit** | Fewer “impossible” limits | Low–Med | Needs quote subscription path live. |
+| Feature | Why Expected | Complexity | QuantDinger dependency |
+|---------|--------------|------------|------------------------|
+| **Point-in-time (PIT) investable universe** | Rankings must use only names that were index members **as of** each date; otherwise membership injects look-ahead. | MEDIUM | New: **NQ100 scrape/cache + dated snapshots** in PostgreSQL. Uses existing DB; not covered by single-symbol K-line alone. |
+| **Cross-sectional factor computation per rebalance** | A “factor” is a comparable score per name on a calendar (e.g. month-end); built from data available before the trade decision. | MEDIUM | **Reuses** per-symbol K-line + indicator pipeline; adds **cross-sectional join** (date × symbol) after universe filter. |
+| **Signal vs execution timing (no same-bar lookahead)** | Convention: signal using information through **close of T** → executable fills **next session** (often **open of T+1**). | MEDIUM | **Extends** existing backtest timing; PROJECT.md targets **T+1 open** execution. |
+| **Survivorship-aware price history** | Delisted names must remain in historical panels for periods they traded. | MEDIUM | **Reuses** PostgreSQL K-line storage; requires **policy** not to drop delisted symbols from backtest panels and queries. |
+| **Halts / limit-up-down handling policy** | If a name cannot trade, “fill at open” is invalid. | MEDIUM | New **microstructure policy module**; order automation exists for live IBKR but backtest path needs explicit rules. |
+| **Portfolio construction from ranks** | Turn scores into weights (long-only, long-short, neutral variants). | LOW–MEDIUM | New **portfolio builder** on top of factor outputs; separate from single-asset backtest loop. |
+| **Rebalancing schedule** | Strategy defined by turnover calendar (weekly / monthly / …). | LOW | Parameter to factor + execution engine; ties to **T+1** and cost assumptions. |
+| **Standard performance metrics** | Comparable reporting to papers, peers, and internal grids. | LOW | New or consolidated **metrics** module for equity curves (see *Standard metrics* below). |
+| **Reproducible batch / grid script** | Matrix of parameters without GUI (research workflow). | LOW | **Standalone script** calling factor engine + portfolio + metrics; aligns with v2.0 scope (no cross-sectional Vue UI). |
 
-## Anti-Features (explicitly avoid for v1.1 unless requirements change)
+### Differentiators (Competitive Advantage)
 
-| Anti-feature | Why avoid | Instead |
-|--------------|-----------|--------|
-| **Treating XAUUSD/XAGUSD as `CASH` / IDEALPRO Forex** | Breaks contract match; contradicts IB **CMDTY** example for XAUUSD. | Build **`CMDTY` + SMART** (or IB-returned exchange after qualify) branch; **qualify** always. |
-| **Hard-coded tick sizes** | Drifts from IB, breaks minor pairs. | Read **`minTick`** from qualified **ContractDetails**. |
-| **Infinite qualify cache without invalidation** | Wrong `conId` after corporate/contract changes (rarer for spot metals/FX, still brittle). | TTL + invalidate on errors/reconnect. |
-| **Assuming paper fills == live** | IB documents simulated execution on paper. | Separate **mock unit tests** from **paper smoke** expectations. |
-| **One giant E2E that requires live IB for CI** | Flaky, slow, environment-dependent. | **CI = mocked**; paper = optional job. |
+| Feature | Value Proposition | Complexity | QuantDinger dependency |
+|---------|-------------------|------------|------------------------|
+| **Dynamic NQ100 ingest + server cache + versioned snapshots** | Auditable “what was the NQ100 on date *D*” if snapshots are stored; reduces manual CSV drift. | MEDIUM | New ingestion + tables/API; **complements** K-line symbol coverage checks. |
+| **Explicit factor combination library** | Faster research: winsorize → z-score → equal or weighted blend → rank composites. | MEDIUM | Builds on **factor registration**; optional reuse of indicator primitives per symbol. |
+| **Grid / brute-force search with reporting discipline** | Explore factor subsets × top-N × rebalance freq; differentiator if results report **IS vs OOS** or walk-forward, not only best in-sample Sharpe. | MEDIUM | Script-only; depends on **metrics** + compute budget; methodological guardrails are partly **process**, partly **harness** (deferred P2). |
+| **Integration with existing K-line + PostgreSQL + strategy stack** | One platform from data to signals; avoids duplicate data silos. | LOW–MEDIUM | **Core reuse:** K-line API/DB, symbols; **not** live cross-sectional automation in v2.0 (per PROJECT.md). |
+
+### Anti-Features (Commonly Requested, Often Problematic)
+
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| **Pick “best Sharpe” from a huge in-sample grid** | Find optimal parameters. | **Overfitting**; inflated Sharpe. | Nested CV, holdout window, walk-forward; pre-register “production” params before final test. |
+| **Same-bar execution (signal and fill on same close)** | Simpler code. | **Look-ahead** vs realistic US equity execution. | **T+1 open** (or explicit auction model) per PROJECT.md. |
+| **Current NQ100 membership applied to all history** | Easiest implementation. | **Survivorship + membership look-ahead.** | **PIT membership** + retained delisted history. |
+| **Daily rebalancing for every experiment** | Maximum responsiveness. | Turnover, costs, estimate noise dominate. | Start **monthly/weekly**; add daily only with **explicit cost model**. |
+| **Full sector-neutral optimization in v2.0** | Match institutional portfolios. | Needs reliable **sector taxonomy + history** (GICS changes); heavier optimization. | **Sector demean** of z-scores first; defer optimizer. |
+| **Live cross-sectional IBKR automation in v2.0** | Trade the book. | Borrow, capacity, slicing; out of scope. | **Backtest + research script** first (PROJECT.md). |
 
 ## Feature Dependencies
 
 ```
-v1.0: Forex MKT + ForexNormalizer + qualify + _validate_qualified_contract + _get_tif_for_signal (Forex→IOC)
-  → v1.1 LMT: same qualify + minTick alignment for lmtPrice + LimitOrder + same order-status handlers
-  → v1.1 CMDTY metals: _create_contract branch + _validate_qualified_contract(secType=CMDTY) + normalizer alignment rules
-  → v1.1 qualify cache: must store post-qualify contract snapshot or conId + details; invalidate when connection resets
-  → v1.1 TIF unification: touches _get_tif_for_signal + per-market compatibility matrix (HShare/HK constraints)
-  → v1.1 E2E: depends on stable callback contract in IBKRClient (_on_order_status, _handle_fill, terminal statuses)
+[NQ100 PIT universe + snapshots]
+    └──requires──> [Constituent scrape / ingest + PostgreSQL cache]
+        └──requires──> [Historical bar panel including delisted tickers — K-line retention policy]
+
+[Cross-sectional factor engine]
+    └──requires──> [Aligned multi-symbol bars — existing K-line layer]
+    └──requires──> [Per-date cross-section: universe ∩ available prices]
+
+[Execution-realistic backtest]
+    └──requires──> [T+1 open fills from signal at prior close]
+    └──requires──> [Halt/limit policy module]
+    └──enhances──> [Existing backtest / simulation services where single-asset logic differs]
+
+[Grid search script]
+    └──requires──> [Factor engine + portfolio constructor + metrics]
+    └──conflicts──> [Unbounded search without reporting bias — mitigate with methodology + optional P2 harness]
 ```
 
-**Specific dependency notes**
+### Dependency Notes
 
-- **Limit orders** depend on **existing** partial-fill handling (`Cancelled` + `filled > 0`) and **terminal status** classification — extend tests for **`PartiallyFilled`** → **`Filled`** sequences if not already covered.
-- **Metals** depend on **new** `market_category` / `market_type` routing (e.g. `PreciousMetal` or extend `Forex` policy deliberately — **product choice**) and **secType validation** in `_validate_qualified_contract`.
-- **Qualify cache** depends on **not** bypassing post-qualify validation when serving cached rows.
-- **TIF unification** may **conflict** with **HShare DAY-only** constraint — dependency: **requirements matrix** (Forex IOC, USStock IOC open?, HShare DAY).
+- **PIT NQ100 requires constituent history:** Rankings on past date *D* must use membership known as of *D* (or prior published effective date). Snapshots from first deployment forward + optional vendor/historical backfill; **“ground truth” history is vendor- or reconstruction-dependent** (see *NQ100 constituents*).
 
-## MVP Recommendation (v1.1 minimal shippable slices)
+- **Cross-sectional engine requires multi-symbol alignment:** Depends on **K-line fetch + PostgreSQL** for each symbol; join on **trade date** after universe filter and liquidity screens.
 
-1. **IBKR Forex limits:** `LimitOrder` + **`lmtPrice` rounded to `minTick`** + **`tif`** from unified policy + reuse **order status / fill** pipeline; **IOC + partial** explicitly tested.
-2. **Metals:** **`XAUUSD` as `CMDTY` / SMART / USD** per IB doc; **`XAGUSD`** verified via **one** qualify on target account; **not** shoehorned into `Forex` `CASH` unless IB returns that (unlikely for XAUUSD example).
-3. **Qualify cache:** in-process TTL cache with **reconnect/session invalidation**; metrics/logging on hit rate.
-4. **TIF:** document **exceptions** (e.g. HShare) before coding; add **matrix test** in unit tests.
-5. **E2E:** expand **mocked** event simulations; keep **live paper** as **manual / scheduled**, not CI blocker.
+- **Survivorship fix requires data retention:** Depends on **not purging** delisted symbols’ bars (or importing bias-free history).
 
-**Defer:** Brackets/OCO, auto-reprice, margin-aware sizing, full golden replay harness.
+- **Grid search vs statistical hygiene:** Software can emit many runs; **credibility** depends on train/test discipline—not only code.
 
-## Sub-feature checklist — **Forex limit orders**
+### QuantDinger integration (summary)
 
-| Sub-feature | Essential for v1.1? | Rationale |
-|-------------|----------------------|-----------|
-| **minTick / price quantization** | **Yes** | IB rejection avoidance; standard integration. |
-| **Partial fill handling (accounting + status)** | **Yes** | IOC and liquidity; already partly handled for MKT/IOC. |
-| **GTC** | **Product call** | Essential if strategies need multi-day resting limits; else **DAY** may suffice for IOC-heavy automation. |
-| **DAY** | **Likely yes** | Default for many limit workflows; pair with open **IOC** policy carefully (IOC ≠ resting). |
-| **Price validation (bounds)** | **Recommended** | minTick + **optional** min/max distance from NBBO — latter is **nice-to-have**. |
+| Existing capability | Role in v2.0 |
+|---------------------|--------------|
+| K-line API + PostgreSQL storage | Per-symbol inputs to cross-sectional factors; must include delisted names when present. |
+| Single-asset indicators / backtesting | Building blocks for per-name series; cross-sectional layer is **new** (rank, neutralize, combine). |
+| Strategy CRUD, signals, IBKR execution | **Not** extended for live cross-sectional in v2.0; future milestone. |
 
-## Sub-feature checklist — **Precious metals (IBKR)**
+## MVP Definition
 
-| Question | Recommendation | Confidence |
-|----------|----------------|------------|
-| **CMDTY vs CASH for XAUUSD / XAGUSD?** | **CMDTY** for **`XAUUSD`** per official **Basic Contracts** commodity sample; **XAGUSD** almost certainly **CMDTY** OTC spot — **confirm with qualify**. | **HIGH** (XAUUSD doc); **MEDIUM** (XAGUSD by analogy) |
-| **Exchange IDEALPRO vs SMART?** | Doc shows **`SMART`** for **`XAUUSD`**; after qualify, prefer **IB-returned** `primaryExchange` / `exchange`. | **HIGH** |
+Aligned with `.planning/PROJECT.md` **v2.0 Cross-Sectional Strategy** (backend + script; NQ100 only; no cross-sectional live automation).
 
-## Sub-feature checklist — **Qualify caching**
+### Launch With (v2.0)
 
-| Mechanism | Expected behavior |
-|-----------|-------------------|
-| **TTL** | Bounded freshness (e.g. 15–60 min) or session-scoped. |
-| **Invalidation** | New symbol, failed order/qualify, reconnect, optional manual bust. |
-| **What to cache** | Qualified **contract** (or **`conId` + ContractDetails** needed for minTick/sizeIncrement). |
+- [ ] **NQ100 dynamic constituent ingestion + cached API + historical snapshots** — foundational for PIT universe.
+- [ ] **Backtest correctness:** survivorship-aware panel, **T+1 open** execution, halt/limit policy — matches core value in PROJECT.md.
+- [ ] **Factor registration + cross-sectional rank/score pipeline** — minimal factor set (e.g. momentum, vol, volume) to validate architecture.
+- [ ] **Standalone script:** grid over factor combinations × top-N; exports **standard metrics** — validates research loop without frontend.
 
-## Sub-feature checklist — **TIF unification (opens → IOC)**
+### Add After Validation (v2.x)
 
-| Expected behavior | Caveat |
-|-------------------|--------|
-| **Forex** | Already **IOC** — unchanged. |
-| **USStock open → IOC** | Resting **DAY** liquidity-taking behavior changes; **verify** exchange accepts IOC for intended order types. |
-| **HShare** | **May not support IOC** — **exception row** in policy, not forced IOC. |
+- [ ] **IC / IR** and simple **Fama–MacBeth**-style diagnostics — when factor research needs stronger stats.
+- [ ] **Walk-forward / rolling** evaluation — when grid search shows unstable parameters.
+- [ ] **Transaction cost + slippage** — when frequency rises or approaching live.
 
-## Sub-feature checklist — **E2E testing (trading systems)**
+### Future Consideration (v3+)
 
-| Pattern | Expected role |
-|---------|-----------------|
-| **Unit + callback mocks** | **Primary CI** — deterministic, fast (`test_ibkr_client`, `test_ibkr_forex_paper_smoke`-style). |
-| **Integration with mock IB** | Full path without network — **recommended** for every release. |
-| **Paper / live smoke** | **Optional** — validates connectivity and **rough** behavior; not bit-reproducible. |
-| **Golden replay** | **Differentiator** — only if team invests in harness. |
+- [ ] **Live cross-sectional execution** on IBKR — deferred in PROJECT.md.
+- [ ] **A-share cross-sectional** — different rules and data; deferred.
+- [ ] **Full sector-neutral optimization** — defer until sector metadata quality is assured.
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| PIT NQ100 universe + snapshots | HIGH | MEDIUM | P1 |
+| Survivorship-aware historical panel | HIGH | MEDIUM | P1 |
+| T+1 signal-to-execution alignment | HIGH | MEDIUM | P1 |
+| Halt/limit handling policy | MEDIUM | MEDIUM | P1 |
+| Core factor set + z-score / rank combination | HIGH | MEDIUM | P1 |
+| Long-only top-N portfolio builder | HIGH | LOW | P1 |
+| Standalone grid-search script + standard metrics | HIGH | MEDIUM | P1 |
+| Long–short / simple sector-neutral | MEDIUM | MEDIUM | P2 |
+| IC/IR diagnostics | MEDIUM | LOW | P2 |
+| Walk-forward evaluation | MEDIUM | MEDIUM | P2 |
+
+**Priority key:** P1 = v2.0 credibility (per PROJECT.md); P2 = after core path stable; P3 = later milestones.
+
+## Competitor Feature Analysis
+
+| Feature | Academic / institutional practice | Typical retail / lightweight tools | QuantDinger v2.0 approach |
+|---------|-------------------------------------|--------------------------------------|---------------------------|
+| Universe | CRSP/Compustat PIT; index vendors | Often “current universe” only | **NQ100 + snapshots + scrape/cache** |
+| Factors | Momentum, vol, quality, FF-style | Fixed screeners | **Registered factors + scriptable combos** |
+| Combination | Z-score, rank, FM regression | Fixed recipes | **Equal / weighted z-score; rank average** first |
+| Execution timing | T+1 or explicit microstructure | Often simplified | **Explicit T+1 open** per PROJECT.md |
+| Metrics | Sharpe, IR, IC, alphas | CAGR, drawdown | **Sharpe, Calmar, max DD, annual return, win rate** + room for IC/IR later |
+
+## Research Q&A (maps to milestone questions)
+
+### How cross-sectional equity strategies typically work
+
+1. Fix **universe** and **rebalance calendar**.  
+2. On each rebalance, compute **raw factor inputs** per symbol from information available **before** the trading decision (often prior close).  
+3. **Cross-sectionally** clean and normalize: winsorize outliers, **z-score** within universe (and optionally neutralize by sector/size).  
+4. **Combine** into a composite (equal-weighted z-scores, fixed weights, rank averages, etc.).  
+5. **Construct portfolio** (long top-N, long-short, sector-neutral variants).  
+6. Simulate **execution** on the next session(s) with **T+1** and **halt/limit** rules.  
+7. Roll forward and compute **performance metrics**.
+
+### Common cross-sectional factors (examples)
+
+| Family | Typical construction (illustrative) | Notes |
+|--------|-------------------------------------|--------|
+| **Momentum** | 12–1 month return (12-month skip last month), or shorter horizons | Core in asset pricing; watch turnover. |
+| **Reversal / short-term** | Last 1 week–1 month return (often contrarian) | Distinct from long-term momentum. |
+| **Volatility** | Realized vol (e.g. 20–60d); often **long low vol** | “Low vol anomaly”; inverse-vol weighting is related. |
+| **Volume / liquidity** | Dollar volume, turnover, Amihud illiquidity | Liquidity screens + signal. |
+| **Mean reversion** | Distance from long MA, residual vs factor model | Often more infrastructure; pairs/cointegration heavier. |
+| **Risk-adjusted** | Prior-window Sharpe/Sortino **ranked cross-sectionally** | “Quality”-adjacent; estimation noise on short windows. |
+
+### Factor combination methods
+
+| Method | Description | Trade-off |
+|--------|-------------|-----------|
+| **Equal-weight on z-scores** | Average z-scored factors (possibly after winsorize). | Simple; assumes equal marginal info. |
+| **Fixed / grid weights** | Weighted sum \(\sum w_i z_i\); weights from grid search. | Flexible; overfitting risk if grid is huge without OOS discipline. |
+| **Rank-based** | Average ranks or map rank to Gaussian scores | Robust to outliers; less scale-sensitive. |
+| **Regression-based (e.g. Fama–MacBeth)** | Time-series of CS regressions | Stronger inference; higher build cost (P2). |
+
+### Portfolio construction approaches
+
+| Approach | Idea | v2.0 fit |
+|----------|------|----------|
+| **Long-only top-N** | Equal or score-proportional weights in top decile/N names | **P1** — matches simple mandates. |
+| **Long-short** | Top vs bottom, dollar-beta-neutral | Feasible in backtest; shorting/borrow ignored or idealized unless modeled. |
+| **Sector-neutral** | Demean scores by sector or constrain sector weights | Start with **demean**; full optimization **P2+** (data burden). |
+
+### Rebalancing frequencies and trade-offs
+
+| Frequency | Pros | Cons |
+|-----------|------|------|
+| **Monthly** | Common in equity factor literature; lower turnover | Slower to react |
+| **Weekly** | Balance responsiveness vs noise | More turnover; needs cost awareness |
+| **Daily** | Most responsive | Turnover, costs, microstructure noise dominate for typical factor signals |
+
+### Grid search / brute-force combination patterns
+
+- Grid over **factor subsets**, **discrete weight sets**, **top-N**, **rebalance frequency**, optional **neutralization** toggles.  
+- **Risk:** many trials → **data mining**. Mitigations: **holdout**, **walk-forward**, reporting **distribution** of Sharpe across trials, fixing “production” hyperparameters before final OOS test.  
+- v2.0: **scripted grid** + standard metrics; **walk-forward harness** optional P2.
+
+### NQ100 constituent management
+
+- **Scheduled changes:** Nasdaq-100 has a **major annual reconstitution** (typically **December**, aligned with index industry practice around “quadruple witching” week); press highlights often cite on the order of **a handful** of adds/deletes in a given year—**not** daily churn. Use **Nasdaq index notices** and methodology PDFs as the authority for exact rules and dates.  
+- **Governance updates:** Nasdaq may amend methodology on a schedule (e.g. press **Mar 30, 2026** announced methodology updates **effective May 1, 2026**, with prior methodology through **Apr 30, 2026** — see [Nasdaq press release](https://www.nasdaq.com/press-release/nasdaq-concludes-public-consultation-nasdaq-100-indexr-methodology-2026-03-30)). Implementation details are communicated via **standard index notices** — product should **subscribe to notices** or poll official sources, not only annual December.  
+- **Historical constituents:** There is **no single universal free API** for perfect point-in-time NQ100 membership over decades. Practical sources: **commercial index history**, **reconstruct from archived constituents + corporate actions**, or **internal snapshots from first run forward** + partial backfill. For QuantDinger v2.0, **forward snapshots + best-effort historical alignment** is a pragmatic split; label confidence in any pre-snapshot backtests.
+
+### Standard backtest metrics (definitions to document in code)
+
+| Metric | Typical definition | Caveat |
+|--------|--------------------|--------|
+| **Annual return / CAGR** | Geometric mean annualized return over window | Depends on return definition (log vs simple); **document**. |
+| **Sharpe ratio** | Mean excess return / vol of returns; **annualize** with consistent \(\sqrt{k}\) rule for k periods/year | Annualization convention must be **fixed** across runs. |
+| **Max drawdown** | Max peak-to-trough on cumulative equity curve | Path-dependent; use same return series as Sharpe. |
+| **Calmar** | CAGR / \|max drawdown\| | Undefined or unstable if max DD ≈ 0. |
+| **Win rate** | Fraction of periods (e.g. months) with positive strategy return | Can look good with fat tails; pair with **max DD** and distribution. |
+
+Optional research-grade add-ons (P2): **information coefficient (IC)**, **information ratio**, simple **turnover** and **capacity** proxies.
 
 ## Sources
 
-| Source | Used for | Confidence |
-|--------|----------|------------|
-| [TWS API — Basic Contracts (Commodities: XAUUSD)](https://interactivebrokers.github.io/tws-api/basic_contracts.html) | **`CMDTY` + `SMART` + `USD`** for spot gold | **HIGH** |
-| [TWS API — Placing Orders / order callbacks](https://interactivebrokers.github.io/tws-api/order_submission.html) | Order events via **`openOrder` / `orderStatus`** | **HIGH** |
-| Phase 06 research (`.planning/milestones/v1.0-phases/06-tif-policy-for-forex/06-RESEARCH.md`) | **IOC** + **`Cancelled`+`filled>0`** semantics | **HIGH** (project) |
-| Phase 03 research (`.planning/milestones/v1.0-phases/03-contract-qualification/03-RESEARCH.md`) | Qualify + **`XAUUSD` ≠ Forex/CASH** note | **HIGH** (project) |
-| `backend_api_python/.../client.py` — `_TERMINAL_STATUSES`, `_get_tif_for_signal`, `_on_order_status` | Terminal states + Forex IOC | **HIGH** (code) |
-| Web / industry patterns for qualify caching & E2E layering | TTL, invalidation, mock-first CI | **MEDIUM** (pattern, not IB-specific) |
+- [Nasdaq Global Indexes — NDX overview](https://indexes.nasdaq.com/Index/Overview/NDX) — index description; links to methodology PDFs and research PDFs.  
+- [Nasdaq press release — Nasdaq-100 methodology consultation resolved (Mar 30, 2026)](https://www.nasdaq.com/press-release/nasdaq-concludes-public-consultation-nasdaq-100-indexr-methodology-2026-03-30) — **effective May 1, 2026**; prior methodology through **Apr 30, 2026**.  
+- Nasdaq methodology PDF (e.g. `methodology_NDX.pdf` on indexes.nasdaq.com) — authoritative rules; verify current revision when implementing.  
+- Asset pricing references: Fama–French factors; Jegadeesh & Titman (momentum); standard practice for **PIT** universes and **T+1** execution assumptions in US equity backtests.  
+- Internal: `.planning/PROJECT.md` — v2.0 scope, T+1 alignment, survivorship/halt goals, out-of-scope items.
 
-## Confidence
-
-| Area | Level | Notes |
-|------|-------|--------|
-| XAUUSD = **CMDTY** (IB official sample) | **HIGH** | Basic Contracts doc |
-| XAGUSD = **CMDTY** | **MEDIUM** | Verify via `qualify` / Contract Information Center |
-| Forex limit **tick** / partial lifecycle | **MEDIUM–HIGH** | Align with **ContractDetails** + ib_insync **Trade.orderStatus** |
-| TIF unification across **all** markets | **MEDIUM** | Exchange constraints (esp. HK) need **matrix** validation |
-| Qualify cache design | **MEDIUM** | Standard app pattern; not IB-specified |
-| E2E patterns | **MEDIUM** | Consensus: mock-first; paper secondary |
+---
+*Feature research for: Cross-sectional strategy backtesting on QuantDinger (NQ100)*  
+*Researched: 2026-04-13*

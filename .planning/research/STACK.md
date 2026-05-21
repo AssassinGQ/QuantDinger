@@ -1,125 +1,149 @@
-# Technology Stack (Additions for v1.1)
+# Stack Research
 
-**Project:** QuantDinger — IBKR Forex + milestone (limit orders, metals routing, qualify cache, E2E)
-**Researched:** 2026-04-11
-**Scope:** NEW capabilities only; existing Flask + ib_insync + Vue 2 + Jest + pytest baseline is assumed frozen.
+**Domain:** Cross-sectional equity strategies (NQ100 universe, factor panels, grid-search backtests) on existing QuantDinger stack  
+**Researched:** 2026-04-13  
+**Confidence:** HIGH for library versions (PyPI JSON verified 2026-04-13); MEDIUM for scrape reliability (site HTML/ToS change without notice)
 
 ## Recommended Stack
 
-### Core (unchanged — pin / verify)
+### Core Technologies
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| **ib_insync** | **0.9.86** (PyPI latest as of research) | `LimitOrder`, `MarketOrder`, `Forex`, `Commodity`, `qualifyContractsAsync`, `reqContractDetailsAsync` | Single supported async wrapper around IB Gateway/TWS; already wired through `IBExecutor` / `TaskQueue`. No additional IB API layer needed. |
-| **Flask** | 2.3.3 (project) | HTTP API under test | `app.test_client()` for in-process API E2E; no new server stack. |
-| **pytest** | (project pin) | Backend tests | Existing 928-test suite; new cases follow same patterns. |
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-------------------|
+| **beautifulsoup4** | `>=4.14,<5` | Parse HTML tables/pages (Wikipedia, Nasdaq-style listings) | De facto standard for static HTML; pairs with existing `requests`; no browser for server-rendered tables. PyPI latest **4.14.3**. |
+| **lxml** | `>=6.0,<7` | Fast XML/HTML parser backend for Beautiful Soup | Speed + robust parsing; wheels on Linux/WSL; BS4 performs better with a fast parser than pure `html.parser`. PyPI latest **6.0.4**. |
+| **pandas** | `>=1.5.0` (current floor); target `>=2.2,<4` after QA; PyPI latest **3.0.2** | Multi-asset panels (date × symbol), factor columns, merges for T+1 / rebalances | Already in `backend_api_python/requirements.txt`. Cross-sectional work benefits from 2.2+ APIs and performance; **do not** jump to pandas 3.x without running the full backend test suite (breaking changes vs 1.5/2.x). |
+| **numpy** | Pulled by pandas; floor `>=1.26,<3` compatible with pandas pin; PyPI latest **2.4.4** | Vectorized factor math, returns, ranking | Explicit floor avoids ancient wheels; align numpy major with chosen pandas wheel set. |
 
-**Version note:** `ib_insync` latest on PyPI is **0.9.86** — matches `requirements.txt` lower bound `>=0.9.86`. Prefer pinning `ib_insync==0.9.86` for reproducibility while this milestone ships.
+### Supporting Libraries
 
----
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| **requests** | `>=2.28` (existing) | HTTP GET for public index constituent pages | Default path; already used in backend and `scripts/cross_sectional/nq100_cross_sectional.py`. |
+| **tenacity** | `>=8.2,<10` | Retries with backoff for flaky scrape endpoints | When sources return 429/5xx intermittently. PyPI latest **9.1.4**. |
+| **filelock** | `>=3.15,<4` | Cross-process locks for checkpoint / JSONL append | When grid search uses multiple processes and one file records progress. PyPI latest **3.25.2**. |
+| **joblib** | `>=1.4,<2` | `Parallel` + optional `Memory` for embarrassingly parallel backtests | Familiar API for numpy/pandas-heavy workers; optional disk cache for repeated factor builds. PyPI latest **1.5.3**. |
+| **pandas_market_calendars** | `>=5.0,<6` (optional) | NYSE/Nasdaq **sessions** — next valid open after signal close | **Recommended** once you encode “signal at D close → trade at **next session** open” with holidays/halts; avoids hand-maintained holiday lists. PyPI latest **5.3.2**. Often used with `exchange_calendars` under the hood. |
+| **httpx** | `>=0.27,<1` (optional) | Async-capable HTTP if scrape + fetch pipelines unify | Only if you add async batching; otherwise stay on `requests` to minimize dependencies. PyPI latest **0.28.1**. |
 
-### 1) Limit orders (ib_insync + price precision)
+### Development Tools
 
-| Item | Version / mechanism | Purpose | Why |
-|------|------------------------|---------|-----|
-| **ib_insync.LimitOrder** | same package as above | `placeOrder(contract, order)` with `orderType='LMT'` | Constructor: `LimitOrder(action, totalQuantity, lmtPrice, **kwargs)` — passes `lmtPrice` into base `Order` (see upstream `ib_insync/order.py`). Same object model as existing `MarketOrder`. |
-| **Order fields** | built-in | TIF, account, etc. | Reuse existing `_get_tif_for_signal` / unification work; `tif` is a standard `Order` field (e.g. `DAY`, `IOC`, `GTD`). |
-| **Limit price precision** | **stdlib `decimal.Decimal` + `ContractDetails`** | Round `lmtPrice` to exchange-valid increments | **No new PyPI dependency.** After qualify, use `reqContractDetailsAsync` (already used for lot size) and apply `ContractDetails.minTick` and `priceMagnifier` per [IB contract details](https://interactivebrokers.github.io/tws-api/classIBApi_1_1ContractDetails.html). Float-only math is a common source of “price does not conform to minimum price variation” errors; Decimal + explicit rounding to minTick avoids that. |
-| **Integration point** | `IBKRClient.place_limit_order` | Already constructs `ib_insync.LimitOrder(..., lmtPrice=price, tif=tif)` | Extend with a small normalizer step: fetch/cache details → round price → then build `LimitOrder`. |
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| **pytest** (existing) | Unit tests for HTML parsers + factor / calendar alignment | Fixtures: saved HTML snippets; **no live network in CI** for scrapers. |
+| **stdlib `concurrent.futures`** | `ProcessPoolExecutor` / `ThreadPoolExecutor` | Prefer first for grid search — zero new dependencies. |
+| **`OMP_NUM_THREADS=1`** (env) | Limit BLAS thread explosion | When using multiprocessing + numpy/pandas together to avoid oversubscription. |
 
-**Confidence:** **HIGH** for API shape (verified against `erdewit/ib_insync` `order.py` on GitHub). **HIGH** for minTick/magnifier (IB API + existing `ContractDetails` in same library).
+## Installation
 
----
+```bash
+# Backend — add to backend_api_python/requirements.txt (or extras file for “cross_sectional”)
+pip install "beautifulsoup4>=4.14,<5" "lxml>=6.0,<7" "tenacity>=8.2,<10"
 
-### 2) Precious metals — CMDTY vs CASH (IDEALPRO)
+# Optional: parallel grid search + safe checkpointing
+pip install "joblib>=1.4,<2" "filelock>=3.15,<4"
 
-| Item | Version | Purpose | Why |
-|------|---------|---------|-----|
-| **ib_insync.Forex** | ib_insync | `secType='CASH'`, 6-char pair | `Forex(pair='XAUUSD')` expands to symbol `XAU`, currency `USD`, exchange default `IDEALPRO`. Used today in `_create_contract` for `market_type == "Forex"`. |
-| **ib_insync.Commodity** | ib_insync | `secType='CMDTY'` | `Commodity(symbol=..., exchange=..., currency=...)` maps to CMDTY in `contract.py`. Use when IB’s qualified contract for a “metal” symbol is **CMDTY** (spot metals / OTC-style listing) rather than CASH. |
-| **Generic Contract** | ib_insync `Contract` | Escape hatch | `Contract(secType='...', symbol=..., exchange=..., currency=..., localSymbol=...)` if a symbol does not fit `Forex`’s strict 6-char `pair` constructor. |
-| **Routing logic** | Application code (no extra lib) | Choose factory per symbol / product line | **No new dependency.** Decision is by **qualification result** and/or curated symbol table: e.g. if `qualifyContractsAsync` returns `CMDTY`, validate with `_EXPECTED_SEC_TYPES`-style rules for a new `market_type` or sub-flag; if `CASH`, keep `Forex` path. IB may list spot gold/silver differently over time — contract search / paper validation is the source of truth. |
+# Optional: US equity session calendar for T+1 / next-open logic
+pip install "pandas-market-calendars>=5.0,<6"
 
-**Confidence:** **HIGH** for class mapping (`Forex` → CASH, `Commodity` → CMDTY) from ib_insync source. **MEDIUM** for which symbol uses which secType on your account — must be validated in **paper** with live `qualifyContractsAsync` / Contract Search.
+# Pandas/numpy upgrades — run full backend tests before merging
+# pip install "pandas>=2.2,<4" "numpy>=1.26,<3"
+# For pandas 3.x / numpy 2.x: evaluate release notes + test matrix separately
+```
 
----
-
-### 3) Qualify result caching (in-process TTL)
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| **cachetools** | **>=7.0.5** (PyPI latest; requires **Python ≥3.10**) | `TTLCache` for `(symbol, market_type, exchange?) → qualified Contract or conId` | Bounded size + TTL eviction; avoids unbounded `dict` growth. Thread-safe enough for typical single-event-loop + executor patterns if **one cache writer** or use behind existing `IBExecutor` serialization. |
-| **Alternative: stdlib only** | — | `dict` + monotonic TTL check | Zero dependency; more boilerplate and easier to get eviction wrong. Acceptable for a tiny cache. |
-
-**Integration points:**
-
-- Cache **after** successful `qualifyContractsAsync` (and optionally store `conId` + secType for validation).
-- **Invalidate** on reconnect to IB or on qualify errors (optional policy).
-- **Do not** cache mutable `Contract` objects shared across coroutines without copying if safety becomes an issue — prefer caching **conId** + minimal fields and rebuilding `Contract(conId=...)` when needed.
-
-**Confidence:** **HIGH** for cachetools version (PyPI API). **MEDIUM** for concurrency semantics — align with your existing `IBClient` threading model in code review.
-
----
-
-### 4) E2E testing — Flask + HTTP / browser
-
-| Layer | Tool | Version | Purpose | Why |
-|-------|------|---------|---------|-----|
-| **Backend API** | **Flask `test_client()`** | (Flask built-in) | UC-style full chain tests (already in `tests/test_forex_ibkr_e2e.py`) | No new dependency; same process, deterministic mocks for `ib_insync` / DB. |
-| **pytest fixtures (optional)** | **pytest-flask** | **1.3.0** (PyPI) | `client` fixture, `app` lifecycle helpers | Optional convenience only; not required if you keep manual `Flask(__name__)` + blueprint registration. |
-| **Browser / real HTTP** | **@playwright/test** + **playwright** | **1.59.1** (npm, as of research) | True E2E: Vue app + API, cross-origin, cookies, redirects | Microsoft-maintained; fits “HTTP frontend testing” beyond Jest unit tests. Install browser binaries via `npx playwright install` in CI. |
-| **Already present** | **axios** (frontend), **requests** (backend deps) | — | Manual black-box HTTP | Useful for smoke scripts; not a substitute for Playwright when you need DOM + network assertions. |
-
-**Vue 2 + Vue CLI 5 note:** Keep **Jest + `@vue/test-utils`** for component/unit tests. Add Playwright **only** for the subset of flows that need a real browser or full-stack HTTP.
-
-**What NOT to add (unless requirements expand)**
-
-| Avoid | Why |
-|-------|-----|
-| **ibapi** (official Java/Python sync API) | Duplicates `ib_insync`; two stacks for one gateway. |
-| **Redis / external cache** for qualify | In-process `TTLCache` matches single-gateway, single-process trading engine; add Redis only for multi-instance deployments. |
-| **Cypress** (in addition to Playwright) | One browser E2E framework is enough; team already has Playwright skill in `webapp-testing` tooling ecosystem. |
-| **Supertest** | Node-centric; backend is Python — use Flask client or `requests` against test server. |
-| **Heavy new API frameworks** | No benefit for “Flask test client + HTTP E2E” milestone. |
-
----
+Standalone script under `scripts/cross_sectional/` should use the **same** pinned versions as the backend once the milestone locks versions.
 
 ## Alternatives Considered
 
-| Category | Recommended | Alternative | Why Not |
-|----------|-------------|-------------|---------|
-| Qualify cache | `cachetools.TTLCache` | Manual TTL dict | OK for minimal scope; cachetools reduces bugs at small cost. |
-| | `cachetools` | `cacheout` / `diskcache` | cachetools is tiny, widely used, no disk complexity. |
-| Browser E2E | Playwright | Cypress | Either works; Playwright tends to fit CI + multi-browser with one runner. |
-| Limit price math | `Decimal` + `minTick` | float only | IB rejects invalid increments; Decimal is stdlib. |
-| Metals contract | `Forex` vs `Commodity` | Futures (`Future`) | Milestone scope is spot/IDEALPRO-style metals, not dated futures. |
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| BS4 + lxml | **pandas.read_html** | Quick one-offs; less control over malformed tables — OK for exploration, fragile as sole production parser. |
+| `requests` | **httpx** / **aiohttp** | Many concurrent third-party fetches; still respect rate limits and terms of use. |
+| `joblib.Parallel` | **multiprocessing.Pool** | Zero extra deps; more boilerplate for chunking and error propagation. |
+| **PostgreSQL tables** for constituents + optional disk CSV | **Redis** | Multi-instance hot cache or pub/sub; v2.0 does not require Redis if DB + short-lived in-process cache suffice. |
+| **pandas DataFrame panels** | **Polars** / **xarray** | Very large universes or explicit 3-D labeled arrays; adds migration cost — revisit if profiling shows pandas as bottleneck. |
+| **pandas_market_calendars** | Manual US holiday list + **pandas.tseries.offsets.BDay** | Simpler if you only need weekdays and accept wrong behavior around full-market holidays; not recommended for production-grade T+1. |
 
----
+## What NOT to Use
 
-## Installation (incremental)
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| **Scrapy** | Heavy framework for periodic single-URL/table jobs | `requests` + BS4 + APScheduler (already in stack) |
+| **Selenium / Playwright** for NQ100-only lists | CI/runtime cost unless targets require JS rendering | Plain HTTP + HTML parse first; add browser automation only after proving static HTML is insufficient |
+| **Replacing Flask or PostgreSQL** | Out of project constraints | Keep API and SQLAlchemy/psycopg2 patterns |
+| **Dask / Ray** for initial grid search | Operational complexity; NQ100 × thousands of combos typically fits one machine RAM | `joblib` or `ProcessPoolExecutor`; scale out only when profiling demands it |
+| **Celery** as mandatory | v2.0 is backend + script; no distributed queue requirement | APScheduler + cron for constituent refresh |
 
-```bash
-# Backend — qualify cache (optional but recommended)
-pip install "cachetools>=7.0.5"
+## Stack Patterns by Variant
 
-# Optional pytest helpers
-pip install "pytest-flask>=1.3.0"
+**If scraping is rate-limited or unstable:**
 
-# Frontend — browser E2E (dev)
-cd quantdinger_vue && npm install -D @playwright/test@1.59.1 playwright@1.59.1
-npx playwright install
-```
+- Wrap fetch + parse with **tenacity**; optionally persist raw HTML (blob column or file) for audit and reparse.
+- Use a stable **User-Agent** and comply with **robots.txt** / site terms.
 
-Pin exact versions in `requirements.txt` / `package.json` when the milestone locks dependencies.
+**If grid search parallelizes:**
 
----
+- Single writer for **checkpoint.json** / JSONL — or **filelock** around append/rewrite.
+- Avoid nested parallelism (many worker processes + multi-threaded BLAS): set `OMP_NUM_THREADS=1` (and friends) for workers.
+
+**If fixing survivor bias, T+1, halts in software:**
+
+- **Survivor bias:** join returns to **point-in-time** membership from DB constituent history (see schema below), not “today’s” list applied to history.
+- **T+1:** rank on signal bar (e.g. close); execute on **next session open** — optional **pandas_market_calendars** for correct next open across holidays.
+- **Halts / limits:** logic in backtest engine (no position change when volume=0 or rule says untradeable); optional reference data later — no extra pip package required for a minimal v2.0.
+
+## Version Compatibility
+
+| Package A | Compatible With | Notes |
+|-----------|-----------------|-----|
+| beautifulsoup4 4.14.x | lxml 6.x | `BeautifulSoup(html, "lxml")` |
+| pandas 2.2+ | numpy 1.26+ | Match wheels to Python 3.10+ images |
+| pandas 3.x (if adopted) | numpy 2.x | Read pandas 3.0 release notes; re-run full test suite |
+| SQLAlchemy 2.0+ (existing) | psycopg2-binary 2.9+ | New constituent tables use same engine/session |
+| joblib 1.5.x | stdlib multiprocessing | `n_jobs` ≤ CPU cores; `prefer="processes"` for CPU-bound pandas work |
+
+## Integration with QuantDinger
+
+| Area | Integration |
+|------|-------------|
+| **Backend** | New modules: fetch → parse → normalize tickers → upsert DB; optional route e.g. `GET /api/.../universe/nq100` reading DB cache. Reuse existing auth if exposed. |
+| **Scheduler** | **APScheduler** (already required): periodic job to refresh constituents; log `source_url`, `scraped_at`, row counts. |
+| **K-line / indicators** | No breaking change to `/api/indicator/kline`; cross-sectional engine consumes the same bars as `nq100_cross_sectional.py`. |
+| **Standalone script** | Keep brute-force script as thin client over API + local CSV cache; universe from DB export or API instead of hardcoded `NQ100_UNIVERSE` only. |
+| **Tests** | Golden HTML for parsers; backtest tests for **calendar alignment** (month-end, next open) without network. |
+
+## Database Schema (additions — illustrative)
+
+No new database *product*; use existing PostgreSQL + SQLAlchemy migrations.
+
+| Table / concept | Role |
+|-----------------|------|
+| **index_definition** | e.g. `NASDAQ100`, display name, data vendor |
+| **index_constituent_snapshot** | `(index_id, as_of_date, symbol, source, raw_hash)` — point-in-time membership for survivor-bias-aware joins |
+| **index_constituent_event** (optional) | `(index_id, symbol, effective_date, action add/remove, source)` — derived from snapshot diffs |
+
+Indexes: `(index_id, as_of_date)`, `(symbol, as_of_date)` for lookups.
+
+## Caching Strategy
+
+| Layer | What to cache | TTL / invalidation |
+|-------|---------------|-------------------|
+| **PostgreSQL** | Authoritative constituent history + “latest” row per index | Update on successful scrape; store `scraped_at` and source metadata |
+| **Application memory** | Last good list for API hot path | Minutes TTL or process lifetime |
+| **Disk (script)** | Per-symbol CSV kline cache — e.g. `scripts/cross_sectional/cache/` | Time-based (e.g. 48h) as in current script |
+| **HTTP** | `ETag` / `Last-Modified` if source supports | Reduces bandwidth when page unchanged |
+
+Do **not** scrape Nasdaq/Wikipedia on every API request — batch job + DB is the right pattern.
 
 ## Sources
 
-- PyPI JSON API: `https://pypi.org/pypi/ib-insync/json` — latest **0.9.86**
-- PyPI: **cachetools** **7.0.5**, **pytest-flask** **1.3.0**
-- `npm view @playwright/test version` — **1.59.1**
-- `erdewit/ib_insync` — `ib_insync/order.py` (`LimitOrder`), `ib_insync/contract.py` (`Forex`, `Commodity`, `ContractDetails.minTick` / `priceMagnifier`)
-- IB TWS API: ContractDetails / minimum price variation (official docs)
+- PyPI JSON API — versions verified **2026-04-13**: beautifulsoup4 **4.14.3**, lxml **6.0.4**, tenacity **9.1.4**, filelock **3.25.2**, joblib **1.5.3**, httpx **0.28.1**, pandas **3.0.2**, numpy **2.4.4**, pandas_market_calendars **5.3.2**
+- [https://pypi.org/project/beautifulsoup4/](https://pypi.org/project/beautifulsoup4/)
+- [https://pypi.org/project/lxml/](https://pypi.org/project/lxml/)
+- Project: `.planning/PROJECT.md` (v2.0 Cross-Sectional milestone)
+- Reference script: `scripts/cross_sectional/nq100_cross_sectional.py` (panels, checkpoint JSONL, CSV cache)
+- Existing deps: `backend_api_python/requirements.txt`
 
-**Overall confidence:** **HIGH** for versions and library roles; **MEDIUM** for IB-specific secType per symbol without account-specific paper validation.
+---
+*Stack research for: QuantDinger v2.0 cross-sectional strategy features*  
+*Researched: 2026-04-13*

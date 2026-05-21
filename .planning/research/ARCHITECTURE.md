@@ -1,144 +1,254 @@
-# Architecture Patterns — v1.1 Integration (Tech Debt + Limit Orders)
+# Architecture Research
 
-**Domain:** IBKR Forex live trading (brownfield extension)  
-**Researched:** 2026-04-11  
-**Scope:** NEW work only — limit orders, precious metals, qualify caching, TIF unification, normalize timing, E2E tests  
-**Overall confidence:** **HIGH** for file/method locations (read from repo); **MEDIUM** for IBKR product rules on metals (verify against IB contract specs before shipping)
+**Domain:** QuantDinger — Cross-sectional (NQ100) strategy integration (brownfield)
+**Researched:** 2026-04-13
+**Confidence:** HIGH for existing code paths (repo inspection); MEDIUM for NQ100 scrape source choice (not yet implemented)
 
-## Recommended Architecture (v1.1 Touchpoints)
+## Standard Architecture
+
+### System Overview
 
 ```
-[Flask ibkr.py POST /order] ──► IBKRClient.place_market_order | place_limit_order
-                                        │
-[PendingOrderWorker._execute_live_order] ──► get_runner → StatefulClientRunner
-                                        │         └── execute() → place_market_order ONLY (today)
-                                        │
-                                        └── records / callbacks (unchanged pattern)
+┌────────────────────────────────────────────────────────────────────────────┐
+│                         Clients & batch jobs                                │
+├────────────────────────────────────────────────────────────────────────────┤
+│  Vue 2 UI          │  scripts/cross_sectional/*.py (REST + optional DB)    │
+└──────────┬─────────┴───────────────────────┬─────────────────────────────────┘
+           │                               │  Bearer /api/auth/login
+           │ HTTP                          │  GET /api/indicator/kline (paginated)
+           ▼                               ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    Flask API (backend_api_python/app)                       │
+├────────────────────────────────────────────────────────────────────────────┤
+│  routes/          indicator (kline), backtest, strategy, scheduler         │
+│  services/        KlineService, BacktestService, scheduler_service        │
+│  strategies/      SingleSymbolStrategy, CrossSectionalStrategy, factory    │
+└──────────┬───────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│  PostgreSQL                                                                 │
+│  qd_kline_points / qd_kline_cache / qd_kline_ranges  — bar storage        │
+│  qd_market_symbols — tradable symbol catalog (per market)                  │
+│  [NEW] universe constituent snapshots — NQ100 effective membership history │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Component Boundaries (what changes vs stays)
+### Component Responsibilities
 
-| Component | Responsibility today | v1.1 delta |
-|-----------|------------------------|------------|
-| `IBKRClient` (`ibkr_trading/client.py`) | Contract, qualify, qty align, market/limit `placeOrder` | Caching inside qualify path; optional `normalize()` in order pipeline; TIF policy in `_get_tif_for_signal`; metals = extend `_create_contract` / `normalize_symbol` if not IDEALPRO CASH |
-| `normalize_symbol` (`ibkr_trading/symbols.py`) | Forex → 6-char pair, IDEALPRO, quote ccy | Metals already listed in `KNOWN_FOREX_PAIR`; non–Forex-style contracts need new branches |
-| `StatefulClientRunner` (`runners/stateful_runner.py`) | RTH `pre_check`; `execute` → **`place_market_order` only** | **New:** branch or sibling path for limit orders (needs price + order kind on `OrderContext` / payload) |
-| `PendingOrderWorker` (`pending_order_worker.py`) | Build `OrderContext`, `create_client`, `get_runner`, `pre_check`, `execute` | Pass through limit fields from `payload` once runner supports limits |
-| `app/routes/ibkr.py` | Dispatches market vs limit to client | Already calls `place_limit_order` when `orderType == 'limit'` |
-| Vue `trading-assistant` | Wizard UX | E2E improvements are mostly **backend** in this repo; frontend hooks via HTTP API, not Flask `test_client` |
+| Component | Responsibility | Typical Implementation |
+|-----------|----------------|------------------------|
+| `KlineService` + `kline_fetcher` | Single-symbol OHLCV; DB-first then upstream | Existing; feeds `/api/indicator/kline` and `BacktestService._fetch_kline_data` |
+| `BacktestService` | Per-symbol indicator execution + `_simulate_trading` | `app/services/backtest.py`; REST: `routes/backtest.py` |
+| `CrossSectionalStrategy` + `run_cross_sectional_indicator` | Multi-symbol `data: {symbol: df}` → scores/rankings via user indicator code | `app/strategies/cross_sectional*.py` — **already integrated** with executor path |
+| `scheduler_service` | APScheduler: kline sync, pluggable `register_scheduled_job` | Extend for periodic NQ100 scrape |
+| `scripts/cross_sectional/nq100_cross_sectional.py` | Offline grid search; login + paginated kline pull | Prototype of standalone script pattern |
 
-## Integration Answers (numbered)
+## Recommended Project Structure (v2.0 additions)
 
-### (1) Where `place_limit_order` fits alongside `place_market_order`
+```
+backend_api_python/app/
+├── routes/
+│   └── universe.py              # NEW: GET constituents, history (optional admin POST refresh)
+├── services/
+│   ├── nq100_constituent_service.py   # NEW: scrape → normalize → persist snapshots
+│   └── cross_sectional/               # NEW package: reusable factor math (optional)
+│       ├── __init__.py
+│       ├── factors.py                 # pure pandas/numpy factor defs (shared with scripts)
+│       └── panels.py                  # align dates, survivorship helpers
+├── models/  (or existing models file)
+│   └── universe_snapshot.py     # NEW: SQLAlchemy model for index membership rows
+└── strategies/
+    ├── cross_sectional.py       # EXISTING — keep; may call shared factor helpers
+    └── cross_sectional_indicator.py  # EXISTING exec() sandbox; optional thinner wrapper
 
-**Location:** `backend_api_python/app/services/live_trading/ibkr_trading/client.py`
+scripts/cross_sectional/
+├── nq100_cross_sectional.py     # EXISTING — heavy search; refactor imports from app.* shared lib
+└── README.md                    # optional: env vars, DSN vs REST
+```
 
-Both methods are parallel implementations:
+### Structure Rationale
 
-- **Shared preamble (sync):** `get_normalizer(market_type).check(quantity, symbol)` via `app.services.live_trading.ibkr_trading.order_normalizer` (re-exports `live_trading/order_normalizer`), then `_get_tif_for_signal(signal_type, market_type)`.
-- **Shared async body:** `_ensure_connected_async` → `_create_contract` → `_qualify_contract_async` → `_validate_qualified_contract` → `_align_qty_to_contract` → build order → `self._ib.placeOrder` → `_order_contexts[oid] = IBKROrderContext(...)`.
+- **`services/cross_sectional/`:** Pure Python (no Flask request context) so the same factor/panel code runs inside `BacktestService`, executor-driven strategies, and CLI scripts without duplication.
+- **`routes/universe.py` + DB snapshots:** Constituent history is authoritative server-side data; scripts and future automation read one API instead of hardcoded lists.
+- **Keep `strategies/cross_sectional*.py`:** Already wired through `create_strategy()`; new work augments data sources and backtest correctness, not a parallel strategy system.
 
-**Difference:** `place_market_order` uses `ib_insync.MarketOrder(...)`; `place_limit_order` uses `ib_insync.LimitOrder(..., lmtPrice=price, ...)`.
+## Architectural Patterns
 
-**API:** `backend_api_python/app/routes/ibkr.py` (`place_order`) already routes `orderType == 'limit'` to `client.place_limit_order(...)`.
+### Pattern 1: Server-owned universe + client pull (REST)
 
-**Gap for automated live trading:** `StatefulClientRunner.execute` only invokes `place_market_order` (see `stateful_runner.py` ~lines 76–90). Any **strategy-driven** limit flow must extend the runner (or add a dedicated runner) and plumb **limit price + order type** through `OrderContext` and `PendingOrderWorker._execute_live_order`’s `ctx` construction.
+**What:** NQ100 membership and effective dates live in PostgreSQL; HTTP API returns “as of date” constituents and optional change log.
+**When to use:** Default for QuantDinger — aligns with existing auth, logging, and single cache path for klines.
+**Trade-offs:** (+) consistent with Docker deployment; (−) bulk backtests need pagination or a batch export endpoint if REST becomes the bottleneck.
 
-### (2) Where qualify caching hooks into `_qualify_contract_async`
+### Pattern 2: Shared library + thin routes
 
-**Primary hook:** `IBKRClient._qualify_contract_async` in `client.py` (~851–856), the single async entry that calls `self._ib.qualifyContractsAsync(contract)`.
+**What:** Scrape/normalize/factor/panel code in importable modules; Flask routes only parse/validate and call services.
+**When to use:** Always — matches existing `StrategyService`, `KlineService` style.
+**Trade-offs:** (+) testable without HTTP; (−) requires discipline to avoid circular imports (keep factors free of Flask).
 
-**Related caches (not qualify today):**
+### Pattern 3: Scheduled refresh (APScheduler)
 
-- `_lot_size_cache` on `conId` — used in `_align_qty_to_contract` after qualification populates `conId`.
-- `is_market_open` uses `_rth_details_cache` keyed by `(conId, date_str)` for **RTH** contract details, not for qualify itself.
+**What:** Register `register_scheduled_job("nq100_constituent_refresh", ...)` alongside `kline_sync` in `app/tasks/__init__.py` pattern.
+**When to use:** NQ100 rebalances quarterly; daily/weekly job is enough.
+**Trade-offs:** (+) reuses existing scheduler infra; (−) long-running scrape should be idempotent and logged.
 
-**Recommendation:** Implement a **contract-qualify cache** (e.g. keyed by stable hash of `(secType, symbol, currency, exchange, localSymbol)` or normalized `(market_type, display_symbol)` → qualified contract snapshot / `conId`) **inside or immediately wrapping** `_qualify_contract_async`, so all callers (`place_market_order`, `place_limit_order`, `get_quote`, `is_market_open`) benefit without duplicating logic.
+## Data Flow
 
-**Confidence:** HIGH for hook point; MEDIUM for optimal cache key and invalidation policy (TTL vs session).
+### Request Flow (standalone script → kline cache)
 
-### (3) How `_create_contract` must change for precious metals
+```
+Script: login → Bearer token
+    → GET /api/indicator/kline?market=USStock&symbol=X&timeframe=1D&limit=&before_time=
+    → KlineService.get_kline → qd_kline_points (read/merge) → upstream fetch → writeback
+    → JSON rows → pandas panel in script
+```
 
-**Current behavior** (`client.py` ~841–849):
+### Cross-sectional live/strategy path (existing)
 
-- `normalize_symbol(symbol, market_type)` in `symbols.py` returns `(ib_symbol, exchange, currency)`.
-- For `market_type == "Forex"`, `_create_contract` returns `ib_insync.Forex(pair=ib_symbol)` (IDEALPRO CASH).
+```
+Executor → DataHandler (multi-df) → InputContext["data"] = {sym: df}
+    → run_cross_sectional_indicator(code, data, trading_config)
+    → scores / rankings → generate_cross_sectional_signals → orders
+```
 
-**Precious metals in repo today:** `KNOWN_FOREX_PAIRS` in `symbols.py` includes `XAUUSD`, `XAGUSD`, `XAUEUR` — treated as **six-letter Forex pairs** like fiat pairs.
+### Key Data Flows
 
-**Implication:** If v1.1 “precious metal contracts” means **continuing IDEALPRO spot CASH pairs**, `_create_contract` may need **no new branch**; work may concentrate on validation (`_validate_qualified_contract`), docs, and tests.
+1. **Constituent refresh:** External source (NASDAQ/Wikipedia/API TBD) → `nq100_constituent_service` → **new table** rows `(index_id, symbol, effective_from, effective_to|null, source, scraped_at)` — **not** JSON-only, so queries like “members on date T” are indexed and auditable.
+2. **Cross-sectional backtest (new/extended):** Universe snapshots × `qd_kline_points` for each symbol → aligned panel → factor engine → rank → portfolio returns with **explicit T+1 and halt rules** (pitfall fixes).
 
-**If** product requires **non-CASH** instruments (e.g. futures, CFDs, or a different exchange):
+## Scaling Considerations
 
-- Extend `normalize_symbol` with a distinct `market_type` (or detection rules).
-- Add a branch in `_create_contract` (e.g. `ib_insync.Future(...)`, `Contract(secType=...)`) per IBKR contract definitions.
-- Extend `_EXPECTED_SEC_TYPES` and any Forex-specific assumptions (`_get_tif_for_signal` currently treats all `"Forex"` as IOC).
+| Scale | Architecture Adjustments |
+|-------|-------------------------|
+| Single developer / one machine | Monolith + PostgreSQL + existing `qd_kline_points` indexes; script CSV cache under `scripts/cross_sectional/cache/` for repeat runs |
+| Repeat large grids (5k+ backtests) | Precompute daily return panel (Parquet on NAS or temp table); optional `GET /api/.../export` bulk bar range for trusted users |
+| 100+ symbols × 1D × ~10y | ~250k bars/symbol-tier — feasible in Postgres with `(market, symbol, interval_sec, time_sec)` indexes; avoid N+1 HTTP: batch DB read in script mode or server-side panel builder |
 
-**Confidence:** HIGH for current code path; **verify on paper** for each metal symbol’s actual IB `secType`/exchange.
+### Scaling Priorities
 
-### (4) Where `normalize()` should be called in the order flow
+1. **First bottleneck:** HTTP per-symbol loops — mitigate with direct read-only DB URL for batch jobs *or* a dedicated export service method.
+2. **Second bottleneck:** Repeated factor computation — memoize panels on disk (JSONL checkpoint already in script) or shared Parquet.
 
-**Current behavior:** `place_market_order` and `place_limit_order` call only `get_normalizer(market_type).check(quantity, symbol)`. They do **not** call `OrderNormalizer.normalize()`.
+## Anti-Patterns
 
-**Forex:** `ForexNormalizer.normalize` in `order_normalizer/forex.py` is identity (`return raw_qty`) — used to satisfy the abstract API; `_align_qty_to_contract` performs IB-driven rounding.
+### Anti-Pattern 1: Hardcoded universe in production paths
 
-**Recommended pipeline (if v1.1 explicitly wires `normalize`):**
+**What people do:** Keep `NQ100_UNIVERSE` only in `scripts/` as the source of truth.
+**Why it's wrong:** Survivorship and rebalance correctness require historical membership; static lists bias results.
+**Do this instead:** DB snapshots + API; script falls back to API, keeps CSV only as cache.
 
-1. `check(raw_qty, symbol)` — reject invalid inputs early.
-2. `normalized_qty = normalize(raw_qty, symbol)` — identity for Forex today; future-proof for other categories.
-3. `_create_contract` / qualify / validate.
-4. `await _align_qty_to_contract(contract, normalized_qty, symbol)` — final increment alignment.
+### Anti-Pattern 2: Duplicating cross-sectional backtest inside `BacktestService.run()` without a dedicated code path
 
-**Single file change surface:** the sync section at the start of `place_market_order` / `place_limit_order`, or the first line inside `_do()` before align — **after** `check` and **before** `_align_qty_to_contract`. Avoid calling `normalize` only after qualify if the intent is consistent qty semantics through the whole IB path.
+**What people do:** Force multi-symbol logic into single-symbol `run()` loops.
+**Why it's wrong:** `BacktestService.run` is built around one `df` and per-symbol indicator execution (`_execute_indicator` on one frame — see `app/services/backtest.py`).
+**Do this instead:** New method or `CrossSectionalBacktestService` that builds panels, applies pitfall rules, and optionally shares factor helpers with `run_cross_sectional_indicator` semantics.
 
-**Note:** Phase 8 planning docs in-repo stated “normalize() not called on purpose”; v1.1 “normalize timing fix” supersedes that product decision — document the new invariant in code comments when implemented.
+### Anti-Pattern 3: JSON blob-only constituent history
 
-### (5) How E2E tests hook into Flask `test_client` and the frontend
+**What people do:** One JSON file per day in the repo.
+**Why it's wrong:** Hard to query “who was in the index on 2023-06-15”, no concurrent access, weak audit trail.
+**Do this instead:** Relational rows or at least a single table with normalized dates; JSON optional as scrape staging before upsert.
 
-**Backend E2E (this repository):**
+## Integration Points
 
-- **`backend_api_python/tests/test_forex_ibkr_e2e.py`:** Documents chain: minimal Flask app → `register_blueprint(strategy_bp)` → `app.test_client()`; mocks JWT/psycopg2; patches `get_db_connection`; uses **real** `PendingOrderWorker`, `StatefulClientRunner`, `IBKRClient` with mocked `ib_insync`. This is the pattern to extend for limit-order or caching scenarios.
-- **`backend_api_python/tests/test_ibkr_dashboard.py`:** Registers `ibkr_bp` at `/api/ibkr`, uses `test_client` for dashboard API tests.
+### Answers to milestone questions
 
-**Frontend:** There is **no** Flask `test_client` bridge to Vue in this repo’s tests. The wizard (`quantdinger_vue/src/views/trading-assistant/index.vue`) talks to the backend over HTTP; improving E2E there implies **browser automation** (e.g. Playwright in `webapp-testing` skill) or separate Vue test stack — **out of scope** for pure Flask `test_client` tests.
+#### 1) NQ100 constituent management — where it lives
 
-## Patterns to Follow
+| Layer | New vs modified | Recommendation |
+|-------|-----------------|----------------|
+| Model | **New** | Table e.g. `qd_index_constituents` (or `qd_universe_membership`) with index key `NASDAQ100`, symbol, effective dates |
+| Service | **New** | `Nq100ConstituentService`: fetch, parse, diff, upsert |
+| Route | **New** | `GET /api/universe/nq100?as_of=YYYY-MM-DD`, `GET .../history` under `routes/universe.py` (blueprint registered in `routes/__init__.py`) |
+| Schedule | **New job** | `register_scheduled_job` + manual trigger route mirroring `/api/scheduler` patterns |
 
-### Pattern: One IBKR order pipeline
+#### 2) Constituent history snapshots — storage
 
-Keep `place_market_order` and `place_limit_order` structurally identical except order type and limit price — any caching, TIF, or normalize behavior should apply to **both** unless product explicitly diverges.
+| Option | Verdict |
+|--------|---------|
+| **PostgreSQL rows (recommended)** | Queryable, concurrent-safe, fits existing migration style (`migrations/*.sql`) |
+| JSON in DB | OK for raw scrape payload *in addition to* normalized rows, not as sole store |
+| CSV in repo | Dev-only; script cache already uses `scripts/cross_sectional/cache/` for kline — acceptable for **derived** caches, not authoritative membership |
 
-### Pattern: Runner as single execution policy
+#### 3) Cross-sectional factor engine — module vs standalone
 
-`factory.get_runner(client)` returns `StatefulClientRunner` for IBKR (`factory.py`). Execution policy (market vs limit) should stay centralized here once limit orders are supported for live pending orders.
+| Approach | Verdict |
+|----------|---------|
+| **Backend module** (`app/services/cross_sectional/` + optional thin strategy glue) | **Recommended:** same code for API backtest, automation, and `scripts/` via `PYTHONPATH` or package install |
+| Standalone package only | Rejected for v2.0 — duplicates deployment and version drift |
 
-## Anti-Patterns to Avoid
+Interaction with kline/indicator APIs: factors consume **panels** built from `KlineService` / DB — not a new kline table. User-defined cross-sectional **indicators** still go through `run_cross_sectional_indicator` (`exec` sandbox); **library factors** are imported helpers used when building panels or generating default indicator templates.
 
-- **Duplicating qualify** outside `_qualify_contract_async` for caching — risks inconsistent cache keys and missed callers (`get_quote`, `is_market_open`).
-- **Calling `place_limit_order` only from REST** while the worker still only knows market orders — splits behavior between manual API and automated trading unintentionally.
+#### 4) Standalone backtest script — placement and backend interaction
 
-## Suggested Build Order (dependencies)
+| Topic | Recommendation |
+|-------|----------------|
+| **Placement** | Keep under `scripts/cross_sectional/` (already matches repo convention); add shared imports from `app.services.cross_sectional` |
+| **Auth** | **REST:** `POST /api/auth/login` → `Authorization: Bearer <token>` on `/api/indicator/kline` (implemented in `nq100_cross_sectional.py`) |
+| **Direct DB** | **Optional** for trusted batch jobs: read-only connection to `qd_kline_points` bypasses HTTP overhead — use same DSN as backend (`env`), never write from script except local cache files |
+| **Both** | Use REST when populating cache from live API; use DB direct only after security review |
 
-1. **Qualify caching** — isolated to `IBKRClient`, low coupling; unblocks latency for all paths.
-2. **TIF unification (`_get_tif_for_signal`)** — single method; affects both order types equally.
-3. **`normalize()` timing** — small, testable change in `place_market_order` / `place_limit_order` + unit tests in `test_order_normalizer.py`.
-4. **Precious metals contract rules** — depends on product decision (CASH vs futures); may be docs/tests only if already covered by Forex branch.
-5. **Limit orders in live pipeline** — requires `OrderContext` + payload fields + `StatefulClientRunner` + worker; depends on (1)(2) for stable behavior.
-6. **E2E** — extend `test_forex_ibkr_e2e.py` after runner supports limit or after new API surface is stable.
+#### 5) Suggested build order (dependencies)
 
-## Scalability Considerations
+1. **DB + API for NQ100 membership** — downstream needs correct universe for survivorship-aware joins.
+2. **Kline coverage for universe** — ensure `USStock` symbols sync/backfill (existing scheduler + `scripts/backfill_kline_history.py` patterns).
+3. **Shared factor/panel library** — pure functions + tests; refactor script to import them.
+4. **Backtest pitfall audit & implementation** — touch `BacktestService` single-symbol paths and add **cross-sectional** backtest path (panels, T+1, halts); see “Backtest pitfall audit” below.
+5. **Wire cross-sectional backtest to API** (optional in v2.0 if scope is script-only per PROJECT.md — confirm; PROJECT says backend + script).
+6. **Heavy grid search script** — last; depends on correct panels and metrics.
 
-| Concern | Notes |
-|--------|--------|
-| Qualify cache growth | Bound entries (LRU/TTL) if symbol universe grows. |
-| Thread safety | `IBKRClient` uses `TaskQueue` / ib loop; cache dicts should follow same threading model as existing `_lot_size_cache`. |
+#### 6) Large data volume (100+ symbols × daily × years)
+
+- **Storage:** Existing `qd_kline_points` is the right sink; composite index supports range scans per symbol.
+- **Compute:** Build **daily** panels in pandas in chunks (symbol batches), persist checkpoint (script already uses JSONL).
+- **API:** Prefer **bounded** `limit` + `before_time` pagination (script pattern) or server-side “panel build” job for repeated research.
+- **Optional materialization:** Nightly job writing a **Parquet** daily panel for NQ100 to speed research — product decision, not required for MVP.
+
+### Backtest pitfall audit — code paths to review
+
+| Concern | Where to look | Notes |
+|---------|----------------|-------|
+| Single-symbol backtest | `app/services/backtest.py` — `run`, `_fetch_kline_data`, `_simulate_trading` | Survivorship: data only for symbols still in DB — universe table + delisted bars policy |
+| REST entry | `app/routes/backtest.py` — `run_backtest` | Params for future `strategyType=cross_sectional` if exposed |
+| Cross-sectional **live** path | `app/strategies/cross_sectional.py`, `cross_sectional_indicator.py`, `DataHandler` (multi-df) | Confirms ranking **execution** is separate from backtest pitfall fixes |
+| Script prototype | `scripts/cross_sectional/nq100_cross_sectional.py` | Monthly rebalance logic — align with “signal day close → next open” when porting to service |
+| Kline integrity | `app/services/kline.py`, `kline_fetcher.py` | Stale/missing bars → halts |
+
+**Engine location:** Primary backtest engine for single-symbol is **`BacktestService`** in `app/services/backtest.py`. Cross-sectional **research** engine for v2.0 should be a **new service module** (or clearly named methods) that reuses kline loading primitives but **does not** pretend to be a second `run()` with one `df`.
+
+### External Services
+
+| Service | Integration Pattern | Notes |
+|---------|---------------------|-------|
+| NQ100 source (web/API) | HTTP client in `Nq100ConstituentService` | Rate limits + User-Agent; store raw response hash for idempotency |
+| Existing market data | `KlineService` / data sources | Unchanged contract for USStock |
+
+### Internal Boundaries
+
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| Universe API ↔ Kline sync | Indirect | Scheduler may add symbols to watchlists or document “ensure these symbols synced” |
+| Factor library ↔ `run_cross_sectional_indicator` | Import | Library builds `scores`; user code can still `exec` for custom combine |
+| Scripts ↔ `app` | `PYTHONPATH=backend_api_python` or editable install | Same codebase, no fork |
+
+## New vs modified components (explicit)
+
+| Component | New | Modified |
+|-----------|-----|----------|
+| Constituent table + migration | ✓ | |
+| `Nq100ConstituentService`, scrape | ✓ | |
+| `routes/universe.py` | ✓ | `routes/__init__.py` |
+| APScheduler job for refresh | ✓ | `app/tasks/__init__.py` (registration) |
+| `app/services/cross_sectional/` factor/panel lib | ✓ | |
+| `BacktestService` or new CS backtest service | | ✓ (pitfalls + API) |
+| `scripts/cross_sectional/nq100_cross_sectional.py` | | ✓ (imports shared lib, optional API for universe) |
+| `CrossSectionalStrategy` / factory | | Maybe ✓ (only if wiring new factor helpers) |
 
 ## Sources
 
-- Code: `backend_api_python/app/services/live_trading/ibkr_trading/client.py`
-- Code: `backend_api_python/app/services/live_trading/ibkr_trading/symbols.py`
-- Code: `backend_api_python/app/services/live_trading/runners/stateful_runner.py`
-- Code: `backend_api_python/app/services/pending_order_worker.py`
-- Code: `backend_api_python/app/routes/ibkr.py`
-- Code: `backend_api_python/tests/test_forex_ibkr_e2e.py`
-- Planning (historical): `.planning/milestones/v1.0-phases/08-quantity-normalization-ib-alignment/08-CONTEXT.md` (prior decision on `normalize()` not in main chain)
+- Repository: `backend_api_python/app/services/backtest.py`, `app/routes/backtest.py`, `app/strategies/cross_sectional*.py`, `app/services/scheduler_service.py`, `scripts/cross_sectional/nq100_cross_sectional.py`, `migrations/init.sql` (`qd_kline_points`, `qd_market_symbols`)
+
+---
+*Architecture research for: QuantDinger v2.0 cross-sectional integration*
+*Researched: 2026-04-13*

@@ -14,6 +14,7 @@ def register_all_tasks() -> None:
     """注册所有启用的插件定时任务到 APScheduler。"""
     from app.services.scheduler_service import register_scheduled_job
     from app.tasks import kline_sync
+    from app.tasks import nq100_universe_sync
 
     registered = []
 
@@ -27,6 +28,17 @@ def register_all_tasks() -> None:
         registered.append(kline_sync.JOB_ID)
     else:
         logger.info("kline_sync plugin disabled (using existing /api/scheduler route)")
+
+    if nq100_universe_sync.ENABLED:
+        register_scheduled_job(
+            nq100_universe_sync.JOB_ID,
+            nq100_universe_sync.run,
+            nq100_universe_sync.INTERVAL_MINUTES,
+            run_immediately=False,
+        )
+        registered.append(nq100_universe_sync.JOB_ID)
+    else:
+        logger.info("nq100_universe_sync plugin disabled")
 
     if registered:
         logger.info("Plugin tasks registered: %s", ", ".join(registered))

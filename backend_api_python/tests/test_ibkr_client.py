@@ -181,7 +181,14 @@ def _make_client_with_mock_ib():
         pass
 
     def _sync_fire_submit(fn, is_blocking=True):
-        fn()
+        result = fn()
+        if asyncio.iscoroutine(result):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(result)
+            finally:
+                loop.close()
+        return result
 
     client._fire_submit = MagicMock(side_effect=_sync_fire_submit)
 
@@ -192,11 +199,38 @@ def _make_client_with_mock_ib():
                 return loop.run_until_complete(fn)
             finally:
                 loop.close()
-        return fn()
+        result = fn()
+        if asyncio.iscoroutine(result):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(result)
+            finally:
+                loop.close()
+        return result
     client._submit = _submit
     client._ensure_connected_async = _noop_ensure
 
     return client
+
+
+def _sync_submit_coro_safe(fn, timeout=60.0, is_blocking=False):
+    """Run callable/coroutine synchronously for tests."""
+    import asyncio
+
+    if asyncio.iscoroutine(fn):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(fn)
+        finally:
+            loop.close()
+    result = fn()
+    if asyncio.iscoroutine(result):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(result)
+        finally:
+            loop.close()
+    return result
 
 
 def _make_forex_rth_client(liquid_hours: str, time_zone_id: str, server_time_utc: datetime.datetime):
@@ -2334,9 +2368,7 @@ class TestForexPositionPnLEvents:
         pnl_kw = mock_save_position.call_args_list[-1][1]
         assert pnl_kw["symbol"] == "EUR.USD"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         out = client.get_positions()
         assert out[0]["symbol"] == "EUR.USD"
@@ -2364,9 +2396,7 @@ class TestGetPnlFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_pnl()
 
@@ -2404,9 +2434,7 @@ class TestGetPnlFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_pnl()
 
@@ -2418,9 +2446,7 @@ class TestGetPnlFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_pnl()
 
@@ -2458,9 +2484,7 @@ class TestGetPositionsFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_positions()
 
@@ -2498,9 +2522,7 @@ class TestGetPositionsFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_positions()
 
@@ -2512,9 +2534,7 @@ class TestGetPositionsFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_positions()
 
@@ -2535,9 +2555,7 @@ class TestGetPositionsFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_positions()
 
@@ -2567,9 +2585,7 @@ class TestGetPositionsFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_positions()
         assert len(result) == 1
@@ -2602,9 +2618,7 @@ class TestGetPositionsFromDatabase:
         client = _make_client_with_mock_ib()
         client._account = "DU123456"
 
-        def _sync_submit(fn, timeout=60.0, is_blocking=False):
-            return fn()
-        client._submit = _sync_submit
+        client._submit = _sync_submit_coro_safe
 
         result = client.get_positions()
         assert len(result) == 1

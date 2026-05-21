@@ -1,112 +1,109 @@
-# Codebase Concerns
+# 代码库关注点（Concerns）
 
-**Analysis Date:** 2026-04-09
+**分析日期：** 2026-04-22
 
-## Tech Debt
+## 技术债（Tech Debt）
 
-**Oversized modules (hard to review and risky to change):**
-- `backend_api_python/app/services/backtest.py` (~3856 lines) — backtest engine, signal handling, and position logic in one file; regressions are costly to catch without narrower modules or golden tests.
-- `backend_api_python/app/routes/global_market.py` (~1778 lines) — many external data sources and caching paths in one route module.
-- `backend_api_python/app/routes/settings.py` (~1318 lines) — large settings surface mixed with API wiring.
-- `backend_api_python/app/services/portfolio_monitor.py` (~1284 lines) — long-running monitor logic in one place.
+**动态代码执行链路分叉（同域能力两套实现）:**
+- Issue: 指标代码校验接口直接 `exec` 用户输入，而通用安全执行能力已经独立在 `safe_exec` 中，形成“同类需求、不同防护基线”的技术债。
+- Files: `backend_api_python/app/routes/indicator.py`, `backend_api_python/app/utils/safe_exec.py`, `backend_api_python/app/services/indicator_params.py`, `backend_api_python/app/services/backtest.py`
+- Impact: 安全策略和超时/资源限制难统一，后续修复容易出现漏改入口。
+- Fix approach: 统一改为单一执行网关（预校验 + 安全执行），禁止路由层裸 `exec`。
 
-**Configuration vs implementation drift:**
-- `Config.CORS_ORIGINS` in `backend_api_python/app/config/settings.py` reads `CORS_ORIGINS` / addon config, but the app registers CORS with `CORS(app)` and no `origins=` in `backend_api_python/app/__init__.py`. The documented “comma-separated origins” setting does not appear to constrain browser origins at the Flask-CORS layer.
-- `get_internal_api_key()` in `backend_api_python/app/utils/config_loader.py` loads `INTERNAL_API_KEY` (also listed in `backend_api_python/env.example` and `backend_api_python/app/routes/settings.py`). No route or middleware in `backend_api_python/app/` was found that validates this key for service-to-service calls — likely incomplete or dead configuration surface.
+**核心模块体量过大且职责混合:**
+- Issue: 多个关键文件超过 1k 行，集成“参数解析、领域逻辑、异常恢复、外部适配、落库”多职责。
+- Files: `backend_api_python/app/services/backtest.py` (3856 行), `backend_api_python/app/services/live_trading/ibkr_trading/client.py` (1784 行), `backend_api_python/app/routes/global_market.py` (1778 行), `backend_api_python/app/routes/settings.py` (1318 行), `backend_api_python/app/services/portfolio_monitor.py` (1284 行)
+- Impact: 变更半径大、回归成本高，问题定位与代码评审效率持续下降。
+- Fix approach: 先按边界拆分（路由层/编排层/适配层/存储层），再以模块级测试封装行为。
 
-**Dual database / compatibility paths:**
-- `backend_api_python/app/services/data_handler.py` mixes SQLite-oriented `PRAGMA` / `ALTER TABLE ... IF NOT EXISTS` with PostgreSQL-oriented patterns; migration and behavior differences increase the chance of subtle bugs when `DB_TYPE` changes.
+## 已知缺陷（Known Bugs）
 
-**User-supplied code execution:**
-- Indicator and strategy code paths use `exec()` (e.g. `backend_api_python/app/utils/safe_exec.py`, `backend_api_python/app/services/backtest.py`, `backend_api_python/app/strategies/single_symbol_indicator.py`, `backend_api_python/app/routes/indicator.py`). `safe_exec_code` is not a true sandbox: it limits time (Unix main thread only) and optional memory via `SAFE_EXEC_ENABLE_RLIMIT`, but executed code shares the API process and can access the same Python environment as the server.
+**凭据接口与实现语义不一致（“vault”名义但实际明文）:**
+- Symptoms: 凭据路由注释声明“no encryption/decryption”，并将 `api_key`/`secret_key`/`passphrase` 序列化后直接写入 `encrypted_config` 字段。
+- Files: `backend_api_python/app/routes/credentials.py`
+- Trigger: 调用 `/credentials/create` 创建任意交易所凭据时。
+- Workaround: 仅在隔离环境使用；生产通过 DB 访问控制和最小权限兜底。
 
-## Known Bugs
+## 安全考量（Security Considerations）
 
-**IBKR commission / event ordering (documented in tooling):**
-- `scripts/ibkr_commission_test.py` logs a confirmed scenario where `commissionReport` can fire after simulated context removal, causing commission loss in that test harness. Production `backend_api_python/app/services/live_trading/ibkr_trading/client.py` should be reviewed if commission accounting still depends on event ordering.
+**默认弱凭据和默认密钥仍可启动:**
+- Risk: 存在 `SECRET_KEY` 默认值与 `ADMIN_PASSWORD` 默认值，若部署遗漏环境变量会引入可预测凭据。
+- Files: `backend_api_python/app/config/settings.py`
+- Current mitigation: 支持环境变量覆盖。
+- Recommendations: 启动时检测默认值并拒绝启动；将安全基线纳入健康检查。
 
-**Sparse inline issue markers:**
-- Repository-wide `TODO` / `FIXME` / `HACK` / `XXX` in application source (excluding debug log strings) were not found in a routine scan; issue tracking likely lives outside the repo. Do not assume absence of markers means absence of issues.
+**交易所 API 凭据明文落库:**
+- Risk: `encrypted_config` 字段实际存储明文 JSON，数据库泄露会直接暴露交易权限。
+- Files: `backend_api_python/app/routes/credentials.py`
+- Current mitigation: 仅展示 `api_key_hint`，但完整凭据仍可通过 `/get` 返回给已登录用户。
+- Recommendations: 引入字段级加密（KMS/应用层密封）+ 访问审计 + 凭据轮换策略。
 
-## Security Considerations
+**用户代码执行面仍存在裸 `exec`:**
+- Risk: 指标验证与部分策略编译流程直接执行动态代码，安全边界依赖调用方约束而非统一策略。
+- Files: `backend_api_python/app/routes/indicator.py`, `backend_api_python/app/strategies/single_symbol_indicator.py`, `backend_api_python/app/strategies/cross_sectional_indicator.py`, `backend_api_python/app/services/backtest.py`
+- Current mitigation: 存在 `validate_code_safety` / `safe_exec_code` 工具，但并非所有入口强制使用。
+- Recommendations: 统一入口并强制执行 AST/黑名单校验、超时、资源限制与隔离执行。
 
-**Default and weak credentials (must change in production):**
-- `backend_api_python/app/config/settings.py`: default `SECRET_KEY` (`quantdinger-secret-key-change-me`), `ADMIN_PASSWORD` (`123456`), and related admin env defaults — unsafe if env is not set.
-- `docker-compose.yml`: default `POSTGRES_PASSWORD` (`quantdinger123`) and embedded connection string defaults — rotate for any non-local deployment.
-- `backend_api_python/app/services/user_service.py` `ensure_admin_exists()` uses `ADMIN_USER` / `ADMIN_PASSWORD` / `ADMIN_EMAIL` from env with defaults (`admin`, `admin123`, `admin@example.com`) when the user table is empty.
+## 性能瓶颈（Performance Bottlenecks）
 
-**Network exposure:**
-- `docker-compose.yml` binds Postgres and backend API to `127.0.0.1` (good for local). The `frontend` service publishes `8888:80` on all interfaces (`0.0.0.0`), unlike the backend — broader LAN exposure of the static UI unless firewall rules exist.
+**轮询驱动的后台执行模型易放大资源开销:**
+- Problem: `PendingOrderWorker` 常驻线程 + 固定 sleep 轮询，结合交易执行线程与 DB 读写形成持续负载。
+- Files: `backend_api_python/app/services/pending_order_worker.py`, `backend_api_python/app/services/live_trading/records.py`, `backend_api_python/app/services/live_trading/ibkr_trading/client.py`
+- Cause: 以固定轮询替代事件驱动/消息队列，线程和查询频率与业务峰值解耦不足。
+- Improvement path: 引入消息队列或通知机制，降低空轮询；增加队列积压、处理延迟和失败重试指标。
 
-**JWT and cookies:**
-- `backend_api_python/app/utils/auth.py` uses HS256 with `Config.SECRET_KEY`; strength depends entirely on deployment env. Frontend `quantdinger_vue/src/utils/request.js` uses `withCredentials: true` — ensure cookie/session expectations match backend CORS and same-site policy when changing origins.
+## 脆弱区域（Fragile Areas）
 
-**SQL construction:**
-- Dynamic SQL with f-strings appears where identifiers are fixed (e.g. `backend_api_python/app/services/analysis_memory.py` `WHERE` / `LIMIT` clauses). User-controlled fragments are not obviously interpolated into raw SQL in the reviewed paths; `backend_api_python/app/services/user_service.py` `list_users` builds `WHERE` with parameterized `LIKE` placeholders — acceptable pattern. Continue to avoid string-concatenating unvalidated user input into SQL.
+**IBKR 客户端异常处理过于宽泛:**
+- Files: `backend_api_python/app/services/live_trading/ibkr_trading/client.py`
+- Why fragile: 该文件存在大量 `except Exception`，部分分支直接返回 `False` 或降级，故障语义易被掩盖。
+- Safe modification: 先分层定义异常类型（连接、鉴权、下单、回调），再逐步替换 broad catch。
+- Test coverage: 有 `backend_api_python/tests/test_ibkr_client.py` 与 `backend_api_python/tests/test_ibkr_order_callback.py`，但并发重连/事件风暴场景证据不足。
 
-## Performance Bottlenecks
+**配置解析失败默认值兜底可能掩盖配置错误:**
+- Files: `backend_api_python/app/utils/config_loader.py`
+- Why fragile: 多处转换异常后返回 `0/False/{}`，部署误配置时服务可继续运行但行为偏离预期。
+- Safe modification: 为关键配置增加强校验（必填 + 类型 + 取值范围）并在启动期失败快。
+- Test coverage: 未发现针对“错误配置导致拒绝启动”的专门测试文件。
 
-**Heavy synchronous work in the API process:**
-- Large backtests and indicator execution can hold CPU and memory in the same process as HTTP handling (`backend_api_python/app/services/backtest.py`, `safe_exec` paths). Parallel strategy threads (`STRATEGY_MAX_THREADS` in `docker-compose.yml`) increase contention on a single host.
+## 扩展性限制（Scaling Limits）
 
-**External API fan-out:**
-- `backend_api_python/app/routes/global_market.py` and `backend_api_python/app/services/market_data_collector.py` aggregate many providers; cold-cache or stampeding requests can hit provider rate limits (Finnhub, yfinance, akshare, etc.).
+**线程并发与 DB 连接池以经验公式耦合:**
+- Current capacity: 连接池默认 `max(40, STRATEGY_MAX_THREADS + 80)`，线程上限与池大小联动。
+- Limit: 高并发下可能出现线程等待连接、外部 API 限速与重试叠加放大。
+- Scaling path: 建立容量压测基线（线程/连接/QPS），拆分读写池并加入背压与熔断。
 
-**Database:**
-- `docker-compose.yml` sets `max_connections=512` on Postgres; many concurrent strategies and monitors can still exhaust connections if pools are not bounded consistently across `get_db_connection()` usage.
+## 依赖风险（Dependencies at Risk）
 
-## Deprecated or Aging Dependencies
+**`psycopg2` 缺失直接降级为 PostgreSQL 不可用:**
+- Risk: 运行环境依赖完整性不满足时，核心数据路径不可用。
+- Impact: 涉及 `get_pg_connection` 的功能将报错或不可用。
+- Migration plan: 在镜像构建与启动阶段加依赖自检，缺失即阻断发布。
 
-**Python (`backend_api_python/requirements.txt`):**
-- Pinned `Flask==2.3.3`, `flask-cors==4.0.0`, `PyJWT==2.8.0` — should be tracked for security advisories and Flask 3.x migration when feasible.
+## 缺失的关键能力（Missing Critical Features）
 
-**Frontend (`quantdinger_vue/package.json`):**
-- Vue 2.6.x and Vue CLI 5 stack are in maintenance/end-of-life territory; `axios` ^0.26.1, `babel-eslint`, and older ESLint 7 align with that generation. Plan a Vue 3 + toolchain upgrade as a larger initiative, not a patch.
+**安全配置启动闸门缺失:**
+- Problem: 默认密钥、默认口令、宽 CORS 等风险配置仍允许服务启动。
+- Blocks: 运维只能靠人工 checklist，无法在系统层“阻止不安全部署”。
 
-## Code Duplication
+**统一作业运行时可观测性不足:**
+- Problem: 后台 worker 与交易执行缺少统一健康探针（队列积压、失败率、重试次数、死信量）。
+- Blocks: 出现“服务在线但交易链路劣化”时，故障发现滞后。
 
-**Platform and exchange caveats:**
-- “MT5 only on Windows” and similar notes recur across `backend_api_python/app/services/live_trading/mt5_trading/client.py`, `backend_api_python/app/services/live_trading/factory.py`, and `backend_api_python/app/routes/mt5.py` — acceptable duplication for UX/errors but easy to diverge.
+## 测试覆盖缺口（Test Coverage Gaps）
 
-**Live trading exchange clients:**
-- Multiple files under `backend_api_python/app/services/live_trading/crypto_trading/` implement similar order normalization and error strings; refactors could reduce drift (e.g. Binance vs Bitget precision handling).
+**动态执行安全边界测试不足:**
+- What's not tested: `verifyCode` 路由与策略编译路径的危险调用拦截、超时限制、资源限制一致性。
+- Files: `backend_api_python/app/routes/indicator.py`, `backend_api_python/app/utils/safe_exec.py`, `backend_api_python/tests/test_indicator_group.py`
+- Risk: 动态代码安全回归难以及时发现。
+- Priority: High
 
-## Fragile Areas
-
-**Signal-based timeouts:** `backend_api_python/app/utils/safe_exec.py` — `signal.SIGALRM` only applies on Unix and only on the main thread; Windows and worker threads effectively skip time limits.
-
-**Bare `except:` clauses** (swallow all exceptions, harder to diagnose):
-- `backend_api_python/app/services/search.py` (e.g. around lines 208, 385)
-- `backend_api_python/app/services/llm.py` (e.g. around line 464)
-- `backend_api_python/app/routes/global_market.py` (e.g. around lines 722, 1250)
-
-**Startup side effects:** `backend_api_python/app/__init__.py` restores running strategies, starts portfolio monitor and pending-order worker, and registers scheduled tasks — failures are often logged but the system may run in a partially initialized state.
-
-## Scaling Limits
-
-- Strategy thread pool default `STRATEGY_MAX_THREADS` (e.g. 256 in `docker-compose.yml`) vs CPU cores and IBKR/ exchange connection limits.
-- Single Flask process model in `backend_api_python/run.py` (`threaded=True`) — horizontal scaling requires multiple workers (e.g. gunicorn) and shared state care for strategies and monitors.
-
-## Dependencies at Risk
-
-- Optional Windows-only `MetaTrader5` is commented in `backend_api_python/requirements.txt`; MT5 features fail at runtime on Linux unless architecture is documented and guarded everywhere.
-
-## Missing Critical Features
-
-- **Frontend automated tests:** `quantdinger_vue/package.json` defines `test:unit`, but there is no meaningful suite of `*.spec.js` / test files under `quantdinger_vue/tests/` (only `tests/unit/.eslintrc.js` was present). Regressions in Vue views (e.g. trading assistant, indicator analysis) rely on manual QA.
-
-## Test Coverage Gaps
-
-**Backend:** `backend_api_python/tests/` has substantial coverage for IBKR, executors, and strategy runners, but large route modules (`global_market.py`, `settings.py`, `auth.py`, `user.py`) and `backtest.py` are disproportionately large relative to focused unit tests — integration or contract tests for critical API flows would reduce release risk.
-
-**Frontend:** Effectively no unit/component test coverage in-tree; E2E is not evident in the repo layout reviewed.
-
-## Configuration Issues
-
-- **CORS:** Documented `CORS_ORIGINS` vs actual `CORS(app)` behavior — see Tech Debt.
-- **Rate limiting:** `Config.RATE_LIMIT` exists in `backend_api_python/app/config/settings.py` and settings UI; global HTTP rate limiting via that value is not clearly wired to Flask middleware in `app/__init__.py` (Finnhub and data-source limiters are separate).
-- **Logging default:** `backend_api_python/app/utils/logger.py` defaults `LOG_LEVEL` to `DEBUG` via env default — verbose logs in production if unset.
+**前端自动化测试覆盖面偏窄:**
+- What's not tested: 前端代码文件约 159 个（排除 `node_modules/dist`），测试文件仅约 3 个，关键交易与配置页面缺少回归保护。
+- Files: `quantdinger_vue/tests/unit/frnt-01-forex-ibkr-options.spec.js`, `quantdinger_vue/tests/unit/frnt-02-wizard-forex-market.spec.js`
+- Risk: UI 交互和配置变更容易出现无感回归。
+- Priority: High
 
 ---
 
-*Concerns audit: 2026-04-09*
+*关注点审计：2026-04-22*

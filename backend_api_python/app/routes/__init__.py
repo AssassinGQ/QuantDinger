@@ -8,6 +8,7 @@ def register_routes(app: Flask):
     """Register all API route blueprints"""
     from app.routes.kline import kline_bp
     from app.routes.backtest import backtest_bp
+    from app.routes.cross_sectional_portfolio_backtest import cross_sectional_portfolio_bt_bp
     from app.routes.health import health_bp
     from app.routes.market import market_bp
     from app.routes.strategy import strategy_bp
@@ -25,12 +26,14 @@ def register_routes(app: Flask):
     from app.routes.community import community_bp
     from app.routes.fast_analysis import fast_analysis_bp
     from app.routes.scheduler import scheduler_bp
+    from app.routes.universe import universe_bp
 
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp, url_prefix='/api/auth')   # Auth routes
     app.register_blueprint(user_bp, url_prefix='/api/users')  # User management
     app.register_blueprint(kline_bp, url_prefix='/api/indicator')
     app.register_blueprint(backtest_bp, url_prefix='/api/indicator')
+    app.register_blueprint(cross_sectional_portfolio_bt_bp, url_prefix='/api/indicator')
     app.register_blueprint(market_bp, url_prefix='/api/market')
     app.register_blueprint(ai_chat_bp, url_prefix='/api/ai')
     app.register_blueprint(indicator_bp, url_prefix='/api/indicator')
@@ -45,3 +48,4 @@ def register_routes(app: Flask):
     app.register_blueprint(community_bp, url_prefix='/api/community')
     app.register_blueprint(fast_analysis_bp, url_prefix='/api/fast-analysis')
     app.register_blueprint(scheduler_bp, url_prefix='/api/scheduler')
+    app.register_blueprint(universe_bp, url_prefix='/api/universe')

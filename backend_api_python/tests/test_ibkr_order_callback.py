@@ -39,7 +39,19 @@ def _make_client():
     client._ib_executor = MagicMock()
     client._io_executor = MagicMock()
     client._tq.submit.return_value = MagicMock()
-    client._fire_submit = lambda fn, is_blocking=False: fn()
+    import asyncio
+
+    def _sync_fire_submit(fn, is_blocking=False):
+        result = fn()
+        if asyncio.iscoroutine(result):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(result)
+            finally:
+                loop.close()
+        return result
+
+    client._fire_submit = _sync_fire_submit
 
     import asyncio
 
@@ -50,7 +62,14 @@ def _make_client():
                 return loop.run_until_complete(fn)
             finally:
                 loop.close()
-        return fn()
+        result = fn()
+        if asyncio.iscoroutine(result):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(result)
+            finally:
+                loop.close()
+        return result
     client._submit = _sync_ib
 
     async def _noop_ensure(*_a, **_kw):

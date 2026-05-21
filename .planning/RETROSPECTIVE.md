@@ -114,10 +114,10 @@
 | Phases | 12 | 6 |
 | Plans | 15 | 19 |
 | Timeline | 3 days | 2 days |
-| Test count | 928 | 1049 (+121) |
+| Test count | 928 | 1060 (+132) |
 | Rework phases | 0 | 0 |
 | Tech debt items | 7 | 2 (5 resolved) |
 | Checkbox drift | yes | yes (fixed) |
 
 ---
-*Retrospective started: 2026-04-11 · Updated: 2026-04-12 (v1.1)*
+*Retrospective started: 2026-04-11 · Updated: 2026-04-13 (v1.1 completed)*

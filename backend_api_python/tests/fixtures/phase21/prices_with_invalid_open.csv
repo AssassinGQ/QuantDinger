@@ -1,0 +1,4 @@
+symbol,signal_date,execution_date,next_open,close,open_ffill,open_bfill,adv20_usd
+AAA,2024-02-01,2024-02-02,0,99.1,98.8,99.4,3200000
+BBB,2024-02-01,2024-02-02,,45.5,45.7,45.9,2800000
+CCC,2024-02-01,2024-02-02,-1,12.0,12.1,12.2,1500000

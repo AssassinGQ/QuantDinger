@@ -293,7 +293,7 @@ class IBKRClient(BaseStatefulClient):
 
     def connect(self) -> bool:
         self._reconnect_stop.clear()
-        return self._submit(self._do_connect_coro(), timeout=60)
+        return self._submit(self._do_connect_coro, timeout=60)
 
     async def _do_connect_coro(self) -> bool:
         """Async connect — must run on the IB event-loop thread."""
@@ -372,7 +372,8 @@ class IBKRClient(BaseStatefulClient):
         if self.connected:
             return
         for attempt in range(1, retries + 1):
-            if self._submit(self._do_connect_coro(), timeout=60):
+            ok = self._submit(self._do_connect_coro, timeout=60)
+            if ok:
                 return
             if attempt < retries:
                 logger.warning(
@@ -676,7 +677,7 @@ class IBKRClient(BaseStatefulClient):
             if self._reconnect_stop.wait(timeout=delay):
                 return
             try:
-                result = self._tq.submit(self._do_connect_coro(), is_blocking=False).result(timeout=30)
+                result = self._tq.submit(self._do_connect_coro, is_blocking=False).result(timeout=30)
                 if result:
                     logger.info("[IBKR-Reconnect] reconnected successfully")
                     return

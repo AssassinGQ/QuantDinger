@@ -27,3 +27,9 @@ ib_insync>=0.9.86
 # tavily-python>=0.3.0
 # SerpAPI - Google/Bing search scraper (free 100 requests/month)
 # google-search-results>=2.4.0
+
+# NQ100 universe (HTML parse + historical fallback)
+beautifulsoup4>=4.14,<5
+lxml>=6.0,<7
+# nasdaq-100-ticker-history==2026.2.0 — PyPI has no artifact; install equivalent from upstream tag v2026.2.0
+nasdaq-100-ticker-history @ git+https://github.com/jmccarrell/n100tickers.git@v2026.2.0

@@ -893,6 +893,68 @@ BEGIN
 END $$;
 
 -- =============================================================================
+-- NQ100 universe PIT
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS qd_nq100_membership (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(32) NOT NULL,
+    valid_from DATE NOT NULL,
+    valid_to DATE,
+    source VARCHAR(64) NOT NULL,
+    scraped_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_qd_nq100_membership_valid_from ON qd_nq100_membership(valid_from);
+CREATE INDEX IF NOT EXISTS idx_qd_nq100_membership_symbol ON qd_nq100_membership(symbol);
+CREATE INDEX IF NOT EXISTS idx_qd_nq100_membership_pit_upper ON qd_nq100_membership ((COALESCE(valid_to, 'infinity'::date)));
+
+CREATE TABLE IF NOT EXISTS qd_nq100_change_events (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(32) NOT NULL,
+    event_type VARCHAR(16) NOT NULL,
+    effective_date DATE NOT NULL,
+    source VARCHAR(64) NOT NULL,
+    scraped_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_qd_nq100_change_events_event_type CHECK (event_type IN ('add', 'remove'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_qd_nq100_change_events_effective_date ON qd_nq100_change_events(effective_date);
+CREATE INDEX IF NOT EXISTS idx_qd_nq100_change_events_symbol ON qd_nq100_change_events(symbol);
+
+CREATE TABLE IF NOT EXISTS qd_nq100_index_eiv (
+    trade_date DATE PRIMARY KEY,
+    index_symbol VARCHAR(32) NOT NULL,
+    eod_index_value NUMERIC(20,6) NOT NULL,
+    source VARCHAR(64) NOT NULL DEFAULT 'NDX_EIV.csv',
+    raw_payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_qd_nq100_index_eiv_symbol_date
+    ON qd_nq100_index_eiv(index_symbol, trade_date DESC);
+
+CREATE TABLE IF NOT EXISTS qd_nq100_ic_raw (
+    id SERIAL PRIMARY KEY,
+    index_symbol VARCHAR(32) NOT NULL,
+    trade_date DATE NOT NULL,
+    component_symbol VARCHAR(32) NOT NULL,
+    source VARCHAR(64) NOT NULL DEFAULT 'NDX_IC.csv',
+    raw_payload JSONB NOT NULL,
+    scraped_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_qd_nq100_ic_raw_key UNIQUE (index_symbol, trade_date, component_symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qd_nq100_ic_raw_trade_date
+    ON qd_nq100_ic_raw(trade_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_qd_nq100_ic_raw_component_symbol
+    ON qd_nq100_ic_raw(component_symbol);
+
+-- =============================================================================
 -- Completion Notice
 -- =============================================================================
 DO $$

@@ -88,7 +88,10 @@ class LoopExecutor(AsyncExecutor):
             coro = fn
         else:
             async def _wrap():
-                return fn()
+                result = fn()
+                if asyncio.iscoroutine(result):
+                    return await result
+                return result
             coro = _wrap()
 
         af = asyncio.run_coroutine_threadsafe(coro, self._loop)

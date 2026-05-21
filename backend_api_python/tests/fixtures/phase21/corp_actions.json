@@ -1,0 +1,5 @@
+{
+  "BBB": {"event_type": "delisting", "effective_date": "2024-02-02"},
+  "CCC": {"event_type": "symbol_change", "effective_date": "2024-02-02"},
+  "DDD": {"event_type": "bankruptcy", "effective_date": "2024-02-05"}
+}

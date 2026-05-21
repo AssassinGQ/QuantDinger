@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.strategies.base import DataRequest, IStrategyLoop, InputContext
 from app.strategies.cross_sectional_indicator import run_cross_sectional_indicator
-from app.strategies.cross_sectional_signals import generate_cross_sectional_signals
+from app.strategies.cross_sectional_signals import (
+    build_execution_intents,
+    generate_cross_sectional_signals,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -90,11 +93,17 @@ class CrossSectionalStrategy(IStrategyLoop):
             logger.warning("Strategy %s failed to prepare cross-sectional input", strategy_id)
             return [], True, False, None
 
-        raw_output = run_cross_sectional_indicator(
-            indicator_code,
-            data,
-            trading_config,
-        )
+        try:
+            raw_output = run_cross_sectional_indicator(
+                indicator_code,
+                data,
+                trading_config,
+            )
+        except ValueError as exc:
+            if str(exc).startswith("CROSS_SECTIONAL_CONTRACT:"):
+                logger.warning("Cross-sectional indicator contract failed: %s", exc)
+                return [], True, False, None
+            raise
         if not raw_output:
             logger.warning("Cross-sectional indicator returned no result")
             return [], True, False, None
@@ -105,6 +114,7 @@ class CrossSectionalStrategy(IStrategyLoop):
             trading_config,
             ctx.get("positions", []),
         )
+        signals = build_execution_intents(signals, ctx)
 
         if not signals:
             logger.info("No rebalancing needed for strategy %s", strategy_id)

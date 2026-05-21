@@ -4,6 +4,7 @@ Trading Strategy API Routes
 from flask import Blueprint, request, jsonify, g
 import traceback
 import time
+from typing import Dict, Any
 
 from app.services.strategy import StrategyService
 from app.services.strategy_compiler import StrategyCompiler
@@ -15,6 +16,62 @@ from app.utils.auth import login_required
 from app.data_sources import DataSourceFactory
 
 logger = get_logger(__name__)
+
+
+def validate_cross_sectional_config(trading_config: Dict[str, Any]) -> None:
+    """
+    Validate cross-sectional strategy configuration.
+
+    Per STRAT-01/STRAT-02 requirements (D-04, D-10, D-11, D-16, D-17, D-18):
+    - D-04: Mutual exclusion of symbol_list and universe
+    - D-10/D-11/D-12/D-13: delisting_policy validation
+    - D-16: force_exit_symbols validation
+    - D-17/D-18: Mag7 fields accepted but not implemented
+
+    Raises ValueError with clear message for invalid config.
+    """
+    if not trading_config:
+        return
+
+    # D-04: Mutual exclusion check
+    if trading_config.get("symbol_list") and trading_config.get("universe"):
+        raise ValueError("symbol_list and universe are mutually exclusive; use only one")
+
+    # D-10/D-11/D-12/D-13: delisting_policy validation
+    policy = trading_config.get("delisting_policy", {})
+    if policy:
+        mode = policy.get("mode", "immediate")
+        valid_modes = ("immediate", "delayed", "hold_until_signal_exit")
+        if mode not in valid_modes:
+            raise ValueError(
+                f"Invalid delisting_policy.mode: {mode}; must be one of {valid_modes}"
+            )
+        if mode == "delayed":
+            months = policy.get("months", 3)  # D-11 default
+            if not isinstance(months, int):
+                raise ValueError("delisting_policy.months must be integer 1-12 for delayed mode")
+            if not (1 <= months <= 12):
+                raise ValueError("delisting_policy.months must be integer 1-12 for delayed mode")
+            # Ensure months is set in the config (default applied)
+            trading_config["delisting_policy"]["months"] = months
+
+    # D-16: force_exit_symbols validation
+    force_exit = trading_config.get("force_exit_symbols", [])
+    if force_exit is not None:
+        if not isinstance(force_exit, list):
+            raise ValueError("force_exit_symbols must be a list")
+        for sym in force_exit:
+            if not isinstance(sym, str):
+                raise ValueError("force_exit_symbols must contain strings only")
+            if not sym.strip():
+                raise ValueError("force_exit_symbols must contain non-empty strings")
+    # Note: Duplicates are accepted here; Runner layer normalizes with set()
+
+    # D-17/D-18: Mag7 fields accepted but not implemented (reserved for future phase)
+    mag7_fields = ["mag7_min_count", "mag7_max_weight"]
+    for field in mag7_fields:
+        if trading_config.get(field) is not None:
+            logger.debug("Mag7 constraint field %s reserved but not implemented", field)
 
 strategy_bp = Blueprint('strategy', __name__)
 
@@ -70,6 +127,17 @@ def create_strategy():
         # Use current user's ID
         payload['user_id'] = user_id
         payload['strategy_type'] = payload.get('strategy_type') or 'IndicatorStrategy'
+
+        # D-04, D-10, D-11, D-16, D-17, D-18: Validate cross-sectional config
+        strategy_type = payload.get('strategy_type', '')
+        trading_config = payload.get('trading_config', {})
+        if strategy_type in ('CrossSectionalStrategy', 'NQ100Strategy'):
+            try:
+                validate_cross_sectional_config(trading_config)
+            except ValueError as ve:
+                logger.warning(f"Cross-sectional config validation failed: {ve}")
+                return jsonify({'code': 0, 'msg': str(ve), 'data': None}), 400
+
         new_id = get_strategy_service().create_strategy(payload)
         return jsonify({'code': 1, 'msg': 'success', 'data': {'id': new_id}})
     except Exception as e:
@@ -260,6 +328,17 @@ def update_strategy():
         if not strategy_id:
             return jsonify({'code': 0, 'msg': 'Missing strategy id parameter', 'data': None}), 400
         payload = request.get_json() or {}
+
+        # D-04, D-10, D-11, D-16, D-17, D-18: Validate cross-sectional config if present
+        strategy_type = payload.get('strategy_type')
+        trading_config = payload.get('trading_config')
+        if strategy_type in ('CrossSectionalStrategy', 'NQ100Strategy') and trading_config:
+            try:
+                validate_cross_sectional_config(trading_config)
+            except ValueError as ve:
+                logger.warning(f"Cross-sectional config validation failed: {ve}")
+                return jsonify({'code': 0, 'msg': str(ve), 'data': None}), 400
+
         ok = get_strategy_service().update_strategy(strategy_id, payload, user_id=user_id)
         if not ok:
             return jsonify({'code': 0, 'msg': 'Strategy not found', 'data': None}), 404

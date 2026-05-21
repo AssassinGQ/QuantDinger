@@ -1,34 +1,41 @@
-# QuantDinger IBKR Forex 交易支持
+# QuantDinger 量化交易平台
 
 ## What This Is
 
-QuantDinger 的 IBKR 交易客户端已扩展支持 Forex（外汇）交易。IBKRClient 支持美股（USStock）、港股（HShare）和 IBKR IDEALPRO 上的外汇货币对，策略系统可以自动执行外汇交易信号，前端支持 MT5 / IBKR Paper / IBKR Live 三种 Forex 交易所选择。
+QuantDinger 是一个 AI 驱动的量化交易平台。已实现 IBKR 多市场（USStock/HShare/Forex/Metals）自动化交易和 NQ100 截面策略回测验证能力。
 
 ## Core Value
 
-策略系统发出的 Forex 交易信号能正确通过 IBKRClient 在 IDEALPRO 上执行，从信号到成交的完整链路畅通。
+从数据获取、因子计算、回测验证到实盘执行的完整量化交易链路，确保回测结果真实可靠（无幸存者偏差、无未来函数、正确处理停牌）。
 
 ## Milestones
 
-### ✅ v1.1 Tech Debt Cleanup + Limit Orders — SHIPPED 2026-04-12
+<details>
+<summary>✅ v1.0 IBKR Forex IDEALPRO — SHIPPED 2026-04-11</summary>
 
-**Goal:** 清理 v1.0 遗留的技术债务，增加 Forex 限价单能力，补全 E2E 测试覆盖。
+12 phases, 15 plans. Forex symbol → contract → qualify → order → fill → automation 全链路。
+</details>
 
-**Delivered:**
-- ✓ Qualify 结果缓存（减少重复 IBKR API 调用）
-- ✓ USStock/HShare open 信号统一 IOC（与 Forex 对齐）
-- ✓ Forex 限价单（LimitOrder + PartiallyFilled + 策略自动化）
-- ✓ 贵金属合约归类（XAUUSD/XAGUSD → CMDTY/SMART）
-- ✓ normalize() 调用时序修正（MarketPreNormalizer）
-- ✓ E2E 测试 prefix 修复 + 前端 HTTP E2E + qualify cache E2E + cross-market E2E
+<details>
+<summary>✅ v1.1 Tech Debt Cleanup + Limit Orders — SHIPPED 2026-04-12</summary>
+
+6 phases (13-18), 19 plans. Qualify 缓存、TIF 统一、Normalize 流水线、贵金属归类、Forex 限价单、E2E 全覆盖。
+</details>
+
+<details>
+<summary>✅ v2.0 Cross-Sectional Strategy — SHIPPED 2026-05-21</summary>
+
+6 phases (19-24), 19 plans, 43 tasks. NQ100 PIT universe、因子库 + 标准化、回测三坑修复、截面组合引擎、NQ100 策略类型（delisting policy）、网格搜索脚本。
+</details>
 
 ## Current State
 
-**Shipped v1.0** (2026-04-11) — 12 phases, 15 plans.
-**Shipped v1.1** (2026-04-12) — 6 phases (13-18), 19 plans. 1049 backend tests passing, 3 Vue Jest tests passing.
+**Shipped v1.0** (2026-04-11) — 12 phases, 15 plans. IBKR Forex IDEALPRO 全链路。
+**Shipped v1.1** (2026-04-12) — 6 phases (13-18), 19 plans. Tech debt cleanup + limit orders。
+**Shipped v2.0** (2026-05-21) — 6 phases (19-24), 19 plans, 43 tasks. Cross-sectional strategy research capability。
 
 Tech stack: Python 3.10+ backend (Flask + ib_insync), Vue.js 2.x frontend, PostgreSQL, Docker.
-Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wizard.
+Backend: ~60K LOC app + ~18K LOC tests. Frontend: ~6.2K LOC trading assistant wizard.
 
 ## Requirements
 
@@ -57,20 +64,27 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 - ✓ Normalize pipeline ordering（MarketPreNormalizer: pre_normalize → pre_check → qualify → align，无重复） — v1.1 Phase 15
 - ✓ 贵金属合约归类（XAUUSD/XAGUSD → CMDTY/SMART，market_type="Metals"，Paper DUQ123679 验证） — v1.1 Phase 16
 - ✓ Forex 限价单（LimitOrder DAY TIF + minTick snap + IOC/DAY/GTC REST + PartiallyFilled 累计覆盖 + 策略自动化限价管道） — v1.1 Phase 17
+- ✓ Metals E2E 验证（mock IBKR qualify+order+callback XAGUSD CMDTY） — v1.1 Phase 18
+- ✓ Limit E2E 验证（normal+partial+cancel+error，cross-market USStock limit） — v1.1 Phase 18
+- ✓ 前端 HTTP E2E（Flask test_client 策略 CRUD + Vue Jest wizard） — v1.1 Phase 18
+- ✓ NQ100 成分股动态爬取 & 后端 API 缓存 & PIT 历史快照（UNIV-01/02/03） — v2.0 Phase 19
+- ✓ 内置价量因子库（11 因子）+ 标准化工具模块（winsorize/z-score/rank）（FACTOR-01/02） — v2.0 Phase 20
+- ✓ 回测三坑修复：幸存者偏差、T+1 对齐、停牌处理（AUDIT-01/02/03） — v2.0 Phase 21
+- ✓ 多品种截面回测引擎——后端 API（BT-01） — v2.0 Phase 22
+- ✓ NQ100Strategy 继承 CrossSectionalStrategy，动态 universe 绑定，三种 delisting_policy（STRAT-01/02） — v2.0 Phase 24
+- ✓ 独立回测脚本：暴力因子网格搜索 + 指标输出 + checkpoint + walk-forward（SCRIPT-01/02/03/04） — v2.0 Phase 23
 
 ### Active
 
-- (None — v1.1 milestone complete)
+(None — start next milestone via `/gsd-new-milestone`)
 
 ### Out of Scope
 
+- 截面策略前端 UI — v3.0
+- A 股截面策略 — v3.0+
+- 实盘截面交易自动化 — v3.0+
 - TIF fallback (IOC→DAY 自动重试) — 留给后续
 - cashQty 下单方式 — 留给后续
-- Forex 专用策略类型 — 复用现有策略框架
-- ForexNormalizer 最小下单量检查 — IBKR 拒单兜底
-- MT5 Forex 改动 — MT5 独立实现
-- FXCONV 货币转换订单 — 非策略交易路径
-- 止损/止盈/括号订单 — v2
 
 ## Key Decisions
 
@@ -79,34 +93,26 @@ Backend: ~57K LOC app + ~13K LOC tests. Frontend: ~6.2K LOC trading assistant wi
 | E2E 按主题拆分 + 共享 helpers | 减少重复 mock 代码，提高可维护性 | ✓ Good (Phase 18) |
 | Flask test_client (非 Playwright) | CI/CD 不引入浏览器依赖，pytest 一致性 | ✓ Good (Phase 18) |
 | Forex TIF = IOC | IDEALPRO 市价单需要 IOC（避免 DAY 挂单残留） | ✓ Good (Phase 6) |
-| 市价单优先 | 外汇流动性好，滑点可控 | ✓ Good (Phase 7) |
-| ForexNormalizer passthrough + IB 对齐 | normalize 透传，_align_qty_to_contract 负责 sizeIncrement | ✓ Good (Phase 8) |
-| RTH 复用 IBKR 合约时间 | Forex 24/5 由 IBKR liquidHours 正确反映 | ✓ Good (Phase 9) |
-| Forex broker 平铺列表 | MT5/IBKR Paper/IBKR Live 无默认值 | ✓ Good (Phase 12) |
-| isForexMarket 替代 isMT5Market | 更清晰的语义 + isForexMT5/isForexIBKR 子检查 | ✓ Good (Phase 12) |
-| Qualify TTL 缓存 (symbol, market_type) | 减少冗余 qualifyContractsAsync，重连不清缓存 | ✓ Good (Phase 13) |
-| TIF 统一 IOC (Forex/USStock/HShare) | 与 Forex 自动化一致；IBKR 确认 SEHK 支持 IOC | ✓ Good (Phase 14) |
 | MarketPreNormalizer 两层架构 | 市场层 pre_normalize+pre_check（同步） vs 券商层 qualify+align（异步） | ✓ Good (Phase 15) |
 | Metals CMDTY/SMART (非 Forex CASH/IDEALPRO) | Paper qualify 验证：Forex("XAUUSD") Error 200；Contract(CMDTY/SMART) 成功 | ✓ Good (Phase 16) |
-| Limit TIF DAY + minTick snap | 自动化限价单 DAY（不随信号变），minTick BUY floor/SELL ceil | ✓ Good (Phase 17) |
-| PartiallyFilled 累计覆盖 | 不做增量 +=，IBKR filled/remaining 是 snapshot | ✓ Good (Phase 17) |
+| PIT universe API (get_constituents_as_of) | 动态成分绑定，避免静态 trading_config | ✓ Good (Phase 19/24) |
+| T+1 执行强制执行 | signal date close → execution date next_open，禁止同 bar lookahead | ✓ Good (Phase 21) |
+| 三种 delisting_policy 模式 | immediate / delayed_N_months / hold_until_signal_exit | ✓ Good (Phase 24) |
+| Grid search HTTP API 调用 | 避免直接服务复用，保持回测引擎独立性 | ✓ Good (Phase 23) |
 
-## Known Tech Debt (from v1.0 Audit)
+## Known Tech Debt (v2.0 Audit)
 
-| Item | Priority | Source |
-|------|----------|--------|
-| ~~Qualify 结果缓存~~ | ~~Low~~ | ✓ Phase 13 |
-| ~~USStock/HShare open → IOC~~ | ~~Medium~~ | ✓ Phase 14 |
-| TIF fallback (IOC→DAY 重试) | Low | Phase 6 |
-| cashQty 下单 (ADV-02) | Low | Phase 7 |
-| ~~Forex 限价单 (ADV-01)~~ | ~~Low~~ | ✓ Phase 17 |
-| ~~贵金属合约归类 (XAUUSD as CMDTY?)~~ | ~~Medium~~ | ✓ Phase 16 |
+| Item | Priority | Notes |
+|------|----------|-------|
+| FACTOR-02 normalization unwired | Medium | Phase 20 built winsorize/rank/zscore but not consumed by backtest/grid search |
+| Phase 20/22/24 Nyquist incomplete | Low | VALIDATION.md frontmatter needs nyquist_compliant: true |
+| Phase 19/23 VERIFICATION.md missing | Low | UAT evidence exists but formal VERIFICATION.md not created |
 
 ## Constraints
 
 - **Tech stack**: ib_insync，与现有 IBKR 集成一致
-- **兼容性**: USStock/HShare/Forex/Metals 交易路径不受影响（1049 tests regression-free）
+- **兼容性**: USStock/HShare/Forex/Metals 交易路径不受影响
 - **架构**: BaseStatefulClient / StatefulClientRunner 模式
 
 ---
-*Last updated: 2026-04-12 — v1.1 milestone archived*
+*Last updated: 2026-05-21 — v2.0 milestone shipped*

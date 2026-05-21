@@ -1,0 +1,61 @@
+# NQ100 Cross-Sectional Grid Search Configuration
+# Phase 23 - Grid-search research script
+#
+# Search space: C(12,1) + C(12,2) + C(12,3) + C(12,4) = 793 factor combos
+# Holdings: 7 options = 5551 total backtests per window
+
+search_space:
+  # Built-in factors from Phase 20 (FACTOR-01)
+  # 12 factors matching prototype FACTOR_DEFS
+  factors:
+    # Momentum (positive direction: higher = better)
+    - MOM_1M      # 1-month momentum
+    - MOM_3M      # 3-month momentum
+    - MOM_6M      # 6-month momentum
+    - MOM_12M_1M  # 12-month momentum skip 1-month
+
+    # Reversal (negative direction: lower = better)
+    - REV_1W      # 1-week reversal
+    - REV_2W      # 2-week reversal (not in prototype, but included for completeness)
+
+    # Volatility (negative direction: lower = better)
+    - VOL_20D     # 20-day volatility
+    - VOL_60D     # 60-day volatility
+
+    # Distance from MA (negative direction: lower deviation = better)
+    - DIST_MA50   # Distance from 50-day MA
+    - DIST_MA200  # Distance from 200-day MA
+
+    # Volume ratio (negative direction: lower = better)
+    - VOL_RATIO   # Volume ratio 20/60 day
+
+    # Risk-adjusted (positive direction: higher = better)
+    - SHARPE_60D  # 60-day Sharpe ratio
+
+  # Combination sizes: 793 combos = C(12,1)+C(12,2)+C(12,3)+C(12,4)
+  combo_min: 1
+  combo_max: 4
+
+  # Holdings options: 7 values per SCRIPT-01
+  n_long_options: [10, 15, 20, 30, 40, 50, 60]
+
+walk_forward:
+  # Walk-forward validation per SCRIPT-04, D-04 to D-07
+  enabled: true
+  train_months: 36      # 3-year training window
+  test_months: 12       # 1-year test window
+  step_months: 12       # Slide 1 year per window
+
+  # Optional: override date range (otherwise uses available data)
+  # start_date: "2020-01-01"
+  # end_date: "2026-04-01"
+
+backtest_defaults:
+  universe: "nq100"              # Phase 19 PIT universe
+  timeframe: "1D"
+  initial_capital: 100000
+  market: "USStock"
+
+output:
+  results_dir: "results"
+  progress_interval: 50         # Print progress every N backtests

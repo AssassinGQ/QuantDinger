@@ -1,142 +1,205 @@
 # Pitfalls Research
 
-**Domain:** v1.1 — Tech debt cleanup, limit orders, qualify caching, precious metals, TIF unification, normalize/align ordering, E2E hardening on an existing `ib_insync` / IBKR Forex + equity stack (~928 tests)  
-**Researched:** 2026-04-11  
-**Confidence:** **HIGH** for integration risks tied to this repo’s `IBKRClient` (`client.py` event path, caches, `_get_tif_for_signal`, `_create_contract`); **MEDIUM** for venue-specific metal contract details (verify in TWS / paper per symbol).
+**Domain:** Adding cross-sectional (multi-asset, universe-ranked) strategy backtesting to an existing single-asset quantitative platform (QuantDinger: `qd_kline_points`, `/api/indicator/backtest`, v2.0 NQ100-focused milestone)  
+**Researched:** 2026-04-13  
+**Confidence:** **HIGH** for look-ahead / pandas alignment mechanics and standard quant bias categories; **MEDIUM** for numeric magnitudes (survivorship %, slippage bps) — these vary sharply by universe, horizon, and implementation; **MEDIUM–LOW** for halt/limit detection from OHLC alone (heuristic, venue-specific).
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Treating limit orders like market orders in `_on_order_status` (partial fills and terminal states)
+### Pitfall 1: Survivorship bias — “current universe” and live-listed-only histories
 
-**What goes wrong:** Limit orders can remain **Submitted** / **PreSubmitted** for a long time, transition through **`PartiallyFilled`** (IBKR order status string per TWS API), then **Filled**, or end **Cancelled** / **Inactive** with a **non-zero** cumulative fill. Logic that assumes “first terminal event == full story” or that only **`Filled`** matters will mishandle PnL, pending rows, and notifications. Worse: calling **`_handle_fill`** on **every** status update with **cumulative** `filled` without deduplication **double-applies** position/trade rows.
+**Severity:** **CRITICAL** (can inflate Sharpe/CAGR by large amounts; user-cited **~5–10%** for “current index only” vs full history is plausible for **index-like** strategies; academic/industry summaries show **much larger** gaps for small-cap or high-turnover selection — do not treat 5–10% as a universal bound).
 
-**Why it happens:** Market-order-centric code paths fire **`_handle_fill`** only on **`Filled`** (and cancelled-with-fill). That matches fast fills. Limit orders stress **multiple** updates with increasing `filled`; developers often add “handle partial” without incremental-vs-cumulative discipline.
+**What goes wrong:** Backtests use **today’s** NQ100 (or “currently listed”) tickers and pull full OHLCV only for survivors. Delisted names never enter losses, bankruptcy gaps, or forced exits → **upward-biased** returns and **understated** risk.
 
-**How to avoid:**
-
-- Keep **`PartiallyFilled`** out of **`_handle_fill`** unless you implement **delta fills** (compare to last seen `filled`, or drive from **`execDetails`** / per-fill commission path only).
-- Align with existing **`OrderTracker`** FSM semantics: **`Cancelled` is not hard-terminal** in tracker (recovery paths exist); do not fork divergent meanings between sync waiters and fire-and-forget callbacks.
-- Add tests that simulate **`PartiallyFilled` → `PartiallyFilled` → `Filled`** and **`PartiallyFilled` → `Cancelled`** (partial) with asserted single apply to ledger.
-
-**Warning signs:** Duplicate trades for one `orderId`; position size 2× expected; logs showing **`_handle_fill`** more than once per order; **`has_trade_for_pending_order`** spam.
-
-**Phase to address:** **Limit order lifecycle + fill accounting** (backend execution / Phase that owns `client.py` callbacks).
-
----
-
-### Pitfall 2: Cache invalidation for `qualifyContractsAsync` results (`conId`, `secType`, `localSymbol`)
-
-**What goes wrong:** **`qualifyContractsAsync`** mutates the contract **in place** (tests already mock this). A **qualify cache** keyed by `(symbol, market_type)` or raw user string can return a **stale** `Contract` after: symbol dictionary changes, **TIF/venue** changes, IB **re-listing** / **conId** churn, or switching **paper ↔ live**. Wrong **`conId`** → wrong **`reqContractDetailsAsync`** increment, wrong RTH details, or orders sent on **stale** instrument.
-
-**Why it happens:** Caching is added to cut latency; invalidation rules are easy to under-specify. **`ib_insync`** async calls run on the IB thread; sharing mutable **`Contract`** objects across tasks without a clear ownership model increases stale reads.
+**Why it happens:** Single-asset pipelines already have per-symbol `qd_kline_points`; adding a “universe” often starts as **a static list of symbols** from a vendor screen. Historical **adds/drops** and **delisting dates** are extra data products — easy to defer “until later.”
 
 **How to avoid:**
 
-- Key caches with **normalized canonical keys** (same as **`normalize_symbol`** output), include **`market_type`**, and version or TTL if IB data can change session-over-session.
-- Invalidate on **disconnect / reconnect** (IB session reset), and when **`_create_contract`** branch changes (new `elif` for metals).
-- Prefer storing **immutable snapshots** (`conId`, `secType`, `exchange`, `localSymbol`) rather than reusing live **`Contract`** instances across unrelated orders unless the codebase standardizes one object per order.
-- Run concurrency tests: two coroutines qualifying the same symbol should not leave **`_lot_size_cache`** or qualify cache in an inconsistent state (`conId` race).
+- Maintain **point-in-time (PIT) membership**: for each rebalance date `t`, know which tickers **were** in the investable universe at `t` using **as-of** rules, not future knowledge.
+- Persist **historical constituent snapshots** (effective date ranges or event rows: `symbol`, `enter_date`, `exit_date`, `reason`). Source: index vendor / exchange **official** files where possible; scraping is OK for NQ100 if **versioned** and **auditable**.
+- **Include delisted symbols** in the price DB **through** delisting (or last trade) so strategies cannot “forget” failed names.
+- In code, **filter universe before** factor computation for date `t`, using only IDs that were members **at or before** `t` per your membership table — never `symbols = current_nq100()`.
 
-**Warning signs:** Intermittent “wrong increment” alignment; RTH open/closed flipping for same symbol; first order after reconnect behaves differently from subsequent.
+**Code patterns to avoid:**
 
-**Phase to address:** **Qualify cache** milestone phase (often early backend).
+```python
+# BAD: universe frozen to "who exists in DB today"
+symbols = [r.symbol for r in db.query("SELECT DISTINCT symbol FROM qd_kline_points")]
+
+# BAD: using merge/join on calendar without PIT membership
+factors = prices[prices.symbol.isin(NQ100_TICKERS_2026)]
+```
+
+**Warning signs:** Backtest CAGR **jumps** when you restrict start date to “after all symbols have data”; no delisted tickers in DB; universe size **constant** over decades; performance **improves** when you **remove** a “data cleanup” that dropped thin symbols.
+
+**Phase to address:** **Data + NQ100 snapshot pipeline** (constituent store + ingestion of delisted history) **before** trusting any cross-sectional performance metrics.
 
 ---
 
-### Pitfall 3: Wrong `secType` / contract class for precious metals (spot vs futures)
+### Pitfall 2: Look-ahead / future function — signal at **T close** executed at **T close**
 
-**What goes wrong:** **Spot FX metals** (e.g. some **`XAUUSD` / `XAGUSD`** style pairs on **IDEALPRO**) use **`CASH`** like other FX; **exchange-traded** metals may be **`FUT`**, **`CMDTY`**, or other **`secType`** with different **exchange**, **multiplier**, and **min size**. Building **`Forex(...)`** for a symbol that IB exposes only as **futures**, or the reverse, yields qualification failure, silent wrong instrument, or fills with **different margin and PnL** semantics.
+**Severity:** **CRITICAL**.
 
-**Why it happens:** **`_create_contract`** uses **`elif` chains** and **`_EXPECTED_SEC_TYPES`** (`Forex` → **`CASH`**, equities → **`STK`**). New **`market_type`** or “metal” branch added without paper validation often copies the **Forex** path or **Stock** path incorrectly.
+**What goes wrong:** Rank or signal from **day T**’s **close** (or OHLCV known only after the close) is used to **trade at T’s close** or to **weight the portfolio for T’s return**. That embeds information not available when the market was open — **classic lookahead**.
+
+**Why it happens:** Vectorized backtests often compute `signal = f(close)` and then `returns * position` on the **same row**. Single-asset `/api/indicator/backtest` may implicitly assume **next-bar** execution; multi-asset codepaths reintroduce the bug if not explicitly modeled.
+
+**How to avoid (T+1 open execution, user requirement):**
+
+- **Define two timestamps:** `signal_time` = calendar **T** (after close); `execution_time` = **T+1** **open** (or first bar of next session).
+- **Returns attribution:** portfolio return for the interval after the rebalance should use **open-to-open** or explicitly: position decided at T close → earns **T+1** return from open (and intraday if modeled), **not** T’s close→close while using T’s signal without lag.
+- **Pandas discipline:**
+  - Build signals on a **date index** aligned to **close** data; create `execution_signal = signal.shift(1)` on **trading** bars (not calendar days if sessions differ — see Pitfall 4).
+  - Alternatively: `signal` at end of day `T` joins to **next** row’s **open** price for fills — use `merge_asof` with **backward** direction on a unified event timeline, or **reindex** to a **next-trading-day** map per symbol.
+- **Never** use `shift(-1)` on prices to “fix” returns — that often **moves** labels backward and creates **subtle** leakage.
+
+**Code patterns to avoid:**
+
+```python
+# BAD: same-bar trade
+pos = rank_factor.iloc[t]
+ret = close.pct_change().iloc[t] * pos  # uses close[t] known after ranking
+
+# BAD: shift confusion on mixed calendars
+signal.shift(1)  # without per-symbol trading calendar → wrong days for some stocks
+```
+
+**Warning signs:** Sharpe **drops a lot** when you switch from “close execution” to “next open”; walk-forward **train/test** gap is tiny (overfitting + leakage); intraday strategies show **impossible** fills at close prices.
+
+**Phase to address:** **Cross-sectional backtest engine** core (execution model + return stacking), with **unit tests** that fail if signal date == fill date for close-derived factors.
+
+---
+
+### Pitfall 3: Halt / limit-up / limit-down — untradable rebalance days
+
+**Severity:** **HIGH** for A-shares / hard limits; **MEDIUM** for US large-cap (limits rare but halts exist).
+
+**What goes wrong:** On rebalance day, the model **assumes** full execution at open (or VWAP). In reality: **cannot buy** at limit-up (no liquidity at cap); **cannot sell** at limit-down. Cash can remain **uninvested**; sell failures leave **unintended** overweight — **not** the same as frictionless top-N weights.
+
+**Why it happens:** OHLCV-only backtests lack **order book** and **auction state**. Teams approximate with **close price** execution, which **double-counts** knowing the full day’s range.
+
+**How to avoid (heuristics — validate per market):**
+
+- **Limit touch:** For markets with explicit limit rules (e.g. A-share **±10%/±20%**): compare `close` (or `open`) to **previous close** × (1 ± limit). If **high == low == limit price** and **volume** is collapsed vs median → **likely** limit-locked (heuristic, not proof).
+- **Halt:** **volume == 0** (or missing bar) with **stale** last close → **no trade** that day; carry position or cash rules explicitly (“if no open print, skip fill”).
+- **US stocks:** use **halt** datasets for production realism; for MVP, **at minimum** detect **zero-volume** bars and **optional** gap rules (open beyond prior close band) as **soft** flags.
+- **Portfolio rule:** If buy fails → **cash**; if sell fails → **hold** overweight until next liquid session (user requirement — encode as **explicit state**, not implicit NaN→0).
+
+**Code patterns to avoid:**
+
+```python
+# BAD: always fill at open
+fill_px = open.loc[t, sym]
+
+# BAD: drop row → pretend symbol didn't exist (survivorship + wrong weighting)
+if not tradable: universe.remove(sym)
+```
+
+**Warning signs:** 100% **fill** rate on names with obvious **one-tick** all-day bars; simulation **never** holds cash on rebalance; A-share backtest **matches** theory **too well**.
+
+**Phase to address:** **Execution / microstructure layer** in cross-sectional backtest (after base T+1 engine exists).
+
+---
+
+### Pitfall 4: Calendar misalignment — different sessions, missing bars, corporate actions
+
+**Severity:** **HIGH**.
+
+**What goes wrong:** A single **pandas DateTimeIndex** for “the market” is applied to **all** symbols. **HALF trading days**, **IPOs**, **suspensions**, and **different market holidays** (later: HK/US mix) cause **wrong** `shift(1)`, **mis-merged** panels, and **phantom** returns.
+
+**Why it happens:** Single-asset backtest has **one** series; multi-asset **panel** work needs **per-symbol** valid trading sets or an **explicit** master calendar with **masking**.
 
 **How to avoid:**
 
-- For each supported symbol class: **paper qualify + `reqContractDetailsAsync`**, record **`secType`**, **`exchange`**, **`currency`**, **`localSymbol`**, then encode that in **`_create_contract`** and **`_validate_qualified_contract`** (extend **`_EXPECTED_SEC_TYPES`** or per-branch validators).
-- Do not assume **precious metal == Forex** without IB confirmation for **your** account and routing.
+- Use a **reference calendar** (e.g. US equities **NYSE** sessions for NQ100) for **rebalance decisions**; map each symbol’s available bars with **`reindex(..., method=None)`** + **forward-fill only where economically justified** (often **no** fill for returns — use **missing = no trade**).
+- For **multi-day** momentum windows: require **min** count of valid observations, not just `window=20` on **calendar** rows.
+- **Corporate actions:** for **close-to-close** return consistency, **adjust** prices or use **total return** sources; unadjusted OHLC + splits → **factor** and **P&L** bugs.
 
-**Warning signs:** Error 200 / empty qualify; **`secType`** mismatch vs **`_EXPECTED_SEC_TYPES`**; position shows in unexpected **asset class** in TWS.
+**Warning signs:** `shift(1)` on a **merged** panel lines up **different** stocks’ “yesterday”; frequent **NaN** explosion after `pivot`; **identical** weights across **unequal** listing histories without **intentional** padding.
 
-**Phase to address:** **Contract / symbol** phase (same phase that touches **`_create_contract`** and normalization).
+**Phase to address:** **Data alignment utilities** + **factor engine** (same phase as first real multi-asset factors).
 
 ---
 
-### Pitfall 4: TIF unification breaking existing US stock / HShare strategies
+### Pitfall 5: Factor bugs — wrong window, double-counting **close**, release-time confusion
 
-**What goes wrong:** Today **`_get_tif_for_signal`** uses **`IOC`** for **all Forex** signals; **USStock** uses **`DAY`** for opens and **`IOC`** for closes; **HShare** uses **`DAY`** even for closes (IOC not supported). **Unifying** TIF (one policy per asset class, or global enum) without preserving these **documented behaviors** changes **fill timing**: e.g. close orders filling **outside** intended session, or **immediate** IOC failures where **DAY** would rest.
+**Severity:** **HIGH**.
 
-**Why it happens:** Refactors favor “one function, one matrix”; easy to drop **`HShare`** exception or invert **open vs close** rules.
+**What goes wrong:** **Off-by-one** in rolling windows; using **split-adjusted** prices for one leg and **raw** for another; **annual** vs **trading** day counts; fundamentals **reported** date vs **available** date (PIT issue for future work).
+
+**Why it happens:** Copy-paste from **single** ticker notebooks; **rolling().mean()** defaults include **current** bar — confirm whether **signal at T** is allowed to include **T**’s close in the window or only **T-1** and earlier per your **signal convention**.
 
 **How to avoid:**
 
-- Lock behavior with **REGR** tests: parametrize **`signal_type` × `market_type`** against expected TIF string (existing pattern in **`test_ibkr_client.py`**).
-- Any change to **close** TIF for **USStock** / **HShare** requires **explicit** migration note for deployed strategies and paper re-validation.
+- Document **inclusive/exclusive** window endpoints; write **golden** tests: hand-computed 5-bar momentum on toy data.
+- For price-based factors: **explicit** `min_periods`**,** and **rank** only on symbols with **valid** inputs on that date.
+- If mixing **close** signal with **next open** trade, factors should use information **available at signal time** only.
 
-**Warning signs:** Spike in **Inactive** / **Cancelled** on close signals; orders not filling in extended hours when they used to.
+**Warning signs:** First valid signal appears **earlier** than economically possible; factor **correlates** implausibly with **same-day** return.
 
-**Phase to address:** **TIF policy** phase (small, test-heavy; must run before or with execution changes).
+**Phase to address:** **Factor registration + computation** phase with **unit tests** per factor.
 
 ---
 
-### Pitfall 5: Flaky frontend E2E (timing, selectors, IB mocks)
+### Pitfall 6: Cross-sectional rank — NaNs, ties, tiny cross-sections
 
-**What goes wrong:** E2E tests that **assert** on **async** IBKR mock callbacks (**orderStatus** → **execDetails** → position) or **Vue** next-tick timing fail intermittently in CI. **Network** or **Gateway**-dependent tests without mocks are inherently flaky.
+**Severity:** **MEDIUM–HIGH** (more **bugs** than **philosophy**).
 
-**Why it happens:** **`ib_insync`** is **async**; UI updates follow **websocket/poll** delays; strict **timeouts** without **condition waits**; **race** between **strategy create** and **worker** pick-up.
+**What goes wrong:** `rank()` with default **average** ties **blends** identities; **NaN** propagation drops names silently; on early dates **only 30** valid NQ100 names → **unstable** deciles.
+
+**Why it happens:** `pandas` defaults don’t match portfolio intent; **missing** data treated as **worst** vs **neutral** changes outcomes.
 
 **How to avoid:**
 
-- Prefer **deterministic mocks** at the same boundaries v1.0 used (**pending_order_worker** patches, etc. per **`STATE.md`**).
-- Use **wait-for** assertions (text/element stable) rather than fixed **`sleep`**.
-- Isolate **E2E** from real IB; keep **one** optional smoke job for paper if needed, not gating CI.
+- Choose **`method`**: `first`, `dense`, or `average` **consciously**; for portfolio construction, **ties** often need **random tie-break** or **pro-rata** — document choice.
+- **Explicit NaN policy:** `dropna()` vs **fill** (dangerous for factors); often **rank only among valid** names and **exclude** rest from allocation.
+- Enforce **minimum** universe size **K** for ranking; else **skip** rebalance.
 
-**Warning signs:** CI pass rate below 100% on unchanged code; failures at **screenshot** / **timeout** only.
+**Warning signs:** Portfolio **weight** sums **≠ 1** after custom rank logic; **duplicate** ranks create **duplicate** weights without normalization.
 
-**Phase to address:** **E2E / frontend** phase; **CI** config review.
+**Phase to address:** **Ranking / portfolio construction** module + tests for NaN/ties.
 
 ---
 
-### Pitfall 6: `normalize_symbol` vs `qualify` vs `_align_qty_to_contract` ordering bugs (“normalize timing fix”)
+### Pitfall 7: Ignoring transaction costs, market impact, and index **reconstitution** frictions
 
-**What goes wrong:** **Quantity** must be validated **after** **`normalize_symbol`** produces the IB-facing symbol, **after** **qualify** establishes **`conId`**, and **after** **`reqContractDetailsAsync`** supplies **increment** — the production order in **`place_market_order` / `place_limit_order`** is intentional. Reordering (e.g. aligning qty **before** qualify, or caching **increment** by **pre-qualify** key) can **floor qty to 0** or use **wrong increment**. A **“normalize timing fix”** that runs normalization twice with different **market_type** can split behavior between **check** and **submit**.
+**Severity:** **MEDIUM** for NQ100 monthly **factor** strategies (often **not** dominant vs bias bugs); still **required** for honest absolute performance.
 
-**Why it happens:** Refactors extract “helpers” and accidentally call them in different order in **`place_limit_order`** vs **`place_market_order`** or **`is_market_open`**.
+**What goes wrong:** **Zero-cost** backtest **overstates** net returns; **rebalance** into **index adds** on **announcement** vs **effective** date confuses **implementation** shortfall.
+
+**Why it happens:** First milestone focuses on **bias** fixes; costs are “TODO.”
 
 **How to avoid:**
 
-- Single **pipeline** helper or shared **internal** function for **contract build → qualify → validate → align → order**, used by market and limit paths.
-- Unit tests: **same inputs** → **same** `conId` path and **same** aligned qty for both order types.
+- Model **fixed** + **proportional** cost (bps per **side**); **optional** impact model **∝** participation rate for large notionals.
+- **Slippage significance (MEDIUM confidence, order-of-magnitude):** industry-style summaries often cite **single-digit to tens of bps** **one-way** for **liquid US large-cap** depending on spread/impact assumptions; **monthly** rebalance of a **diversified** NQ100 **long-only** strategy often sees **modest** drag vs **daily** HFT — **but** **concentrated** weights, **adds/deletes** around **index events**, or **illiquid** names can spike costs. **Validate** with your **actual** turnover and **assumed** bps.
+- **Nasdaq-100 reconstitution (HIGH confidence on process, MEDIUM on PnL impact):** **Annual** **reconstitution** (with **December** / quadruple-witching timing per **Nasdaq** methodology materials) drives **adds/deletes**; **quarterly** activity often relates to **weight** **rebalancing** / methodology — **read** current **[NDX methodology PDF](https://indexes.nasdaq.com/docs/methodology_NDX.pdf)** for exact rules. **Index effect** (prices moving **before** effective date) is **well-documented** in academic/industry literature; **ignoring** **implementation** around **rebalance** **windows** can **overstate** achievable returns for **replication** strategies.
 
-**Warning signs:** Limit and market **disagree** on rejected qty for same inputs; **`_lot_size_cache`** hit with **`conId=0`** paths.
+**Warning signs:** Net returns **≈** gross; turnover **high** but costs **zero**; big **jumps** on known **index** **event** dates with **no** slippage model.
 
-**Phase to address:** **Execution refactor / tech debt** phase (normalize + align consolidation).
-
----
-
-## Moderate Pitfalls
-
-### Pitfall 7: Thread-pool / event-loop mismatch on cache writes
-
-**What goes wrong:** **`_submit`** runs coroutines on the IB loop; **`_fire_submit`** uses thread pool for **`_handle_fill`**. A **non-thread-safe** `dict` for qualify cache if ever read from **event** callbacks and written from **pool** without synchronization → rare **lost updates** or **exceptions**.
-
-**Why it happens:** Most cache access today is on the IB side; expanding cache use without auditing **call sites** risks crossing threads.
-
-**How to avoid:** Keep **all** cache read/write on **one** executor (IB loop), or use **`threading.Lock`** / immutable replacements. Document **ownership** in the phase that adds caching.
-
-**Warning signs:** Heisenbugs only under load; `RuntimeError: dictionary changed size during iteration`.
-
-**Phase to address:** Same as **qualify cache** phase.
+**Phase to address:** **Backtest reporting** + **cost model** (can be Phase 2+ after unbiased engine).
 
 ---
 
-### Pitfall 8: `OrderTracker` vs `IBKRClient._TERMINAL_STATUSES` drift
+### Pitfall 8: Integration — bolting a portfolio loop onto **single-asset** `/api/indicator/backtest` semantics
 
-**What goes wrong:** **`order_tracker.HARD_TERMINAL`** and **`IBKRClient._TERMINAL_STATUSES`** are **not identical** (e.g. **`Cancelled`** handling differs). Unification work can **merge** concepts incorrectly and break **wait-for-order** vs **callback** paths.
+**Severity:** **HIGH** (architecture).
 
-**How to avoid:** Single source of truth or explicit mapping table; test both paths for **limit** order outcomes.
+**What goes wrong:** **Per-symbol** backtests **look** **great**; **portfolio** aggregation **double-applies** risk-free, **mis-averages** correlations, or uses **different** **return** definitions per symbol.
 
-**Phase to address:** Limit order / tracker alignment phase.
+**Why it happens:** API shaped around **one** **indicator** **series** **+** **one** **equity** curve; cross-sectional **needs** **panel** **state**: weights, cash, per-fill constraints.
+
+**How to avoid:**
+
+- **New** codepath: **panel** **engine** (script-first in v2.0 is fine) with **clear** **separation** from single-asset **endpoint** — **shared** **only** **low-level** **DB** **readers** and **corporate** **action** **helpers**.
+- **One** **definition** of **portfolio** **return** (chain-linked **daily** **weights**, **cash** **drag**, **dividends** **policy**).
+
+**Warning signs:** **Sum** of **single-name** **Sharpes** **≠** **portfolio** **risk**; **inconsistent** **date** **alignment** **across** **symbols** **in** **one** **report**.
+
+**Phase to address:** **Cross-sectional** **backtest** **module** **design** **at** **start** **of** **implementation** (before **large** **factor** **library**).
 
 ---
 
@@ -144,22 +207,22 @@
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Global qualify cache with no TTL | Fewer IB round trips | Stale `conId`, wrong instrument after IB changes | Only with explicit invalidation rules + reconnect flush |
-| “Metals use Forex branch” without paper proof | Faster ship | Wrong secType, margin surprises | Never without qualification proof per symbol |
-| E2E `sleep(3000)` | Quick test pass | Flaky CI | Never in merge-blocking E2E |
-| Duplicate normalize/align in market vs limit | Copy-paste speed | Drift bugs | Short-term if tracked for merge into one pipeline in same milestone |
+| Static “NQ100 list” JSON checked into repo | Fast prototype | Survivorship + stale universe | Never for production metrics; OK only for UI mock / dev |
+| `ffill` missing prices across long gaps | Clean panel | Fake liquidity; hides halts | Rarely; if used, flag synthetic bars and exclude from trade logic |
+| Single global `shift(1)` on merged data | Simple code | Wrong T+1 for some symbols | Never without calendar alignment |
+| Rank with `average` ties, undocumented | Default pandas | Non-reproducible weights | Short internal tests only |
+| Zero transaction costs until “later” | Faster first Sharpe | False confidence in strategy rankings | OK for relative bias A/B, not for absolute performance claims |
 
 ---
 
-## Integration Gotchas (ib_insync / IBKR)
+## Integration Gotchas
 
-| Integration | Common mistake | Correct approach |
+| Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| **`qualifyContractsAsync`** | Assuming return value replaces contract; ignoring in-place mutation | Use the **same** contract object after await; assert **`conId`** / **`secType`** in **`_validate_qualified_contract`** |
-| **Limit order status** | Treating **`PartiallyFilled`** like **`Filled`** for ledger | Only finalize ledger on **terminal** cumulative policy you define; avoid double **`_handle_fill`** |
-| **`reqContractDetailsAsync`** | Caching increment by symbol string instead of **`conId`** | Cache by **`conId`** after qualify (current **`_lot_size_cache`** pattern); invalidate if contract class changes |
-| **TIF** | Applying **Forex IOC** to equities or vice versa | Keep **`market_type`** branching tests as **golden** outputs |
-| **Reconnect** | Reusing pre-disconnect **Contract** / cache entries | Flush qualify + RTH + increment caches on session loss |
+| `qd_kline_points` | Assume equal history length per symbol | Per-symbol valid index + explicit missing-data policy |
+| `/api/indicator/backtest` | Run N single-asset backtests and average | Dedicated portfolio engine with constraints |
+| NQ100 membership scrape | Overwrite file without history | Versioned snapshots + immutable historical rows |
+| Index vendor vs IB symbols | Miss ticker changes / share class | Symbol mapping table + tests on known adds/drops |
 
 ---
 
@@ -167,9 +230,9 @@
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Unbounded qualify cache | Memory growth over days | TTL, max entries, reconnect flush | Long-running Gateway process |
-| Per-tick qualify in hot path | CPU + IB rate limits | Cache after first success; invalidate on symbol change | New automation calling qualify repeatedly |
-| RTH cache keyed by `(conId, date)` only | Wrong hours if contract details change intraday | Rare; document assumption | IB contract update mid-session (low probability) |
+| Full vectorized panel (daily × 20y × 100+ names) | RAM spikes, slow pivot | Chunk by year; store narrow factor tables | Universe ≫100 or intraday bars |
+| Repeated DB scans per rebalance | API timeouts | Preload window once per batch job | Large brute-force search grids |
+| Pure Python per (date × symbol) loops | CPU hours | Batch ops, Numba, or Polars | Large parameter sweeps |
 
 ---
 
@@ -177,9 +240,10 @@
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Logging full **Contract** / keys in client logs in production | Information leakage | Log **`symbol` / `conId`** at INFO; redact account fields if ever added |
+| Unpickling untrusted backtest artifacts | RCE if shared | JSON or Parquet only |
+| Secrets in notebooks for data APIs | Credential leak | Env vars; never commit secrets |
 
-*(Domain-specific; not the main v1.1 risk.)*
+*Domain is offline backtesting — lower surface than live trading.*
 
 ---
 
@@ -187,55 +251,60 @@
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| Limit order shown “Submitted” while partially filled | Confusion about working size | Surface **filled / remaining** from **`trade.orderStatus`** in API responses when milestone exposes them |
-| Metal routed to wrong product | Unexpected margin / fill | Clear **market_type** and validation errors from **`_validate_qualified_contract`** |
+| One headline Sharpe without bias audit | False confidence | Report checks: survivorship mode, execution lag, cost assumptions |
+| Silent drops of bad symbols | Looks clean but wrong | Log excluded names and counts |
+| No RNG seed for tie-breaks | Non-reproducible runs | Fixed seed + documented tie policy |
 
 ---
 
 ## “Looks Done But Isn’t” Checklist
 
-- [ ] **Limit partials:** Ledger updated **once** per logical fill strategy; no double **`apply_fill_to_local_position`** for same order.
-- [ ] **Qualify cache:** Invalidation on **reconnect** and **symbol/market_type** change verified.
-- [ ] **Metals:** Each new symbol has **paper** qualify + **`secType`** assertion.
-- [ ] **TIF:** **`test_ibkr_client`** (or successor) locks **USStock / HShare / Forex** matrix.
-- [ ] **Normalize pipeline:** Market and limit orders share **identical** pre-submit steps.
-- [ ] **E2E:** No merge-blocking test depends on real IB latency or fixed **sleep** without wait condition.
+- [ ] **Survivorship:** Delisted names **present** through exit — verify **sample** **delisted** **tickers** **in** **DB**
+- [ ] **T+1:** Signal **date** **≠** **fill** **bar** **for** **close-based** **factors** — verify **unit** **test** **on** **toy** **panel**
+- [ ] **Limits/halts:** **Zero-volume** / **limit-locked** **days** **do** **not** **fill** **at** **fantasy** **prices**
+- [ ] **Calendar:** **Rebalance** **shift** **uses** **trading** **calendar**, **not** **calendar** **day** **blind** **shift**
+- [ ] **Factors:** **Rolling** **window** **endpoints** **match** **docs**; **min_periods** **enforced**
+- [ ] **Ranks:** **NaN** / **tie** **policy** **documented** **and** **tested**
+- [ ] **Costs:** At least a bps sensitivity table (even if 0 bps baseline)
+- [ ] **Integration:** **Portfolio** **curve** **≠** **average** **of** **single-name** **curves**
 
 ---
 
 ## Recovery Strategies
 
-| Pitfall | Recovery cost | Recovery steps |
+| Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Stale qualify cache | MEDIUM | Disable cache flag / deploy flush; reconnect Gateway; verify `conId` in logs |
-| Double ledger on partials | HIGH | Reconcile DB from IB executions; add idempotency key on `orderId`+`cumQty` |
-| TIF regression | MEDIUM | Revert TIF commit; rerun golden tests; paper validate closes |
+| Survivorship bias | HIGH | Re-ingest delisted history; rebuild PIT universe; re-run studies |
+| Look-ahead in pandas | MEDIUM | Freeze signal/execution schema; add regression tests; recompute |
+| Bad calendar shift | MEDIUM | Centralize calendar + reindex helpers; re-run |
+| Wrong tie/NaN rank policy | LOW | Fix rank API; run sensitivity checks |
 
 ---
 
-## Pitfall-to-Phase Mapping (v1.1)
+## Pitfall-to-Phase Mapping
 
-Suggested mapping — adjust to final **`ROADMAP.md`** phase numbers.
+Suggested mapping for v2.0-style milestones (adjust to your `ROADMAP.md` phase numbers):
 
-| Pitfall | Prevention phase | Verification |
+| Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Partial fill / status handling | Limit orders + callback work | Simulated **`PartiallyFilled`** sequences; DB counts |
-| Cache invalidation | Qualify cache phase | Reconnect test; cache miss after invalidate |
-| Metals **secType** | Contract / symbol extension | Paper qualify + **`_EXPECTED_SEC_TYPES`** (or equivalent) |
-| TIF regression | TIF unification / policy | Parametrize **`_get_tif_for_signal`** REGR |
-| Flaky E2E | Frontend E2E phase | CI stability over N runs |
-| Normalize/align order | Tech debt / execution refactor | Parity tests market vs limit |
+| Survivorship / PIT universe | Constituent + history data phase | Delisted symbol count > 0; membership changes year-over-year |
+| T+1 / lookahead | Cross-sectional backtest engine phase | Deterministic tests; signal vs execution date in logs |
+| Halt / limits | Execution realism phase (after core engine) | Fill rate below 100% on synthetic halt fixtures |
+| Calendar / missing data | Data alignment + factor phase | No silent ffill across halts unless explicitly allowed |
+| Factor window bugs | Factor library phase | Golden tests per factor |
+| Rank NaN/ties | Ranking / portfolio builder phase | Property tests: weights sum to 1 (long-only) |
+| Costs / reconstitution | Reporting + refinement phase | Cost sweep table; event study around index dates |
+| Single-asset integration | Architecture / first vertical slice | One portfolio equity curve — not N× single-asset average |
 
 ---
 
 ## Sources
 
-- **This repo:** `backend_api_python/app/services/live_trading/ibkr_trading/client.py` — **`_on_order_status`**, **`_create_contract`**, **`_get_tif_for_signal`**, **`_lot_size_cache`**, **`_rth_details_cache`**
-- **This repo:** `backend_api_python/app/services/live_trading/ibkr_trading/order_tracker.py` — **`HARD_TERMINAL`**, **`ACTIVE`**, **`Cancelled`** recovery notes
-- **Interactive Brokers:** [TWS API — Order statuses](https://interactivebrokers.github.io/tws-api/order_submission.html) (confirm **`PartiallyFilled`** and lifecycle) — verify current page revision
-- **ib_insync:** Trade / `orderStatus` updates on **`Trade`** objects — see library docs for event ordering with **`execDetails`**
+- Nasdaq NDX methodology (constituent rules, reconstitution / rebalance mechanics): [Nasdaq Global Indexes methodology_NDX.pdf](https://indexes.nasdaq.com/docs/methodology_NDX.pdf) — HIGH confidence for process description.
+- Survivorship bias (impact varies widely by strategy): industry and academic literature — MEDIUM confidence for magnitude without your exact universe.
+- Pandas `shift`, `merge_asof`, alignment: [pandas documentation](https://pandas.pydata.org/docs/) — HIGH confidence for API semantics.
+- Transaction costs and index rebalancing (e.g. SSRN working papers) — MEDIUM confidence for specific bps without portfolio-level calibration.
 
 ---
-
-*Pitfalls research for: v1.1 IBKR integration (limit orders, caching, metals, TIF, E2E)*  
-*Researched: 2026-04-11*
+*Pitfalls research for: Cross-sectional strategy backtesting on QuantDinger (brownfield, single-asset → multi-asset)*  
+*Researched: 2026-04-13*

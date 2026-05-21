@@ -1,162 +1,155 @@
 # Project Research Summary
 
-**Project:** QuantDinger v1.1 — Tech Debt Cleanup + Limit Orders  
-**Domain:** IBKR TWS / `ib_insync` — Forex IDEALPRO, precious metals (CMDTY), contract qualification, automated execution, E2E testing  
-**Researched:** 2026-04-11  
-**Confidence:** MEDIUM–HIGH (HIGH for stack/API shapes; MEDIUM for venue-specific IB product rules and HShare IOC constraints)
+**Project:** QuantDinger — v2.0 Cross-Sectional Strategy  
+**Domain:** Cross-sectional equity strategies (NASDAQ 100 universe, factor panels, grid-search backtests) on the existing QuantDinger brownfield stack  
+**Researched:** 2026-04-13  
+**Confidence:** MEDIUM–HIGH (stack versions PyPI-verified; scrape reliability and pre-snapshot NQ100 history are medium-confidence)
 
 ## Executive Summary
 
-QuantDinger v1.1 extends an existing brownfield stack (Flask, `ib_insync` 0.9.86, Vue 2, pytest) with **Forex limit orders**, **qualify-result caching**, **TIF policy unification** (USStock/HShare open → IOC where supported), **precious-metal contract routing** (notably whether `XAUUSD` is `CMDTY` vs `CASH`), **`normalize()` timing alignment** with the IB order pipeline, and **E2E hardening** (API prefix fixes, optional frontend HTTP E2E via Playwright). Experts ship this by keeping **one IBKR order pipeline** (`place_market_order` / `place_limit_order`), rounding limit prices with **`Decimal` + `ContractDetails.minTick`**, and using **mock-first CI** with paper smoke optional.
+QuantDinger v2.0 adds **credible cross-sectional equity backtesting** on the NQ100 universe: point-in-time membership, cross-sectional factors and portfolio construction, and execution-realistic simulation (T+1 open after signal at prior close, halt/limit policy). Experts build this as **server-owned universe history** (PostgreSQL snapshots, not static lists), **shared factor/panel libraries** importable from API and scripts, and a **dedicated portfolio backtest path** separate from single-asset `BacktestService.run()` semantics.
 
-The recommended approach: pin **`ib_insync==0.9.86`**, add **`cachetools.TTLCache`** (or a careful stdlib TTL dict) **inside `_qualify_contract_async`**, extend **`StatefulClientRunner`** and **`PendingOrderWorker`** so automated trading can pass limit price and order type—not only REST, validate **metals on paper** per symbol before encoding `Forex` vs `Commodity`/generic `Contract`, and lock **TIF** behavior with **parametrized regression tests** so HShare DAY-only exceptions are not lost. **Limit orders** stress **partial fills** and **`PartiallyFilled`**; ledger logic must avoid **double-applying** cumulative fills in `_handle_fill`.
+The recommended approach is: **beautifulsoup4 + lxml + requests** (with optional **tenacity**, **filelock**, **joblib**) for ingest; **pandas/numpy** aligned with existing floors (upgrade pandas 2.2+ only after full test suite); optional **pandas_market_calendars** for next-session open after US holidays; **APScheduler** for periodic constituent refresh; **no** Scrapy/Selenium for simple table scrapes, **no** Dask/Ray/Celery for initial grid search. Constituent data lands in **normalized tables** (`index_definition`, snapshot/event rows) with indexes for `(index_id, as_of_date)` lookups; scripts consume **API and/or read-only DB** with CSV cache as derived cache only.
 
-Key risks: **stale qualify cache** after reconnect or IB listing changes (mitigate: TTL, reconnect flush, canonical keys, prefer `conId` snapshots); **wrong `secType` for metals** (mitigate: paper `qualifyContractsAsync` + `_validate_qualified_contract`); **TIF changes** altering US stock fill behavior (mitigate: explicit matrix tests + migration notes); **flaky E2E** (mitigate: deterministic mocks, wait-for assertions, no merge-blocking live IB).
-
-**Milestone scope alignment (v1.1):** (1) qualify result caching — (2) USStock/HShare open → IOC (TIF unification) — (3) Forex limit orders (`LimitOrder`) — (4) precious metal contract classification (`XAUUSD` as CMDTY per IB Basic Contracts doc; verify `XAGUSD`) — (5) `normalize()` call timing fix — (6) E2E test API prefix fix — (7) frontend HTTP E2E test (Playwright recommended).
+**Key risks:** (1) **Survivorship and membership look-ahead** if “today’s NQ100” drives history — mitigate with PIT snapshots, delisted bar retention, and auditable scrape metadata. (2) **Same-bar lookahead** if close-based signals fill on the same bar — mitigate with explicit signal vs execution timestamps, trading-calendar-aware shifts, and unit tests. (3) **Calendar and panel alignment** across symbols — use a reference equity calendar and avoid blind `shift(1)` on merged panels. (4) **Scrape fragility** — mitigate with retries, optional raw HTML storage, and **no** live network in CI (golden HTML fixtures).
 
 ## Key Findings
 
 ### Recommended Stack
 
-See [STACK.md](./STACK.md). No second IB API layer: **`ib_insync`** remains the single gateway wrapper. **Limit orders** use `LimitOrder(action, totalQuantity, lmtPrice, **kwargs)` with TIF from existing `_get_tif_for_signal` / unification work. **Price precision:** stdlib **`decimal.Decimal`** plus **`ContractDetails.minTick`** / `priceMagnifier` after qualify—no extra PyPI dependency for rounding. **Qualify cache:** **`cachetools>=7.0.5`** (`TTLCache`; Python ≥3.10) or stdlib-only TTL dict. **E2E:** Flask **`test_client()`** for backend; optional **`pytest-flask`**; browser/HTTP E2E via **`@playwright/test`** + **`playwright`** (e.g. 1.59.1)—keep Jest + Vue Test Utils for unit/component tests.
+Research favors **minimal, proven** dependencies on top of the existing Flask + PostgreSQL + pandas stack. **beautifulsoup4 (≥4.14,<5)** with **lxml (≥6,<7)** is the default HTML parsing path; **requests** stays the HTTP client unless async batching justifies **httpx**. **tenacity** handles flaky endpoints; **filelock** protects checkpoint/JSONL under parallel workers; **joblib** or stdlib **ProcessPoolExecutor** covers grid search — set **`OMP_NUM_THREADS=1`** when combining multiprocessing with BLAS-backed numpy/pandas. **pandas_market_calendars** is recommended once “next session open” must respect NYSE/Nasdaq holidays. **Do not** jump to pandas 3.x without running the full backend test suite; pin **numpy** consistently with the chosen pandas wheel set.
 
 **Core technologies:**
-- **ib_insync 0.9.86:** `LimitOrder`, `MarketOrder`, `Forex`, `Commodity`, qualify/details APIs — matches project lower bound; pin for reproducibility.
-- **cachetools (TTLCache):** Bounded qualify cache with TTL — avoids unbounded dict growth; align access with existing IB executor / threading model.
-- **Playwright (dev):** Frontend HTTP E2E against real stack — complements Flask in-process tests; one framework, no Cypress duplication.
+- **beautifulsoup4 + lxml:** Parse static HTML constituent tables — de facto standard; fast parser backend; no browser for server-rendered tables.
+- **pandas + numpy:** Date × symbol panels, factors, ranks — already in stack; cross-sectional work benefits from modern pandas APIs; upgrade deliberately.
+- **PostgreSQL + SQLAlchemy:** Authoritative constituent history and “as of” queries — same patterns as `qd_kline_points`; no new database product.
+
+Detailed pins, alternatives (Polars, httpx, Redis), and integration notes: [STACK.md](./STACK.md).
 
 ### Expected Features
 
-See [FEATURES.md](./FEATURES.md).
+Credible cross-sectional backtests require **PIT investable universe**, **per-rebalance cross-sectional factors**, **signal vs execution separation (T+1 open)**, **survivorship-aware price history**, **halt/limit policy**, **portfolio construction from ranks**, **rebalancing schedule**, **standard metrics**, and a **reproducible batch/grid script**. Differentiators include **dynamic NQ100 ingest with versioned snapshots**, **explicit factor combination (winsorize → z-score → blend)**, and **disciplined grid search** (guard against pure in-sample Sharpe mining). **Defer** live cross-sectional IBKR automation, full sector-neutral optimization, and A-share rules to later milestones; **avoid** same-bar execution, current universe on all history, and unconstrained “best Sharpe” grids without holdout/walk-forward discipline.
 
 **Must have (table stakes):**
-- **Forex limit orders (`LMT`) on IDEALPRO** — `lmtPrice` on minTick grid; partial fills and IOC semantics; terminal status handling consistent with `_TERMINAL_STATUSES`.
-- **Limit price validation** — round/reject off-grid prices before submit.
-- **Precious metals routing** — IB doc: **XAUUSD** as **CMDTY**, **SMART**, **USD**; **XAGUSD** verify via qualify (MEDIUM confidence by analogy).
-- **Qualify caching** — TTL + invalidation (reconnect, errors, symbol change); cache qualified snapshot or `conId` + details; do not skip post-qualify validation.
-- **TIF unification** — open → IOC for USStock where valid; **HShare may remain DAY-only** — document exception matrix before coding.
-- **`normalize()` timing** — explicit pipeline: `check` → `normalize` → contract/qualify/validate → `_align_qty_to_contract` (supersedes prior “not on purpose” decision for main chain).
-- **E2E confidence** — mocked callback chains in CI; API prefix fixes in tests; optional Playwright for wizard HTTP flows.
+- PIT NQ100 universe + historical snapshots — rankings must not use future membership.
+- Cross-sectional factor pipeline + execution-realistic backtest (T+1 open, halts) — matches PROJECT.md core value.
+- Survivorship-aware panel — delisted names remain in historical data where policy allows.
 
 **Should have (competitive):**
-- Bid/ask spread sanity before limit submit — nice-to-have; needs quote path.
-- Metrics/logging on qualify cache hit rate — operational visibility.
+- Dynamic NQ100 ingest + server cache + auditable snapshots — reduces manual list drift.
+- Factor combination library and grid script with standard metrics — research velocity on-platform.
 
 **Defer (v2+):**
-- Bracket/OCO/stop overlays; auto-reprice on IOC partial; golden FIX replay harness.
+- IC/IR, Fama–MacBeth-style diagnostics, walk-forward harness, transaction-cost models — after core path validates.
+
+Full landscape, MVP checklist, and prioritization: [FEATURES.md](./FEATURES.md).
 
 ### Architecture Approach
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md).
+Extend the **brownfield** monolith: new **`Nq100ConstituentService`** (scrape → normalize → upsert), **`routes/universe.py`** for `GET` constituents/history, **`app/services/cross_sectional/`** for pure pandas/numpy factors and panel alignment (no Flask in core math), and **APScheduler** job for periodic refresh. Keep existing **`CrossSectionalStrategy`** / `run_cross_sectional_indicator`; add a **distinct cross-sectional backtest service or methods** that build panels and portfolio returns — do not force multi-symbol logic into single-symbol `BacktestService.run()`. Standalone **`scripts/cross_sectional/`** should import shared app code via `PYTHONPATH` or package install. **Build order:** DB + membership API → kline coverage for universe symbols → shared factor/panel library → backtest pitfall implementation → optional API exposure → grid script last.
 
 **Major components:**
-1. **`IBKRClient` (`ibkr_trading/client.py`)** — Qualify cache in `_qualify_contract_async`; `_create_contract` / `_validate_qualified_contract` for metals; TIF in `_get_tif_for_signal`; shared preamble for market and limit orders.
-2. **`StatefulClientRunner` + `PendingOrderWorker`** — Today runner calls **`place_market_order` only**; v1.1 must branch for limit orders and plumb limit price + order type from `OrderContext` / payload so REST and automation stay consistent.
-3. **`app/routes/ibkr.py`** — Already routes limit to `place_limit_order`; worker/runner gap is the main automation gap.
-4. **Tests** — Extend `test_forex_ibkr_e2e.py` pattern; fix API prefix in E2E; add Playwright suite under `quantdinger_vue` for frontend HTTP E2E.
+1. **Constituent ingestion + PostgreSQL snapshots** — authoritative “who was in NQ100 on date D.”
+2. **`services/cross_sectional/` (factors, panels)** — shared between backend, strategies, and scripts.
+3. **Cross-sectional portfolio backtest engine** — T+1, halts, weights, one equity curve (not N× single-asset averages).
+
+Diagrams and file layout: [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ### Critical Pitfalls
 
-See [PITFALLS.md](./PITFALLS.md).
+1. **Survivorship / “current universe” on history** — Persist PIT membership and include delisted symbols in bars; never filter history with today’s list only.
+2. **Look-ahead (signal and fill on same close bar)** — Define `signal_time` vs `execution_time`; attribute returns to post-signal sessions; test that close-derived signals do not fill same bar.
+3. **Calendar misalignment** — Use a reference US equity session calendar; avoid one global `shift(1)` on heterogeneous symbol calendars; optional **pandas_market_calendars** for next open.
+4. **Halt / limit-up-down** — Heuristics from OHLCV (e.g. zero volume, limit-locked days); explicit cash vs hold rules; no fantasy fills at open when untradeable.
+5. **Bolting portfolio logic onto single-asset backtest API** — New panel engine with one portfolio return definition; shared only low-level data readers.
 
-1. **Limit vs market in `_on_order_status`** — Multiple updates with increasing `filled`; avoid calling `_handle_fill` in ways that double-apply cumulative fills; handle **`PartiallyFilled`** with delta discipline or execDetails-only application.
-2. **Qualify cache invalidation** — Stale `conId`/secType after reconnect or IB changes; use canonical keys, TTL, reconnect flush; avoid sharing mutable `Contract` across unrelated orders without a clear model.
-3. **Metals `secType`** — Assuming all XAU/XAG are IDEALPRO `Forex`/`CASH` can break qualification; validate per symbol on paper and extend `_EXPECTED_SEC_TYPES` / branches accordingly.
-4. **TIF unification** — Regressions on HShare (IOC unsupported) or unintended change to close-day behavior; lock with **`signal_type` × `market_type`** golden tests.
-5. **Normalize / align ordering** — Drift between `place_market_order` and `place_limit_order` or wrong order vs qualify causes wrong qty increment; prefer one internal pipeline helper.
-6. **Flaky frontend E2E** — Fixed sleeps, real IB latency — use mocks at same boundaries as v1.0 and condition-based waits.
+Full list, debt patterns, and checklist: [PITFALLS.md](./PITFALLS.md).
 
 ## Implications for Roadmap
 
-Suggested phase structure for v1.1 (continues project numbering in `ROADMAP.md`):
+Suggested phase structure aligns with dependency order in architecture research and pitfall prevention.
 
-### Phase A: Qualify result caching
-**Rationale:** Isolated to `IBKRClient`, benefits all callers (`place_*`, `get_quote`, `is_market_open`).  
-**Delivers:** TTL cache wrapping `_qualify_contract_async`, invalidation on reconnect, logging/metrics hooks.  
-**Addresses:** Milestone item (1); FEATURES qualify caching; STACK cachetools.  
-**Avoids:** Pitfall 2 (stale cache), Pitfall 7 (thread safety on cache writes).
+### Phase 1: Universe data plane (constituents + DB + API)
+**Rationale:** Every downstream join depends on correct **as-of** membership; survivor bias is fatal if deferred.  
+**Delivers:** Migrations for index/snapshot tables, `Nq100ConstituentService` (fetch/parse/upsert), `GET` universe endpoints, scheduled refresh job, logging of source URL and scrape time.  
+**Addresses:** PIT NQ100, dynamic ingest (FEATURES P1).  
+**Avoids:** Pitfalls 1 (survivorship), hardcoded `NQ100_UNIVERSE` as sole truth (ARCHITECTURE anti-pattern 1).
 
-### Phase B: TIF unification (USStock/HShare open → IOC)
-**Rationale:** Single policy surface (`_get_tif_for_signal`) before broad execution changes.  
-**Delivers:** Documented matrix (Forex IOC unchanged, USStock open IOC where accepted, HShare DAY exception), parametrized REGR tests.  
-**Addresses:** Milestone item (2); FEATURES TIF checklist.  
-**Avoids:** Pitfall 4 (TIF regression).
+### Phase 2: Kline coverage and delisted retention policy
+**Rationale:** Cross-sectional panels need aligned bars **including** names that later delist.  
+**Delivers:** Policy and sync/backfill alignment so universe symbols (and delisted history per policy) exist in `qd_kline_points`; document retention.  
+**Addresses:** Survivorship-aware historical panel (FEATURES P1).  
+**Avoids:** Pitfall 1 (live-listed-only histories).
 
-### Phase C: `normalize()` call timing fix
-**Rationale:** Small, testable; reduces drift before limit-order plumbing.  
-**Delivers:** `check` → `normalize` → qualify chain → `_align_qty_to_contract` in both order paths; unit tests in `test_order_normalizer.py`.  
-**Addresses:** Milestone item (5).  
-**Avoids:** Pitfall 6 (ordering bugs).
+### Phase 3: Shared cross-sectional library (factors + panels)
+**Rationale:** One implementation for script, backtest, and future API; golden tests per factor.  
+**Delivers:** `app/services/cross_sectional/` (factors, panel alignment, NaN/tie policy); refactor `scripts/cross_sectional/nq100_cross_sectional.py` to import shared code.  
+**Addresses:** Factor registration, z-score/rank pipeline, minimum universe size K (FEATURES P1).  
+**Avoids:** Pitfalls 4–6 (calendar, factor windows, rank NaNs/ties).
 
-### Phase D: Precious metal contract classification (XAUUSD / XAGUSD)
-**Rationale:** Product-dependent; may touch `symbols.py`, `_create_contract`, `_validate_qualified_contract`.  
-**Delivers:** CMDTY/SMART path per IB doc for XAUUSD; paper validation for XAGUSD; tests.  
-**Addresses:** Milestone item (4).  
-**Avoids:** Pitfall 3, FEATURES anti-feature “treat metals as CASH Forex”.
+### Phase 4: Cross-sectional backtest engine (T+1, halts, portfolio curve)
+**Rationale:** Core credibility: execution model and portfolio returns before large grid search.  
+**Delivers:** New service or methods: panel → signals → **T+1 open** fills, halt/limit rules, long-only top-N weights, standard metrics module; unit tests for signal vs fill dates.  
+**Addresses:** T+1, halt/limit policy, portfolio construction, metrics (FEATURES P1).  
+**Avoids:** Pitfalls 2, 3, 8 (lookahead, halts, single-asset integration).
 
-### Phase E: Forex limit orders in live pipeline
-**Rationale:** Depends on stable TIF, normalize pipeline, and qualify cache; extends runner/worker.  
-**Delivers:** `LimitOrder` + minTick rounding, `StatefulClientRunner` + worker support for limits, extended order-status tests (`PartiallyFilled` sequences).  
-**Addresses:** Milestone item (3); REST already calls `place_limit_order`.  
-**Avoids:** Pitfall 1, Pitfall 8 (tracker vs terminal status drift).
-
-### Phase F: E2E hardening — API prefix + frontend HTTP E2E
-**Rationale:** After API surface stable; fixes test drift and adds browser coverage.  
-**Delivers:** E2E test API prefix fix; Playwright config + smoke flows for `trading-assistant` HTTP paths; CI job optional/separate from unit tests.  
-**Addresses:** Milestone items (6)(7).  
-**Avoids:** Pitfall 5 (flaky E2E).
+### Phase 5: Grid search script + reporting discipline
+**Rationale:** Depends on correct panels and metrics; last to avoid optimizing wrong objective.  
+**Delivers:** Parameter sweep (joblib/executor), checkpointing (**filelock**), exports; document IS vs OOS expectations (process + optional P2 harness).  
+**Addresses:** Standalone grid script (FEATURES MVP).  
+**Avoids:** Pitfall 7 (zero-cost overconfidence) — at least document cost sensitivity; anti-feature “best in-sample Sharpe only.”
 
 ### Phase Ordering Rationale
 
-- **Cache + TIF + normalize** early: low coupling, high leverage, fewer regressions when limits and metals land.  
-- **Metals** before or in parallel with **limit** work if `minTick` and validation share contract details.  
-- **Runner limit support** after contract/TIF/normalize foundations to avoid duplicate behavior between REST-only limits and automation.  
-- **E2E** last: depends on stable routes and callbacks.
+- **Universe and bars before factors:** PIT membership and bar retention define the panel; factors are meaningless on the wrong universe.  
+- **Shared library before heavy backtest:** Reduces duplication and makes script and service consistent.  
+- **Engine before grid:** Grid multiplies errors; pitfall mapping places survivor + T+1 engine before brute-force search.  
+- **Scheduler + DB cache, not per-request scraping:** Matches STACK caching strategy.
 
 ### Research Flags
 
-Phases likely needing deeper research during planning:
-- **Phase D (metals):** Account-specific `secType`/exchange for XAGUSD and any new symbols — paper `qualify` is source of truth.
-- **Phase B (TIF):** Exchange acceptance of IOC for US stock opens — confirm against IB/product rules if any ambiguity remains.
+Phases likely needing deeper research or decisions during planning:
+- **Phase 1 (universe ingest):** **Source selection** (Nasdaq vs Wikipedia vs vendor) — HTML/ToS changes; **robots.txt** and rate limits; optional **research-phase** on legal/operational scrape policy.
+- **Phase 2 (bars):** **Historical NQ100** before first snapshot — reconstruction vs vendor; label confidence in pre-snapshot backtests.
+- **Phase 4 (engine):** **Halt detection** from OHLC alone is heuristic; US vs future A-share rules differ.
 
 Phases with standard patterns (lighter research):
-- **Phase A (cache):** TTL + invalidate is well-trodden; align with existing `_lot_size_cache` patterns.
-- **Phase C (normalize):** Local code change with clear unit test surface.
-- **Phase F (Playwright):** Established tooling; focus on deterministic selectors and mock boundaries.
+- **Phase 3 (pandas factors/ranks):** Well-trodden patterns; focus on tests and documentation.
+- **Phase 5 (joblib/checkpoint):** Common batch patterns; **tenacity** + **filelock** are documented stack choices.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | PyPI versions, `ib_insync` API shapes, Decimal/minTick pattern |
-| Features | MEDIUM–HIGH | HIGH for XAUUSD CMDTY doc; MEDIUM for XAGUSD and full TIF matrix |
-| Architecture | HIGH | File/method locations verified from repo |
-| Pitfalls | HIGH | Grounded in `client.py` callbacks, caches, and tracker semantics |
+| Stack | HIGH | PyPI versions verified 2026-04-13; pandas major upgrade needs explicit QA. |
+| Features | MEDIUM–HIGH | Strong alignment with equity factor practice; perfect decades-long free PIT NQ100 history is not assumed. |
+| Architecture | HIGH | Grounded in repo inspection (`BacktestService`, `cross_sectional*`, scheduler, scripts). |
+| Pitfalls | HIGH | Look-ahead/survivorship/calendar mechanics are standard; halt magnitudes and cost bps are context-dependent. |
 
-**Overall confidence:** **MEDIUM–HIGH** — implementation path is clear; IB venue/account specifics for metals and HShare TIF need validation in paper/testing.
+**Overall confidence:** MEDIUM–HIGH
 
 ### Gaps to Address
 
-- **XAGUSD and other metals:** Confirm `secType`/exchange via `qualifyContractsAsync` on target accounts — do not rely on EURUSD-style `Forex` alone.
-- **USStock IOC on open:** Confirm venue rules for intended order types and sessions if any rejection appears in paper.
-- **OrderTracker vs `_TERMINAL_STATUSES`:** Explicit mapping tests when limit partials are added — avoid semantic drift.
+- **Long-horizon PIT NQ100 without a vendor:** Forward snapshots + best-effort backfill; document confidence bands for early years.  
+- **Official scrape/API target:** Final URL and parser tests with **frozen HTML** in CI.  
+- **Pandas/numpy upgrade path:** If pinning moves to 2.2+/numpy 2.x, run full backend tests before merge.  
+- **PROJECT.md scope confirmation:** Optional REST exposure for cross-sectional backtest vs script-only — align when locking ROADMAP phases.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [STACK.md](./STACK.md), [FEATURES.md](./FEATURES.md), [ARCHITECTURE.md](./ARCHITECTURE.md), [PITFALLS.md](./PITFALLS.md) — v1.1 research set (2026-04-11)
-- [IB TWS API — Basic Contracts (Commodities)](https://interactivebrokers.github.io/tws-api/basic_contracts.html) — XAUUSD CMDTY sample
-- [IB ContractDetails](https://interactivebrokers.github.io/tws-api/classIBApi_1_1ContractDetails.html) — minTick / priceMagnifier
-- PyPI: `ib-insync`, `cachetools`, `pytest-flask`; npm: `@playwright/test` — versions per STACK.md
+- PyPI JSON API — package versions (2026-04-13): beautifulsoup4, lxml, pandas, numpy, tenacity, filelock, joblib, pandas_market_calendars (see [STACK.md](./STACK.md)).
+- Repository — `backend_api_python/app/services/backtest.py`, `app/strategies/cross_sectional*.py`, `scheduler_service`, `scripts/cross_sectional/nq100_cross_sectional.py`, migrations.
+- [Nasdaq NDX methodology PDF](https://indexes.nasdaq.com/docs/methodology_NDX.pdf) — index rules and reconstitution process.
+- [Nasdaq press release — Nasdaq-100 methodology consultation (2026-03-30)](https://www.nasdaq.com/press-release/nasdaq-concludes-public-consultation-nasdaq-100-indexr-methodology-2026-03-30) — effective dates for methodology change.
 
 ### Secondary (MEDIUM confidence)
-- v1.0 phase research (TIF, contract qualification) referenced in FEATURES.md
-- Industry pattern: mock-first E2E for trading systems
+- Asset pricing / industry practice — PIT universes, T+1 convention, survivorship impact ranges (strategy-dependent).
+- Pandas documentation — `shift`, `merge_asof`, alignment semantics.
 
 ### Tertiary (LOW confidence)
-- Long-term IB listing changes for spot metals — mitigate with TTL + invalidate
+- Specific survivorship **percentage** impact without this product’s exact universe and horizon — treat order-of-magnitude only.
 
 ---
-*Research completed: 2026-04-11*  
+*Research completed: 2026-04-13*  
 *Ready for roadmap: yes*

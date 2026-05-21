@@ -1,110 +1,122 @@
 # External Integrations
 
-**Analysis Date:** 2026-04-09
+**Analysis Date:** 2026-04-22
 
 ## APIs & External Services
 
-**Market & reference data:**
-- **Finnhub** — Company/profile and related REST usage (e.g. `app/services/symbol_name.py`); API key via `FINNHUB_API_KEY` (see `app/utils/config_loader.py`).
-- **Yahoo Finance (yfinance)** — Equity and macro series; timeouts via `YFINANCE_TIMEOUT`.
-- **AkShare** — China and multi-market data; `AKSHARE_TIMEOUT`.
-- **Tiingo** — Optional OHLC/fundamental data; `TIINGO_API_KEY`, `TIINGO_TIMEOUT`.
-- **CCXT** — Unified crypto exchange APIs; defaults and proxy via `CCXT_DEFAULT_EXCHANGE`, `CCXT_TIMEOUT`, `CCXT_PROXY` (also fed from `run.py` proxy normalization).
+**交易执行与券商/交易所:**
+- Interactive Brokers (IBKR) - 实盘/仿真交易接入（证据：`backend_api_python/app/services/live_trading/ibkr_trading/client.py`）
+  - SDK/Client: `ib_insync`
+  - Auth: `IBKR_HOST`, `IBKR_PORT`, `IBKR_CLIENT_ID`, `IBKR_ACCOUNT` 及 live 变体（定义见 `backend_api_python/env.example`）
+- MetaTrader 5 (可选) - 外汇交易接入（证据：`backend_api_python/app/services/live_trading/mt5_trading/client.py`）
+  - SDK/Client: MetaTrader5 Python 库（Windows-only 注释）
+  - Auth: MT5 账户参数（由策略配置/连接配置传入）
+- Crypto Exchanges (Binance/OKX/Bitget/Bybit/Coinbase/Kraken/Kucoin/Gate/Bitfinex 等) - 加密交易执行（证据：`backend_api_python/app/services/live_trading/crypto_trading/`）
+  - SDK/Client: `ccxt` + 自定义 REST 客户端
+  - Auth: 交易所 key/secret（由策略交易配置提供）
 
-**Brokerage / execution:**
-- **Interactive Brokers** — `ib_insync` for TWS/IB Gateway; connection settings use env such as `IBKR_HOST`, `IBKR_PORT` (see tests and live trading modules under `app/services/live_trading/`).
-- **MetaTrader 5** — Optional on Windows (`requirements-windows.txt`); not bundled in Linux images.
+**市场数据与信息服务:**
+- Finnhub - 美股报价/公司信息（证据：`backend_api_python/app/data_sources/us_stock.py`、`backend_api_python/app/services/symbol_name.py`）
+  - SDK/Client: `finnhub-python`
+  - Auth: `FINNHUB_API_KEY`
+- Yahoo Finance - 通用行情回退源（证据：`backend_api_python/app/data_sources/us_stock.py`、`backend_api_python/app/data_sources/cn_stock.py`）
+  - SDK/Client: `yfinance`
+  - Auth: 无
+- Tiingo - 外汇相关数据链路（证据：`backend_api_python/app/data_sources/forex.py`）
+  - SDK/Client: `requests`
+  - Auth: `TIINGO_API_KEY`
+- Eastmoney / Tencent - A/H 股行情（证据：`backend_api_python/app/data_sources/cn_stock.py`）
+  - SDK/Client: `requests`
+  - Auth: 无
+- 搜索引擎聚合（Bocha/Tavily/SerpAPI/Google CSE/Bing/DuckDuckGo）- 新闻与研究上下文（证据：`backend_api_python/app/services/search.py`）
+  - SDK/Client: `requests`，可选 `tavily`、`serpapi`
+  - Auth: `BOCHA_API_KEYS`, `TAVILY_API_KEYS`, `SERPAPI_KEYS`, `SEARCH_GOOGLE_API_KEY`, `SEARCH_GOOGLE_CX`, `SEARCH_BING_API_KEY`
 
-**LLM / AI analysis (env-driven in `config_loader.py`):**
-- **OpenRouter** — `OPENROUTER_API_KEY`, model and URL settings.
-- **OpenAI** — `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`.
-- **Google Gemini** — `GOOGLE_API_KEY`, `GOOGLE_MODEL`.
-- **DeepSeek** — `DEEPSEEK_API_KEY`, base URL, model.
-- **xAI Grok** — `GROK_API_KEY`, base URL, model.
-- Provider selection: `LLM_PROVIDER`; model list JSON: `AI_MODELS_JSON`.
+**LLM 与 AI:**
+- OpenRouter / OpenAI / Google Gemini / DeepSeek / xAI Grok / MiniMax - AI 分析与对话调用（证据：`backend_api_python/app/services/llm.py`）
+  - SDK/Client: `requests`
+  - Auth: `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `GROK_API_KEY`, `MINIMAX_API_KEY`
 
-**Search (news/research):**
-- **Google Custom Search / Bing** — `SEARCH_PROVIDER`, `SEARCH_GOOGLE_API_KEY`, `SEARCH_GOOGLE_CX`, `SEARCH_BING_API_KEY`, `SEARCH_MAX_RESULTS`.
-- **Tavily** — `TAVILY_API_KEYS` (optional package commented in `requirements.txt`).
-- **Bocha** — `BOCHA_API_KEYS` (Chinese search optimization).
-- **SerpAPI** — `SERPAPI_KEYS` (optional package commented in `requirements.txt`).
+**身份与安全服务:**
+- Cloudflare Turnstile - 人机校验（证据：`backend_api_python/app/services/security_service.py`）
+  - SDK/Client: `requests`
+  - Auth: `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`
+- Google OAuth / GitHub OAuth - 第三方登录（证据：`backend_api_python/app/services/oauth_service.py`、`backend_api_python/app/routes/auth.py`）
+  - SDK/Client: `requests`
+  - Auth: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
 
-**Security & identity:**
-- **Cloudflare Turnstile** — Bot protection; `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` (`app/services/security_service.py`).
-- **Google OAuth (login)** — Enabled when `GOOGLE_CLIENT_ID` is set (`security_service.py`); additional OAuth-related env may appear alongside registration flags.
-
-**Notifications (outbound):**
-- **SMTP** — Email: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_TLS`, `SMTP_USE_SSL` (`app/services/signal_notifier.py`).
-- **Twilio** — SMS: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`.
-- **Discord** — Incoming webhook URLs configured in user notification targets (HTTP POST to `discord.com/api/webhooks/...`).
-- **Generic HTTPS webhooks** — User-configured URLs with optional Bearer token and HMAC signing (`SIGNAL_WEBHOOK_SIGNING_SECRET` for signing secret override).
-
-**Internal / same-cluster:**
-- `INTERNAL_API_KEY` — Authenticates internal or privileged API usage (`get_internal_api_key()` in `app/utils/config_loader.py`).
-
-**Exchange REST (strategy/config):**
-- Strategy code may call configurable exchange HTTP bases (e.g. contract/symbol discovery in `app/services/strategy.py`); treat as deployment-specific exchange HTTP APIs, not a single third-party SDK name.
+**消息与通知服务:**
+- SMTP 邮件 - 策略通知（证据：`backend_api_python/app/services/signal_notifier.py`）
+  - SDK/Client: `smtplib`
+  - Auth: `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`
+- Twilio SMS - 短信通知（证据：`backend_api_python/app/services/signal_notifier.py`）
+  - SDK/Client: `requests` 调 Twilio REST
+  - Auth: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
+- Telegram Bot / Discord Webhook / Generic Webhook - 出站通知（证据：`backend_api_python/app/services/signal_notifier.py`）
+  - SDK/Client: `requests`
+  - Auth: Telegram bot token、Webhook token/HMAC secret（变量名见通知配置与 `SIGNAL_WEBHOOK_SIGNING_SECRET`）
 
 ## Data Storage
 
 **Databases:**
-- **PostgreSQL** — Primary deployment: `DATABASE_URL` (e.g. `postgresql://user:pass@host:5432/dbname`), `DB_TYPE=postgresql` in Compose. Connection pooling in `app/utils/db_postgres.py`; public API in `app/utils/db.py`.
-- **SQLite** — Some code paths still branch on `DB_TYPE` defaulting to `sqlite` in `app/services/data_handler.py` for schema introspection (`PRAGMA` vs `information_schema`). Production Compose path expects PostgreSQL; `app/utils/db.py` documents PostgreSQL-only unified interface.
+- PostgreSQL（主路径）- 连接池与 SQL 适配（证据：`backend_api_python/app/utils/db_postgres.py`、`docker-compose.yml`）
+  - Connection: `DATABASE_URL`（Compose 中由 `POSTGRES_*` 组装）
+  - Client: `psycopg2-binary`（以及 `SQLAlchemy` 依赖存在）
+- SQLite 兼容路径（非默认主路径）- 由 DB 抽象层兼容（证据：`backend_api_python/app/utils/db.py`、`backend_api_python/app/config/database.py`）
 
-**File storage:**
-- Local filesystem under `backend_api_python/logs`, `backend_api_python/data` (mounted in `docker-compose.yml`). No cloud object storage SDK detected in core requirements.
+**File Storage:**
+- Local filesystem only
+  - 后端持久目录：`backend_api_python/logs`、`backend_api_python/data`（证据：`docker-compose.yml`）
 
 **Caching:**
-- Application-level caching toggled via env (`ENABLE_CACHE` in `config_loader.py`); no Redis/Memcached package in `requirements.txt`.
+- 进程内缓存开关 + 可选 Redis 配置项
+  - 开关配置：`ENABLE_CACHE`（证据：`backend_api_python/app/utils/config_loader.py`）
+  - Redis 配置字段存在：`REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB`（证据：`backend_api_python/app/config/database.py`）
 
 ## Authentication & Identity
 
 **Auth Provider:**
-- **Custom** — JWT (`PyJWT`), bcrypt-hashed passwords, session/user tables in PostgreSQL (`app/services/user_service.py`, `security_service.py`).
-- **Optional Google OAuth** — When `GOOGLE_CLIENT_ID` is configured.
-- **Demo mode** — `IS_DEMO_MODE` read in `run.py` for read-only behavior when enabled.
+- Custom（JWT + 用户库）为主（证据：`backend_api_python/app/routes/auth.py`、`backend_api_python/app/utils/auth.py`、`backend_api_python/app/services/user_service.py`）
+  - Implementation: Bearer Token + token_version 单端登录失效机制
+- OAuth（Google/GitHub）为可选增强登录（证据：`backend_api_python/app/services/oauth_service.py`）
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- Not detected as a dedicated SaaS (e.g. Sentry) in core `requirements.txt`.
+- Not detected（未检测到 Sentry/Datadog 类 SDK，证据：`backend_api_python/requirements.txt`）
 
 **Logs:**
-- File and level driven by `LOG_LEVEL`, `LOG_DIR`, `LOG_FILE`, rotation settings in `app/config/settings.py` and `app/utils/logger.py`.
+- Python 文件日志 + 轮转配置（证据：`backend_api_python/app/config/settings.py`、`backend_api_python/app/utils/logger.py`）
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- **Docker Compose** — Local/production-style orchestration (`docker-compose.yml`).
-- **Nginx** — Static frontend and reverse proxy to Flask backend in container network.
+- Docker Compose 容器化部署（证据：`docker-compose.yml`）
+- 前端 Nginx 反向代理 + 静态托管（证据：`quantdinger_vue/Dockerfile`、`quantdinger_vue/deploy/nginx-docker.conf`）
 
 **CI Pipeline:**
-- Not detected at repository root in this analysis (no `.github/workflows` confirmation in this pass).
+- GitHub Actions 基础检查（Python 语法/import + 前端 lint）（证据：`.github/workflows/basic-ci.yml`）
 
 ## Environment Configuration
 
-**Required for typical Docker stack:**
-- `DATABASE_URL` / `POSTGRES_*` — Database (Compose sets defaults).
-- `SECRET_KEY` — Should be set for non-dev deployments (`app/config/settings.py` default is placeholder).
-
-**Commonly used optional vars (non-exhaustive):**
-- Data: `FINNHUB_API_KEY`, `CCXT_*`, `TIINGO_API_KEY`, proxy `PROXY_URL` or `PROXY_PORT`.
-- AI: `OPENROUTER_API_KEY` or provider-specific keys, `LLM_PROVIDER`.
-- Security: `INTERNAL_API_KEY`, Turnstile keys, rate limits (`SECURITY_*`, `VERIFICATION_CODE_*`).
-- Ops: `STRATEGY_MAX_THREADS`, `STRATEGY_TICK_INTERVAL_SEC`, `LOG_LEVEL`, `ENABLE_REGISTRATION`.
+**Required env vars:**
+- 核心：`DATABASE_URL`, `SECRET_KEY`, `PYTHON_API_HOST`, `PYTHON_API_PORT`（证据：`backend_api_python/env.example`、`backend_api_python/app/config/settings.py`）
+- OAuth 回调前端地址：`FRONTEND_URL`（证据：`backend_api_python/app/services/oauth_service.py`）
 
 **Secrets location:**
-- **`backend_api_python/.env`** — Intended for secrets; file may be absent in repo and is mounted in Compose for development (`docker-compose.yml` volume). **Do not commit secrets.**
+- `backend_api_python/.env`（由 `backend_api_python/run.py` 启动时加载）
+- `quantdinger_vue/.env*`（前端多环境配置文件存在，仅记录存在性）
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- No universal public webhook receiver catalogued here; signal notification flows may expose routes under Flask blueprints in `app/routes/` (verify specific paths when integrating). Health endpoint used by Docker: `GET /api/health` on backend.
+- OAuth 回调入口（证据：`backend_api_python/app/routes/auth.py`）
+  - `/api/auth/oauth/google/callback`
+  - `/api/auth/oauth/github/callback`
 
 **Outgoing:**
-- User-configured **webhooks** and **Discord** URLs from notification settings (`app/services/signal_notifier.py`).
-- **SMTP** and **Twilio** for email/SMS as above.
+- 通知出站：通用 Webhook / Discord / Telegram / Twilio / SMTP（证据：`backend_api_python/app/services/signal_notifier.py`）
 
 ---
 
-*Integration audit: 2026-04-09*
+*Integration audit: 2026-04-22*
