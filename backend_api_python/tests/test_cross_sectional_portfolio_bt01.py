@@ -84,7 +84,17 @@ class TestIndicatorContract:
 class TestEngineCore:
     """22-01 Task 2"""
 
-    def test_engine_core_equity_and_repro(self):
+    @patch("app.utils.db.get_db_connection")
+    def test_engine_core_equity_and_repro(self, mock_db):
+        """Mock DB to avoid DATABASE_URL requirement."""
+        from unittest.mock import MagicMock
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None  # No delisting events
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_db.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
         start = date(2024, 1, 2)
         panel = _daily_panel(["AAA", "BBB"], start, 8)
         code = (
@@ -114,7 +124,17 @@ class TestEngineCore:
 class TestPitUniverse:
     """22-01-02b PIT：T 日无 SYM，T+k 才进入池"""
 
-    def test_pit_excludes_future_effective_symbol(self):
+    @patch("app.utils.db.get_db_connection")
+    def test_pit_excludes_future_effective_symbol(self, mock_db):
+        """Mock DB to avoid DATABASE_URL requirement."""
+        from unittest.mock import MagicMock
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None  # No delisting events
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_db.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
         start = date(2024, 1, 2)
         panel = _daily_panel(["AAA", "SYM"], start, 10)
 
@@ -155,7 +175,17 @@ class TestPitUniverse:
 class TestNeutralDual:
     """22-01 Task 3"""
 
-    def test_neutral_off_on_both_summaries(self):
+    @patch("app.utils.db.get_db_connection")
+    def test_neutral_off_on_both_summaries(self, mock_db):
+        """Mock DB to avoid DATABASE_URL requirement."""
+        from unittest.mock import MagicMock
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None  # No delisting events
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_db.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
         start = date(2024, 1, 2)
         panel = _daily_panel(["AAA", "BBB"], start, 10)
         code = (
@@ -224,7 +254,15 @@ class TestLongOnlyWeightNorm:
             "indicator_code": code,
             "trading_config": {"initial_capital": 100_000.0, "timeframe": "1D"},
         }
-        out = CrossSectionalPortfolioBacktestService().run(req)
+        with patch("app.utils.db.get_db_connection") as mock_db:
+            from unittest.mock import MagicMock
+            mock_cursor = MagicMock()
+            mock_cursor.fetchone.return_value = None  # No delisting events
+            mock_conn = MagicMock()
+            mock_conn.cursor.return_value = mock_cursor
+            mock_db.return_value.__enter__ = MagicMock(return_value=mock_conn)
+            mock_db.return_value.__exit__ = MagicMock(return_value=False)
+            out = CrossSectionalPortfolioBacktestService().run(req)
         assert out["neutral_off"]["equity_curve"][-1]["value"] > 0
 
 

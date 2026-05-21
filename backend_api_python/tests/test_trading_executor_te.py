@@ -526,7 +526,8 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
                  patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
                  patch("app.services.signal_executor.SignalExecutor._fetch_price_for_signal", return_value=100.0), \
                  patch("app.strategies.cross_sectional.CrossSectionalStrategy.should_execute", return_value=True), \
-                 patch.object(DataHandler, "update_last_rebalance"):
+                 patch.object(DataHandler, "update_last_rebalance"), \
+                 patch.object(DataHandler, "get_strategy_status_info", return_value={}):
                 mock_exec_signal.return_value = True
                 te = TradingExecutor()
                 te.data_handler.get_input_context_cross = MagicMock(return_value=input_ctx)
@@ -563,7 +564,8 @@ class TestTE06CrossSectionalExecuteSignalAfterIndicator:
                  patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
                  patch("app.services.signal_executor.SignalExecutor._fetch_price_for_signal", return_value=100.0), \
                  patch("app.strategies.cross_sectional.CrossSectionalStrategy.should_execute", return_value=True), \
-                 patch.object(DataHandler, "update_last_rebalance"):
+                 patch.object(DataHandler, "update_last_rebalance"), \
+                 patch.object(DataHandler, "get_strategy_status_info", return_value={}):
                 mock_exec_signal.return_value = True
                 te = TradingExecutor()
                 te.data_handler.get_input_context_cross = MagicMock(return_value=input_ctx)
@@ -733,6 +735,7 @@ class TestTE06bCloseSignalReceivesCorrectPositions:
                  patch("app.services.signal_executor.SignalExecutor.execute") as mock_exec_signal, \
                  patch("app.services.signal_executor.SignalExecutor._fetch_price_for_signal", return_value=100.0), \
                  patch.object(DataHandler, "update_last_rebalance"), \
+                 patch.object(DataHandler, "get_strategy_status_info", return_value={}), \
                  patch.object(DataHandler, "get_current_positions", return_value=[pos_a]), \
                  patch.object(DataHandler, "get_all_positions", return_value=[pos_a]):
                 mock_exec_signal.return_value = True

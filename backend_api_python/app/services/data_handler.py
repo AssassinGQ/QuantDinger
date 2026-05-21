@@ -323,6 +323,16 @@ class DataHandler:
         result = self._fetch_one("SELECT status FROM qd_strategies_trading WHERE id = %s", (strategy_id,))
         return result.get("status") if result else None
 
+    def get_strategy_status_info(self, strategy_id: int) -> Optional[Dict[str, Any]]:
+        """获取策略运行时状态信息 (如 excluded_from_universe 等)"""
+        result = self._fetch_one("SELECT status_info FROM qd_strategies_trading WHERE id = %s", (strategy_id,))
+        if result and result.get("status_info"):
+            try:
+                return json.loads(result["status_info"])
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
     def get_user_id(self, strategy_id: int) -> int:
         """获取策略所属 user_id"""
         result = self._fetch_one("SELECT user_id FROM qd_strategies_trading WHERE id = %s", (strategy_id,))
