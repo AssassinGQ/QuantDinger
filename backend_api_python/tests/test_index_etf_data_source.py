@@ -100,16 +100,45 @@ def test_get_kline_cny_calls_akshare_fund_etf_hist_em():
 
 
 def test_get_kline_cny_unsupported_timeframe_returns_empty():
-    """A-share ETF only supports 1D / 1W via akshare; minute-level should fail soft."""
+    """A-share ETF only supports 1D / 1W via akshare (or yfinance fallback); minute-level fails soft."""
     ds = IndexETFDataSource()
     with patch("app.data_sources.index_etf.HAS_AKSHARE", True):
         assert ds.get_kline("510300", "1H", 100) == []
 
 
-def test_get_kline_cny_without_akshare_returns_empty():
+def test_get_kline_cny_without_akshare_falls_back_to_yfinance():
+    """When akshare is missing we should still try the yfinance alias (.SS/.SZ)."""
     ds = IndexETFDataSource()
-    with patch("app.data_sources.index_etf.HAS_AKSHARE", False):
-        assert ds.get_kline("510300", "1D", 5) == []
+    fake_klines = [{"time": 1, "open": 4.1, "high": 4.2, "low": 4.0, "close": 4.15, "volume": 1000}]
+    with patch("app.data_sources.index_etf.HAS_AKSHARE", False), \
+         patch.object(ds._us_source, "get_kline", return_value=fake_klines) as us_mock:
+        klines = ds.get_kline("510300", "1D", 5)
+    us_mock.assert_called_once_with("510300.SS", "1D", 5, None)
+    assert klines == fake_klines
+
+
+def test_get_kline_cny_akshare_failure_falls_back_to_yfinance():
+    """akshare exception (proxy/network) should trigger yfinance fallback."""
+    ds = IndexETFDataSource()
+    fake_klines = [{"time": 1, "open": 4.1, "high": 4.2, "low": 4.0, "close": 4.15, "volume": 1000}]
+    fake_ak = MagicMock()
+    fake_ak.fund_etf_hist_em.side_effect = RuntimeError("ProxyError: Unable to connect to proxy")
+    with patch("app.data_sources.index_etf.HAS_AKSHARE", True), \
+         patch("app.data_sources.index_etf.ak", fake_ak), \
+         patch.object(ds._us_source, "get_kline", return_value=fake_klines) as us_mock:
+        klines = ds.get_kline("159915", "1D", 5)
+    us_mock.assert_called_once_with("159915.SZ", "1D", 5, None)
+    assert klines == fake_klines
+
+
+def test_ashare_etf_to_yahoo_symbol():
+    fn = IndexETFDataSource._ashare_etf_to_yahoo_symbol
+    assert fn("510300") == "510300.SS"  # SSE
+    assert fn("588000") == "588000.SS"  # STAR Market ETF
+    assert fn("159915") == "159915.SZ"  # SZSE
+    assert fn("000001") is None  # not an ETF code (regular A-share)
+    assert fn("QQQ") is None
+    assert fn("") is None
 
 
 # ---------------------------------------------------------------------------

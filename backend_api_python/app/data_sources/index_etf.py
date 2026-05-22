@@ -108,6 +108,22 @@ class IndexETFDataSource(BaseDataSource):
     # A-share ETF (akshare)
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _ashare_etf_to_yahoo_symbol(symbol: str) -> Optional[str]:
+        """A-share ETF code → yfinance ticker.
+
+        SSE ETFs use codes 510xxx/511xxx/512xxx/513xxx/515xxx/518xxx/588xxx → .SS.
+        SZSE ETFs use 159xxx → .SZ. Anything else returns None.
+        """
+        s = (symbol or "").strip()
+        if not s.isdigit() or len(s) != 6:
+            return None
+        if s.startswith("5"):
+            return f"{s}.SS"
+        if s.startswith("1"):
+            return f"{s}.SZ"
+        return None
+
     def _fetch_ashare_etf_kline(
         self,
         symbol: str,
@@ -115,9 +131,16 @@ class IndexETFDataSource(BaseDataSource):
         limit: int,
         before_time: Optional[int],
     ) -> List[Dict[str, Any]]:
+        """Fetch A-share ETF K-line with akshare primary + yfinance fallback.
+
+        akshare calls eastmoney behind the scenes and can fail when the
+        container is forced through a proxy that blocks eastmoney; yfinance
+        (via the SSE/SZSE Yahoo aliases) is a reliable fallback for daily/
+        weekly bars.
+        """
         if not HAS_AKSHARE:
-            logger.error("akshare not installed; cannot fetch A-share ETF %s", symbol)
-            return []
+            logger.warning("akshare not installed; falling back to yfinance for %s", symbol)
+            return self._fetch_ashare_etf_kline_yfinance(symbol, timeframe, limit, before_time)
 
         period = self.AKSHARE_PERIOD_MAP.get(timeframe)
         if not period:
@@ -138,35 +161,55 @@ class IndexETFDataSource(BaseDataSource):
                 end_date=end_date,
                 adjust="qfq",
             )
-            if df is None or df.empty:
-                logger.warning("A-share ETF %s: akshare returned empty", symbol)
-                return []
-
-            klines: List[Dict[str, Any]] = []
-            for _, row in df.iterrows():
-                date_str = str(row["日期"])
-                try:
-                    ts = int(datetime.strptime(date_str, "%Y-%m-%d").timestamp())
-                except ValueError:
-                    continue
-                klines.append(
-                    self.format_kline(
-                        timestamp=ts,
-                        open_price=float(row["开盘"]),
-                        high=float(row["最高"]),
-                        low=float(row["最低"]),
-                        close=float(row["收盘"]),
-                        volume=float(row["成交量"]),
+            if df is not None and not df.empty:
+                klines: List[Dict[str, Any]] = []
+                for _, row in df.iterrows():
+                    date_str = str(row["日期"])
+                    try:
+                        ts = int(datetime.strptime(date_str, "%Y-%m-%d").timestamp())
+                    except ValueError:
+                        continue
+                    klines.append(
+                        self.format_kline(
+                            timestamp=ts,
+                            open_price=float(row["开盘"]),
+                            high=float(row["最高"]),
+                            low=float(row["最低"]),
+                            close=float(row["收盘"]),
+                            volume=float(row["成交量"]),
+                        )
                     )
-                )
-
-            klines = self.filter_and_limit(klines, limit, before_time)
-            self.log_result(symbol, klines, timeframe)
-            return klines
+                if klines:
+                    klines = self.filter_and_limit(klines, limit, before_time)
+                    self.log_result(symbol, klines, timeframe)
+                    return klines
+                logger.warning("A-share ETF %s: akshare returned rows but parsed empty", symbol)
+            else:
+                logger.warning("A-share ETF %s: akshare returned empty", symbol)
 
         except Exception as e:  # noqa: BLE001 — third-party API can raise anything
-            logger.error("A-share ETF %s fetch failed: %s", symbol, e)
+            logger.warning("A-share ETF %s akshare failed (will try yfinance): %s", symbol, e)
+
+        return self._fetch_ashare_etf_kline_yfinance(symbol, timeframe, limit, before_time)
+
+    def _fetch_ashare_etf_kline_yfinance(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int,
+        before_time: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        """yfinance fallback for A-share ETFs (daily/weekly only)."""
+        if timeframe not in ("1D", "1W"):
             return []
+        yahoo_symbol = self._ashare_etf_to_yahoo_symbol(symbol)
+        if not yahoo_symbol:
+            logger.warning("A-share ETF %s: cannot derive yahoo symbol", symbol)
+            return []
+        klines = self._us_source.get_kline(yahoo_symbol, timeframe, limit, before_time)
+        if klines:
+            self.log_result(symbol, klines, timeframe)
+        return klines
 
     def _fetch_ashare_etf_ticker(self, symbol: str) -> Dict[str, Any]:
         """
