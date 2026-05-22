@@ -84,7 +84,7 @@ def get_public_config():
 @market_bp.route('/types', methods=['GET'])
 def get_market_types():
     """Return supported market types for the add-watchlist modal."""
-    desired_order = ['USStock', 'Crypto', 'Forex', 'Futures', 'HShare', 'AShare']
+    desired_order = ['USStock', 'IndexETF', 'Crypto', 'Forex', 'Futures', 'HShare', 'AShare']
     order_rank = {v: i for i, v in enumerate(desired_order)}
 
     def _normalize_item(x):
@@ -496,8 +496,8 @@ def get_stock_name():
         stock_name = symbol  # 默认使用代码
         
         try:
-            if market in ['USStock', 'AShare', 'HShare']:
-                # 对于股票，尝试获取基本信息
+            if market in ['USStock', 'AShare', 'HShare', 'IndexETF']:
+                # 对于股票/ETF，尝试获取基本信息
                 import yfinance as yf
                 
                 # 转换symbol格式
@@ -509,6 +509,19 @@ def get_stock_name():
                     # 港股需要补齐4位数字并添加.HK
                     hk_code = symbol.zfill(4)
                     yf_symbol = hk_code + '.HK'
+                elif market == 'IndexETF':
+                    # IndexETF 按 currency 分流（与 IndexETFDataSource.classify_etf_currency 保持一致）
+                    from app.data_sources.index_etf import classify_etf_currency
+                    currency = classify_etf_currency(symbol)
+                    if currency == 'USD':
+                        yf_symbol = symbol  # QQQ / SPY / EWJ / ...
+                    elif currency == 'CNY':
+                        # A股 ETF: 510xxx/588xxx (SSE)→.SS；159xxx (SZSE)→.SZ
+                        yf_symbol = symbol + ('.SS' if symbol.startswith('5') else '.SZ')
+                    elif currency == 'HKD':
+                        yf_symbol = symbol.zfill(4) + '.HK'
+                    else:
+                        yf_symbol = symbol
                 else:
                     yf_symbol = symbol
                 

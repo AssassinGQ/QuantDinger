@@ -21,7 +21,7 @@ class DataSourceFactory:
         获取指定市场的数据源
         
         Args:
-            market: 市场类型 (Crypto, USStock, AShare, HShare)
+            market: 市场类型 (Crypto, USStock, AShare, HShare, Forex, Futures, IndexETF)
             
         Returns:
             数据源实例
@@ -67,6 +67,9 @@ class DataSourceFactory:
         elif market == 'Futures':
             from app.data_sources.futures import FuturesDataSource
             return FuturesDataSource()
+        elif market == 'IndexETF':
+            from app.data_sources.index_etf import IndexETFDataSource
+            return IndexETFDataSource()
         else:
             raise ValueError(f"不支持的市场类型: {market}")
     
