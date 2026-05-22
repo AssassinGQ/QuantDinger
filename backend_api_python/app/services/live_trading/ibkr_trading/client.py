@@ -104,9 +104,15 @@ class IBKRConfig:
     readonly: bool = False
     account: str = ""
     timeout: float = 20.0
+    # market_data_type: 1=Live(realtime, needs paid subscription) | 2=Frozen
+    # | 3=Delayed(~15min, free) | 4=Delayed-Frozen. Default 3 so accounts
+    # without paid subscription still get usable quotes (paper accounts
+    # never have built-in subscriptions and would otherwise return all-nan).
+    market_data_type: int = 3
 
     @classmethod
     def from_env(cls, mode: str = "paper") -> "IBKRConfig":
+        mdt = _parse_market_data_type(os.environ.get("IBKR_MARKET_DATA_TYPE"), default=3)
         if mode == "live":
             return cls(
                 host=os.environ.get("IBKR_LIVE_HOST", "127.0.0.1"),
@@ -114,6 +120,7 @@ class IBKRConfig:
                 client_id=int(os.environ.get("IBKR_LIVE_CLIENT_ID", "1")),
                 account=os.environ.get("IBKR_LIVE_ACCOUNT", ""),
                 readonly=False,
+                market_data_type=mdt,
             )
         return cls(
             host=os.environ.get("IBKR_HOST", "127.0.0.1"),
@@ -121,7 +128,27 @@ class IBKRConfig:
             client_id=int(os.environ.get("IBKR_CLIENT_ID", "1")),
             account=os.environ.get("IBKR_ACCOUNT", ""),
             readonly=False,
+            market_data_type=mdt,
         )
+
+
+def _parse_market_data_type(raw: Optional[str], default: int = 3) -> int:
+    """Parse IBKR_MARKET_DATA_TYPE env value. Allowed: 1/2/3/4. Anything
+    invalid falls back to default (3=Delayed). Empty / None also default."""
+    if raw is None:
+        return default
+    s = str(raw).strip()
+    if not s:
+        return default
+    try:
+        v = int(s)
+    except (ValueError, TypeError):
+        logger.warning("Invalid IBKR_MARKET_DATA_TYPE=%r, falling back to %d", raw, default)
+        return default
+    if v not in (1, 2, 3, 4):
+        logger.warning("IBKR_MARKET_DATA_TYPE=%d out of range [1-4], falling back to %d", v, default)
+        return default
+    return v
 
 
 @dataclass
@@ -329,12 +356,34 @@ class IBKRClient(BaseStatefulClient):
                 logger.warning("IBKR connected but no account info retrieved")
             self._register_events()
 
+            self._apply_market_data_type()
+
             await self._activate_pnl_subscriptions()
 
             return True
         except Exception as e:
             logger.error("IBKR connection failed: %s", e)
             return False
+
+    def _apply_market_data_type(self) -> None:
+        """Apply configured market_data_type to the IB session.
+
+        Best-effort: any failure is logged but never blocks the connection,
+        because reqMarketDataType is a per-client preference that does not
+        affect order/account flows. Without this call IBKR defaults to type=1
+        (Live), and accounts without paid subscriptions get error 10089 plus
+        all-nan tickers (Delayed data is available but must be opted-in).
+        """
+        mdt = getattr(self.config, "market_data_type", None)
+        if mdt is None:
+            return
+        if self._ib is None:
+            return
+        try:
+            self._ib.reqMarketDataType(int(mdt))
+            logger.info("IBKR market_data_type set to %d (1=Live,2=Frozen,3=Delayed,4=Delayed-Frozen)", int(mdt))
+        except Exception as e:
+            logger.warning("reqMarketDataType(%s) failed (non-fatal): %s", mdt, e)
 
     def disconnect(self):
         self._reconnect_stop.set()
@@ -1692,6 +1741,29 @@ class IBKRClient(BaseStatefulClient):
             logger.error("Get orders failed: %s", e)
             return []
 
+    # ── market-data error codes that explain an all-nan ticker ────
+    # 10089: requires additional subscription for API (Delayed is available)
+    # 10090: market data is not subscribed (delayed not enabled)
+    # 10091: market data is not subscribed (display only)
+    # 10167: requested market data not subscribed
+    # 10168: requested market data not subscribed; displaying delayed
+    # 10197: no market data during competing live session
+    _QUOTE_DATA_ERROR_CODES = frozenset({10089, 10090, 10091, 10167, 10168, 10197})
+
+    @staticmethod
+    def _is_valid_quote_field(v) -> bool:
+        """ib_insync.Ticker often returns nan/-1/0 for unset fields; treat
+        only finite positive numbers as real quote values."""
+        if v is None:
+            return False
+        try:
+            f = float(v)
+        except (ValueError, TypeError):
+            return False
+        if math.isnan(f) or math.isinf(f):
+            return False
+        return f > 0
+
     def get_quote(self, symbol: str, market_type: str = "USStock") -> Dict[str, Any]:
         import asyncio as _aio
 
@@ -1705,19 +1777,58 @@ class IBKRClient(BaseStatefulClient):
             if not valid:
                 self._invalidate_qualify_cache(symbol, market_type)
                 return {"success": False, "error": reason}
+
+            # Temporarily hook errorEvent to surface 10089/10197/etc. for this
+            # reqMktData call. Without this the caller only sees all-null fields
+            # and cannot tell why — making "no subscription" look like a bug.
+            captured: List[Dict[str, Any]] = []
+
+            def _capture_error(reqId, errorCode, errorString, contract_):  # noqa: N803
+                try:
+                    code = int(errorCode)
+                except (ValueError, TypeError):
+                    return
+                if code in self._QUOTE_DATA_ERROR_CODES:
+                    captured.append({"code": code, "msg": str(errorString)})
+
+            try:
+                self._ib.errorEvent += _capture_error
+            except Exception:
+                pass
+
             ticker = self._ib.reqMktData(contract, "", False, False)
             await _aio.sleep(2)
+
+            try:
+                self._ib.errorEvent -= _capture_error
+            except Exception:
+                pass
+
+            def _f(v):
+                return float(v) if self._is_valid_quote_field(v) else None
+
             result = {
                 "success": True, "symbol": symbol,
-                "bid": ticker.bid if ticker.bid and ticker.bid > 0 else None,
-                "ask": ticker.ask if ticker.ask and ticker.ask > 0 else None,
-                "last": ticker.last if ticker.last and ticker.last > 0 else None,
-                "high": ticker.high if ticker.high and ticker.high > 0 else None,
-                "low": ticker.low if ticker.low and ticker.low > 0 else None,
-                "volume": ticker.volume if ticker.volume and ticker.volume > 0 else None,
-                "close": ticker.close if ticker.close and ticker.close > 0 else None,
+                "bid": _f(ticker.bid),
+                "ask": _f(ticker.ask),
+                "last": _f(ticker.last),
+                "high": _f(ticker.high),
+                "low": _f(ticker.low),
+                "volume": _f(ticker.volume),
+                "close": _f(ticker.close),
+                "market_data_type": getattr(ticker, "marketDataType", None),
             }
             self._ib.cancelMktData(contract)
+
+            has_any = any(result[k] is not None for k in ("bid", "ask", "last", "close"))
+            if not has_any and captured:
+                # Surface the most informative error code (prefer 10089 — actionable
+                # "subscribe to get live; or switch to delayed" — over 10197 noise).
+                preferred = next((e for e in captured if e["code"] == 10089), captured[0])
+                result["success"] = False
+                result["error_code"] = preferred["code"]
+                result["error"] = preferred["msg"]
+                result["errors"] = captured
             return result
 
         try:
