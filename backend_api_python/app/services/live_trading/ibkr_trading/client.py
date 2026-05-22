@@ -1778,6 +1778,13 @@ class IBKRClient(BaseStatefulClient):
                 self._invalidate_qualify_cache(symbol, market_type)
                 return {"success": False, "error": reason}
 
+            # Re-apply market_data_type per request. IBKR resets the
+            # client-side preference whenever a market-data farm reconnects
+            # (warn 2119 → 2104), so a one-shot call at connect time is not
+            # enough. Calling it here costs nothing and guarantees the next
+            # reqMktData honors our configured type.
+            self._apply_market_data_type()
+
             # Temporarily hook errorEvent to surface 10089/10197/etc. for this
             # reqMktData call. Without this the caller only sees all-null fields
             # and cannot tell why — making "no subscription" look like a bug.
@@ -1797,7 +1804,10 @@ class IBKRClient(BaseStatefulClient):
                 pass
 
             ticker = self._ib.reqMktData(contract, "", False, False)
-            await _aio.sleep(2)
+            # 4s gives IBKR enough time to deliver either the first tick or
+            # the subscription-error message (10089/10197 typically arrive
+            # within 1-3s after the farm acknowledges the request).
+            await _aio.sleep(4)
 
             try:
                 self._ib.errorEvent -= _capture_error
