@@ -21,7 +21,11 @@ import math
 
 from app.utils.logger import get_logger
 from app.services.live_trading.base import BaseStatefulClient, LiveOrderResult
-from app.services.live_trading.ibkr_trading.symbols import normalize_symbol, resolve_ibkr_market_type
+from app.services.live_trading.ibkr_trading.symbols import (
+    normalize_symbol,
+    resolve_ibkr_market_type,
+    resolve_primary_exchange,
+)
 from app.services.live_trading.ibkr_trading.order_tracker import HARD_TERMINAL
 from app.services.live_trading.task_queue import TaskQueue
 from app.services.live_trading import records
@@ -945,8 +949,15 @@ class IBKRClient(BaseStatefulClient):
                 exchange=exchange,
                 currency=currency,
             )
-        elif mt in ("USStock", "HShare"):
-            return ib_insync.Stock(symbol=ib_symbol, exchange=exchange, currency=currency)
+        elif mt in ("USStock", "HShare", "IndexETF"):
+            stock_kwargs = dict(symbol=ib_symbol, exchange=exchange, currency=currency)
+            # ETFs need primaryExchange so SMART can resolve the canonical
+            # listing; without it ``reqMktData`` returns an empty ticker for
+            # ambiguous symbols (QQQ trades on NASDAQ/ARCA/BATS).
+            primary = resolve_primary_exchange(symbol, mt)
+            if primary:
+                stock_kwargs["primaryExchange"] = primary
+            return ib_insync.Stock(**stock_kwargs)
         else:
             raise ValueError(f"Unsupported market_type: {market_type}")
 
@@ -958,6 +969,9 @@ class IBKRClient(BaseStatefulClient):
             return int(os.environ.get("IBKR_QUALIFY_TTL_USSTOCK_SEC", "600"))
         if market_type == "HShare":
             return int(os.environ.get("IBKR_QUALIFY_TTL_HSHARE_SEC", "600"))
+        if market_type == "IndexETF":
+            # ETFs are stable contracts; same default TTL as USStock.
+            return int(os.environ.get("IBKR_QUALIFY_TTL_INDEXETF_SEC", "600"))
         return 600
 
     def _invalidate_qualify_cache(self, symbol: str, market_type: str) -> None:
@@ -1013,6 +1027,7 @@ class IBKRClient(BaseStatefulClient):
         "Forex": "CASH",
         "USStock": "STK",
         "HShare": "STK",
+        "IndexETF": "STK",
         "Metals": "CMDTY",
     }
 

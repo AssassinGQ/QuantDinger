@@ -88,26 +88,114 @@ def normalize_symbol(symbol: str, market_type: str) -> Tuple[str, str, str]:
         # US stocks: AAPL, TSLA, GOOGL
         # Use SMART routing for best execution
         return symbol, "SMART", "USD"
-    
+
     elif market_type == "HShare":
         # Hong Kong stock formats:
         # - 0700.HK -> 700
         # - 00700 -> 700
         # - 700 -> 700
         ib_symbol = symbol
-        
+
         # Remove .HK suffix
         if ib_symbol.endswith(".HK"):
             ib_symbol = ib_symbol[:-3]
-        
+
         # Remove leading zeros
         ib_symbol = ib_symbol.lstrip("0") or "0"
-        
+
         return ib_symbol, "SEHK", "HKD"
-    
+
+    elif market_type == "IndexETF":
+        # Index ETFs: routed by currency just like the data-source layer.
+        # - 6-digit numeric, prefix 5/1  -> A-share ETF (not actually tradable
+        #   via IBKR US gateway; we still produce a contract for symmetry; the
+        #   primary_exchange resolver will return None and IBKR will reject).
+        # - 4-5 digit numeric            -> HK ETF on SEHK
+        # - alpha ticker (QQQ/SPY/...)   -> US ETF on SMART; primary_exchange
+        #   MUST be supplied by caller (see resolve_primary_exchange) so IBKR
+        #   can resolve the NBBO listing.
+        if symbol.isdigit():
+            if len(symbol) == 6:
+                # A-share ETF: route placeholder; live trading not supported.
+                return symbol, "SEHKNTL", "CNH"
+            if 1 <= len(symbol) <= 5:
+                # HK ETF: strip leading zeros, route through SEHK.
+                ib_symbol = symbol.lstrip("0") or "0"
+                return ib_symbol, "SEHK", "HKD"
+        # US ETF default. The caller MUST also call resolve_primary_exchange().
+        return symbol, "SMART", "USD"
+
     else:
         # Default to US stock
         return symbol, "SMART", "USD"
+
+
+def resolve_primary_exchange(symbol: str, market_type: str) -> Optional[str]:
+    """Return the IBKR primaryExchange for a contract, or ``None`` if not needed.
+
+    Background
+    ----------
+    For ambiguous tickers (most notably US ETFs like QQQ/SPY where the same
+    symbol trades on multiple venues), IBKR's SMART router cannot uniquely
+    resolve the contract and ``reqMktData`` returns an empty ticker. The fix
+    is to pass ``primaryExchange`` so SMART knows which listing to use.
+
+    This helper looks up the canonical primary exchange from the
+    ``qd_market_symbols`` seed table (column ``exchange``).
+
+    Returns
+    -------
+    str | None
+        - For ``market_type == 'IndexETF'``: the value of ``exchange`` from
+          ``qd_market_symbols`` (e.g. 'NASDAQ' for QQQ, 'ARCA' for SPY,
+          'SEHK' for 02800). Falls back to 'ARCA' for unknown US ETFs so
+          the caller can still build a contract.
+        - For all other market types: ``None`` (current behavior preserved).
+
+    DB / config failures are swallowed and treated as a miss; this function
+    must never raise.
+    """
+    mt = (market_type or "").strip()
+    if mt != "IndexETF":
+        return None
+
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return None
+
+    # HK ETF (2-5 digit numeric, often padded) → SEHK regardless of DB lookup.
+    if sym.isdigit() and 1 <= len(sym) <= 5:
+        return "SEHK"
+
+    # A-share ETF (6 digit numeric): IBKR can't trade these; return None so
+    # caller can decide whether to error out or skip primaryExchange.
+    if sym.isdigit() and len(sym) == 6:
+        return None
+
+    # Alpha ticker → look up qd_market_symbols.exchange.
+    try:
+        from app.utils.db import get_db_connection
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT exchange FROM qd_market_symbols "
+                "WHERE market = %s AND symbol = %s LIMIT 1",
+                ("IndexETF", sym),
+            )
+            row = cur.fetchone()
+            cur.close()
+            if row:
+                # row may be dict-like (RealDictCursor) or tuple-like.
+                exch = row.get("exchange") if hasattr(row, "get") else row[0]
+                exch = (exch or "").strip()
+                if exch:
+                    return exch
+    except Exception:  # noqa: BLE001 — DB unreachable / schema mismatch
+        # Treat any failure as a miss; let the default kick in.
+        pass
+
+    # Default: ARCA covers most US-listed ETFs.
+    return "ARCA"
 
 
 def parse_symbol(symbol: str) -> Tuple[str, Optional[str]]:
