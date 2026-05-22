@@ -178,7 +178,11 @@ class IBKRClient(BaseStatefulClient):
     """
 
     engine_id = "ibkr"
-    supported_market_categories = frozenset({"USStock", "HShare", "Forex", "Metals"})
+    # IndexETF is verified end-to-end in Phase 20-B (Step B-1/B-2):
+    # _create_contract reuses the ("USStock","HShare","IndexETF") branch with
+    # primaryExchange injected via resolve_primary_exchange. Paper QQQ BUY/SELL
+    # closed loop (orderId 501/503) confirmed contract qualify + order fills.
+    supported_market_categories = frozenset({"USStock", "HShare", "IndexETF", "Forex", "Metals"})
 
     @staticmethod
     def validate_market_category_static(market_category: str) -> Tuple[bool, str]:

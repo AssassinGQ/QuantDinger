@@ -65,10 +65,11 @@ class TestBaseStatefulClientABC:
 
     def test_ibkr_supported_categories(self):
         assert IBKRClient.supported_market_categories == frozenset(
-            {"USStock", "HShare", "Forex", "Metals"}
+            {"USStock", "HShare", "IndexETF", "Forex", "Metals"}
         )
         assert "Forex" in IBKRClient.supported_market_categories
         assert "Metals" in IBKRClient.supported_market_categories
+        assert "IndexETF" in IBKRClient.supported_market_categories
 
     def test_mt5_supported_categories(self):
         assert MT5Client.supported_market_categories == frozenset({"Forex"})
