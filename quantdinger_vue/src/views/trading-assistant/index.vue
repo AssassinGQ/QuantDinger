@@ -1749,9 +1749,9 @@ export default {
       // Exchanges that require passphrase
       return ['okx', 'okex', 'coinbaseexchange', 'kucoin', 'bitget', 'deepcoin'].includes(this.currentExchangeId)
     },
-    // Check if current market uses IBKR (US Stock / HK Stock / Precious Metals)
+    // Check if current market uses IBKR (US Stock / HK Stock / Index ETF / Precious Metals)
     isIBKRMarket () {
-      return ['USStock', 'HShare', 'Metals'].includes(this.selectedMarketCategory)
+      return ['USStock', 'HShare', 'IndexETF', 'Metals'].includes(this.selectedMarketCategory)
     },
     // Check if current broker is IBKR (supports both ibkr-paper and ibkr-live)
     isIBKRBroker () {
@@ -1843,15 +1843,17 @@ export default {
       const cat = this.selectedMarketCategory || 'Crypto'
       return String(cat).toLowerCase() === 'crypto'
     },
-    // Check if selected market supports live trading (Crypto, USStock/HShare with IBKR, or Forex with MT5)
+    // Check if selected market supports live trading (Crypto, USStock/HShare/IndexETF with IBKR, or Forex with MT5)
     canUseLiveTrading () {
       const cat = this.selectedMarketCategory || 'Crypto'
       // Crypto always supports live trading via crypto exchanges
       if (String(cat).toLowerCase() === 'crypto') {
         return true
       }
-      // USStock/HShare/Metals can use IBKR for live trading
-      if (['USStock', 'HShare', 'Metals'].includes(cat)) {
+      // USStock/HShare/IndexETF/Metals can use IBKR for live trading.
+      // IndexETF goes through the same IBKR contract path as USStock/HShare
+      // (Phase 20-B Step B-1/B-2 verified: QQQ/SPY paper BUY/SELL closed loop).
+      if (['USStock', 'HShare', 'IndexETF', 'Metals'].includes(cat)) {
         return true
       }
       // Forex can use MT5 for live trading
@@ -1868,8 +1870,8 @@ export default {
       if (String(cat).toLowerCase() === 'crypto') {
         return ['binance', 'okx', 'bitget', 'bybit', 'coinbaseexchange', 'kraken', 'kucoin', 'gate', 'bitfinex'].includes(exchangeId)
       }
-      // USStock/HShare/Metals use IBKR
-      if (['USStock', 'HShare', 'Metals'].includes(cat)) {
+      // USStock/HShare/IndexETF/Metals use IBKR
+      if (['USStock', 'HShare', 'IndexETF', 'Metals'].includes(cat)) {
         return this.currentBrokerId === 'ibkr'
       }
       // Forex: MT5 or IBKR paper/live
@@ -2560,7 +2562,7 @@ export default {
         try {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ forex_broker_id: undefined })
         } catch (e) { }
-      } else if (['USStock', 'HShare', 'Metals'].includes(this.selectedMarketCategory)) {
+      } else if (['USStock', 'HShare', 'IndexETF', 'Metals'].includes(this.selectedMarketCategory)) {
         this.currentBrokerId = 'ibkr'
         try {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ broker_id: 'ibkr' })
@@ -2568,8 +2570,8 @@ export default {
       }
 
       // Markets without live trading support: force back to signal mode
-      // Crypto, USStock, HShare, Forex, Metals support live trading; others do not
-      const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'Forex', 'Metals'].includes(this.selectedMarketCategory)
+      // Crypto, USStock, HShare, IndexETF, Forex, Metals support live trading; others do not
+      const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'IndexETF', 'Forex', 'Metals'].includes(this.selectedMarketCategory)
       if (!supportsLiveTrading) {
         this.executionModeUi = 'signal'
         try {
@@ -2603,7 +2605,7 @@ export default {
         try {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ forex_broker_id: undefined })
         } catch (e) { }
-      } else if (['USStock', 'HShare'].includes(this.selectedMarketCategory)) {
+      } else if (['USStock', 'HShare', 'IndexETF'].includes(this.selectedMarketCategory)) {
         this.currentBrokerId = 'ibkr'
         try {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ broker_id: 'ibkr' })
@@ -2611,7 +2613,7 @@ export default {
       }
 
       // Markets without live trading support: force back to signal mode
-      const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'Forex'].includes(this.selectedMarketCategory)
+      const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'IndexETF', 'Forex'].includes(this.selectedMarketCategory)
       if (!supportsLiveTrading) {
         this.executionModeUi = 'signal'
         try {
@@ -2962,8 +2964,8 @@ export default {
       if (strategy.exchange_config) {
         const exchangeId = strategy.exchange_config.exchange_id || ''
         const isLive = this.executionModeUi === 'live'
-        const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'Forex', 'Metals'].includes(this.selectedMarketCategory)
-        const isBrokerMarket = ['USStock', 'HShare', 'Metals'].includes(this.selectedMarketCategory)
+        const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'IndexETF', 'Forex', 'Metals'].includes(this.selectedMarketCategory)
+        const isBrokerMarket = ['USStock', 'HShare', 'IndexETF', 'Metals'].includes(this.selectedMarketCategory)
         const isForexMarket = this.selectedMarketCategory === 'Forex'
 
         if (isLive && supportsLiveTrading) {
