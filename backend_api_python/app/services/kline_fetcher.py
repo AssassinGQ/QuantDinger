@@ -12,6 +12,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# RTH 股票/ETF：K 线非 7×24，sufficiency 与 range 查询需放大 wall-clock 窗口
+_RTH_EQUITY_MARKETS = frozenset({"USStock", "HShare", "AShare", "IndexETF"})
+
 # ---------------------------------------------------------------------------
 # 市场容差：各市场最大合法无数据间隔（秒）
 # 用于缓存范围命中判断：stored_min <= need_start + gap 且 stored_max >= need_end - gap
@@ -21,12 +24,14 @@ MAX_GAP: Dict[tuple, int] = {
     ("Forex", 60): 3 * 86400,
     ("Futures", 60): 3 * 86400,
     ("USStock", 60): 18 * 3600,
+    ("IndexETF", 60): 18 * 3600,
     ("HShare", 60): 18 * 3600,
     ("AShare", 60): 19 * 3600,
     ("Crypto", 86400): 2 * 86400,
     ("Forex", 86400): 4 * 86400,
     ("Futures", 86400): 4 * 86400,
     ("USStock", 86400): 5 * 86400,
+    ("IndexETF", 86400): 5 * 86400,
     ("HShare", 86400): 2 * 86400,   # 原 6 天过宽，1D 命中后不刷新；改为 2 天
     ("AShare", 86400): 10 * 86400,
 }
@@ -55,12 +60,19 @@ def _range_window_seconds_multiplier(market: str, interval_sec: int) -> float:
     Combined factor: ``(24/6.5) * (7/5) * 2`` — RTH hours vs wall clock, weekend
     calendar stretch, and an extra ``* 2`` headroom for long holidays / exchange
     closures so sufficiency checks still see enough stored bars.
-    Daily+ timeframes unchanged.
+
+    For 1D RTH symbols, ``limit`` calendar days yields ~``limit * 5/7`` session bars;
+    scale by ``(7/5) * 1.5`` so IBKR open-path sufficiency (default 100 bars) can pass.
+    Weekly bars (1W) are unchanged — one bar per calendar week already.
     """
-    if interval_sec >= 86400:
-        return 1.0
     m = (market or "").strip()
-    if m in ("USStock", "HShare", "AShare"):
+    if interval_sec >= 604800:
+        return 1.0
+    if interval_sec >= 86400:
+        if m in _RTH_EQUITY_MARKETS:
+            return (7.0 / 5.0) * 1.5
+        return 1.0
+    if m in _RTH_EQUITY_MARKETS:
         return (24.0 / 6.5) * (7.0 / 5.0) * 2.0
     return 1.0
 
