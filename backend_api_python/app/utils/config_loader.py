@@ -89,6 +89,11 @@ def load_addon_config() -> Dict[str, Any]:
         ('GROK_API_KEY', 'grok.api_key', 'string'),
         ('GROK_BASE_URL', 'grok.base_url', 'string'),
         ('GROK_MODEL', 'grok.model', 'string'),
+
+        # ZhiPu (智谱 / GLM)
+        ('ZHIPU_API_KEY', 'zhipu.api_key', 'string'),
+        ('ZHIPU_BASE_URL', 'zhipu.base_url', 'string'),
+        ('ZHIPU_MODEL', 'zhipu.model', 'string'),
         
         # LLM Provider Selection
         ('LLM_PROVIDER', 'llm.provider', 'string'),

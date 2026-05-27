@@ -1,6 +1,6 @@
 """
 LLM service.
-Supports multiple providers: OpenRouter, OpenAI, Google Gemini, DeepSeek, Grok, MiniMax.
+Supports multiple providers: OpenRouter, OpenAI, Google Gemini, DeepSeek, Grok, MiniMax, ZhiPu.
 Kept separate from AnalysisService to avoid circular imports.
 """
 import json
@@ -24,6 +24,7 @@ class LLMProvider(Enum):
     DEEPSEEK = "deepseek"
     GROK = "grok"
     MINIMAX = "minimax"
+    ZHIPU = "zhipu"
 
 
 # Provider configurations
@@ -58,6 +59,11 @@ PROVIDER_CONFIGS = {
         "default_model": "MiniMax-M2.1",
         "fallback_model": "MiniMax-M2.1-lightning",
     },
+    LLMProvider.ZHIPU: {
+        "base_url": "https://open.bigmodel.cn/api/anthropic",
+        "default_model": "GLM-5.1",
+        "fallback_model": "GLM-5",
+    },
 }
 
 
@@ -69,7 +75,7 @@ class LLMService:
         Initialize LLM service.
         
         Args:
-            provider: Override the default provider (openrouter, openai, google, deepseek, grok, minimax)
+            provider: Override the default provider (openrouter, openai, google, deepseek, grok, minimax, zhipu)
         """
         self._provider_override = provider
 
@@ -97,11 +103,12 @@ class LLMService:
                 pass
         
         # Auto-detect: find any provider with a configured API key
-        # Priority: DeepSeek > Grok > MiniMax > OpenAI > Google > OpenRouter
+        # Priority: DeepSeek > Grok > MiniMax > ZhiPu > OpenAI > Google > OpenRouter
         priority_order = [
             LLMProvider.DEEPSEEK,
             LLMProvider.GROK,
             LLMProvider.MINIMAX,
+            LLMProvider.ZHIPU,
             LLMProvider.OPENAI,
             LLMProvider.GOOGLE,
             LLMProvider.OPENROUTER,
@@ -126,6 +133,7 @@ class LLMService:
             LLMProvider.DEEPSEEK: APIKeys.DEEPSEEK_API_KEY,
             LLMProvider.GROK: APIKeys.GROK_API_KEY,
             LLMProvider.MINIMAX: APIKeys.MINIMAX_API_KEY,
+            LLMProvider.ZHIPU: APIKeys.ZHIPU_API_KEY,
         }
         return key_map.get(p, "") or ""
 
@@ -248,6 +256,52 @@ class LLMService:
         
         raise ValueError("Gemini API response is missing content")
 
+    def _call_anthropic_compatible(self, messages: list, model: str, temperature: float,
+                                    api_key: str, base_url: str, timeout: int) -> str:
+        """Call Anthropic-compatible API (used by ZhiPu's /api/anthropic endpoint)."""
+        url = f"{base_url}/v1/messages"
+
+        # Convert OpenAI message format to Anthropic format
+        system_prompt = None
+        anthropic_messages = []
+
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                system_prompt = content
+            elif role == "user":
+                anthropic_messages.append({"role": "user", "content": content})
+            elif role == "assistant":
+                anthropic_messages.append({"role": "assistant", "content": content})
+
+        data = {
+            "model": model,
+            "max_tokens": 4096,
+            "messages": anthropic_messages,
+            "temperature": temperature,
+        }
+
+        if system_prompt:
+            data["system"] = system_prompt
+
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+
+        response = requests.post(url, headers=headers, json=data, timeout=timeout)
+        response.raise_for_status()
+
+        result = response.json()
+        if "content" in result and len(result["content"]) > 0:
+            text = result["content"][0].get("text", "")
+            if text:
+                return text
+
+        raise ValueError("Anthropic-compatible API response is missing content")
+
     def _normalize_model_for_provider(self, model: str, provider: LLMProvider) -> str:
         """
         Normalize model name for the target provider.
@@ -282,6 +336,7 @@ class LLMService:
                 'x-ai': LLMProvider.GROK,
                 'xai': LLMProvider.GROK,
                 'minimax': LLMProvider.MINIMAX,
+                'z-ai': LLMProvider.ZHIPU,
             }
             
             # If the model prefix matches the current provider, use the extracted model name
@@ -314,6 +369,7 @@ class LLMService:
             'x-ai': LLMProvider.GROK,
             'xai': LLMProvider.GROK,
             'minimax': LLMProvider.MINIMAX,
+            'z-ai': LLMProvider.ZHIPU,
             'anthropic': LLMProvider.OPENROUTER,  # Anthropic only via OpenRouter
             'meta': LLMProvider.OPENROUTER,  # Meta/Llama only via OpenRouter
             'mistral': LLMProvider.OPENROUTER,  # Mistral only via OpenRouter
@@ -381,6 +437,11 @@ class LLMService:
             try:
                 if p == LLMProvider.GOOGLE:
                     return self._call_google_gemini(
+                        messages, current_model, temperature,
+                        api_key, base_url, timeout
+                    )
+                elif p == LLMProvider.ZHIPU:
+                    return self._call_anthropic_compatible(
                         messages, current_model, temperature,
                         api_key, base_url, timeout
                     )

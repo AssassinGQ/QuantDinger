@@ -103,6 +103,7 @@ CONFIG_SCHEMA = {
                     {'value': 'google', 'label': 'Google Gemini'},
                     {'value': 'deepseek', 'label': 'DeepSeek'},
                     {'value': 'grok', 'label': 'xAI Grok'},
+                    {'value': 'zhipu', 'label': 'ZhiPu (智谱 GLM)'},
                 ],
                 'description': 'Select your preferred LLM provider'
             },
@@ -226,6 +227,33 @@ CONFIG_SCHEMA = {
                 'default': 'https://api.x.ai/v1',
                 'description': 'xAI Grok API endpoint',
                 'group': 'grok'
+            },
+            # ZhiPu (智谱)
+            {
+                'key': 'ZHIPU_API_KEY',
+                'label': 'ZhiPu API Key',
+                'type': 'password',
+                'required': False,
+                'link': 'https://open.bigmodel.cn/usercenter/apikeys',
+                'link_text': 'settings.link.getApiKey',
+                'description': 'ZhiPu (智谱) API key, supports Anthropic-compatible protocol',
+                'group': 'zhipu'
+            },
+            {
+                'key': 'ZHIPU_MODEL',
+                'label': 'ZhiPu Model',
+                'type': 'text',
+                'default': 'GLM-5.1',
+                'description': 'Model: GLM-5.1, GLM-5, glm-4-flash, glm-4.6',
+                'group': 'zhipu'
+            },
+            {
+                'key': 'ZHIPU_BASE_URL',
+                'label': 'ZhiPu Base URL',
+                'type': 'text',
+                'default': 'https://open.bigmodel.cn/api/anthropic',
+                'description': 'ZhiPu API endpoint (Anthropic-compatible)',
+                'group': 'zhipu'
             },
             # Common settings
             {
