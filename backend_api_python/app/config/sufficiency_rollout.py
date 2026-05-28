@@ -2,27 +2,30 @@
 
 Environment variable ``QUANTDINGER_IBKR_SUFFICIENCY_GUARD_ENABLED``:
 
-- **Default ON:** When unset or empty, the sufficiency guard behaves as after Phase 2
-  (evaluation runs; insufficient outcomes may block live IBKR open/add).
-- **Explicit OFF:** Case-insensitive ``false``, ``0``, or ``no`` disables the guard.
-
-**Guard / alert coupling (R-03):** Disabling the guard makes ``SignalExecutor`` skip the
-**entire** sufficiency branch for qualifying live IBKR open/add signals. That means **no**
-sufficiency-driven open block **and** **no** Phase 3 insufficient user-channel alerts that
-fire only after a sufficiency block — there is no separate "alerts without blocking" mode.
-
-Incident-only: turning the guard off removes protection against trading on thin or
-unknown-schedule data; use only for break-glass recovery.
+- ``2`` / unset / empty / ``true``: **Hard-block** (default) — evaluation runs;
+  insufficient outcomes block live IBKR open/add and emit user alerts.
+- ``1``: **Soft-block** — evaluation runs; insufficient outcomes emit user alerts
+  but do NOT block order execution (alert-only mode).
+- ``0`` / ``false`` / ``no``: **Disabled** — entire sufficiency branch is skipped;
+  no evaluation, no alerts, no blocking.
 
 Operator summary: ``.planning/phases/04-hardening-and-rollout-safety/04-OPERATOR-BOUNDARIES.md``.
 """
 
 from __future__ import annotations
 
+import enum
 import os
 from typing import Optional
 
 _ENV_KEY = "QUANTDINGER_IBKR_SUFFICIENCY_GUARD_ENABLED"
+
+
+class SufficiencyGuardMode(enum.IntEnum):
+    DISABLED = 0
+    SOFT_BLOCK = 1
+    HARD_BLOCK = 2
+
 
 _disabled_log_emitted = False
 
@@ -33,15 +36,22 @@ def reset_ibkr_sufficiency_guard_rollout_log_for_tests() -> None:
     _disabled_log_emitted = False
 
 
-def is_ibkr_sufficiency_guard_enabled() -> bool:
-    """Return False when env explicitly disables the IBKR sufficiency guard."""
+def get_ibkr_sufficiency_guard_mode() -> SufficiencyGuardMode:
+    """Parse env into a tri-state guard mode."""
     raw = os.environ.get(_ENV_KEY)
     if raw is None or str(raw).strip() == "":
-        return True
+        return SufficiencyGuardMode.HARD_BLOCK
     v = str(raw).strip().lower()
     if v in ("false", "0", "no"):
-        return False
-    return True
+        return SufficiencyGuardMode.DISABLED
+    if v == "1":
+        return SufficiencyGuardMode.SOFT_BLOCK
+    return SufficiencyGuardMode.HARD_BLOCK
+
+
+def is_ibkr_sufficiency_guard_enabled() -> bool:
+    """Return False only when env explicitly disables the IBKR sufficiency guard."""
+    return get_ibkr_sufficiency_guard_mode() != SufficiencyGuardMode.DISABLED
 
 
 def maybe_log_ibkr_sufficiency_guard_disabled(logger, *, strategy_id: Optional[int]) -> None:

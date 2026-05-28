@@ -98,6 +98,7 @@ def build_insufficient_user_alert_title_body(
     symbol: str,
     strategy_name: str,
     reason_code: str = "",
+    soft_block: bool = False,
 ) -> Tuple[str, str]:
     """Build alert title/body differentiated by reason_code.
 
@@ -107,8 +108,11 @@ def build_insufficient_user_alert_title_body(
     - unknown_schedule: 无法获取交易时段信息
     - stale_prev_close: 前一日收盘价过期
     - data_evaluation_failed: 数据评估过程失败
+
+    soft_block: True → alert-only mode, order not actually blocked.
     """
     sname = strategy_name or "未命名"
+    soft_suffix = "\n当前为告警模式，下单不会被拦截。" if soft_block else ""
 
     # 根据 reason_code 选择文案
     if reason_code == "market_closed_gap":
@@ -118,6 +122,7 @@ def build_insufficient_user_alert_title_body(
                 f"策略《{sname}》标的 {symbol} 信号触发于非交易时段（盘前/盘后/休市），"
                 "已阻止下单。\n"
                 "您当前有持仓，请自行决定平仓或继续持有。"
+                + soft_suffix
             )
         else:
             title = f"非交易时段下单被拦截 | {symbol}"
@@ -125,6 +130,7 @@ def build_insufficient_user_alert_title_body(
                 f"策略《{sname}》标的 {symbol} 信号触发于非交易时段（盘前/盘后/休市），"
                 "当前无法下单。\n"
                 "请等待下一交易时段开盘后自动执行。"
+                + soft_suffix
             )
     elif reason_code == "unknown_schedule":
         if has_position:
@@ -132,12 +138,14 @@ def build_insufficient_user_alert_title_body(
             body = (
                 f"策略《{sname}》标的 {symbol} 无法获取交易时段信息，已阻止下单。\n"
                 "您当前有持仓，请自行决定平仓或继续持有，并检查 IBKR 连接状态。"
+                + soft_suffix
             )
         else:
             title = f"交易时段信息获取失败 | {symbol}"
             body = (
                 f"策略《{sname}》标的 {symbol} 无法获取交易时段信息，当前无法下单。\n"
                 "请检查 IBKR Gateway 连接状态或合约配置。"
+                + soft_suffix
             )
     elif reason_code == "data_evaluation_failed":
         if has_position:
@@ -145,12 +153,14 @@ def build_insufficient_user_alert_title_body(
             body = (
                 f"策略《{sname}》标的 {symbol} 数据评估过程异常，已阻止下单。\n"
                 "您当前有持仓，请自行决定平仓或继续持有。"
+                + soft_suffix
             )
         else:
             title = f"数据评估失败 | {symbol}"
             body = (
                 f"策略《{sname}》标的 {symbol} 数据评估过程异常，当前无法下单。\n"
                 "请检查数据源连接或稍后重试。"
+                + soft_suffix
             )
     else:
         # missing_bars, stale_prev_close, 其他情况统一用"数据不足"
@@ -159,13 +169,17 @@ def build_insufficient_user_alert_title_body(
             body = (
                 f"策略《{sname}》标的 {symbol} 因 IBKR 历史数据不足已阻止开仓/加仓。\n"
                 "您当前有持仓，请自行决定平仓或继续持有，并留意数据恢复后的风险。"
+                + soft_suffix
             )
         else:
             title = f"IBKR 数据不足 | {symbol}"
             body = (
                 f"策略《{sname}》标的 {symbol} 因 IBKR 历史数据不足，当前无法新开/加仓。\n"
                 "请等待数据补齐或检查合约/时段配置。"
+                + soft_suffix
             )
+    if soft_block:
+        title = "【告警】" + title
     return title, body
 
 
@@ -177,6 +191,7 @@ def build_insufficient_user_alert_extra(
     current_positions: Any,
     current_price: float,
     strategy_name: str,
+    soft_block: bool = False,
 ) -> Dict[str, Any]:
     _ = current_price
     exchange_id = str(blocked_payload.get("exchange_id") or "")
@@ -187,6 +202,7 @@ def build_insufficient_user_alert_extra(
         symbol=sym,
         strategy_name=strategy_name,
         reason_code=suff_result.reason_code.value,
+        soft_block=soft_block,
     )
     snap: List[Dict[str, Any]] = []
     for p in current_positions or []:
@@ -212,6 +228,7 @@ def build_insufficient_user_alert_extra(
         "user_alert_title": title,
         "user_alert_plain": plain,
         "severity_hint": "warning",
+        "soft_block": soft_block,
     }
     return extra
 
@@ -231,6 +248,7 @@ def dispatch_insufficient_user_alert_after_block(
     strategy_ctx: Mapping[str, Any],
     current_positions: Any,
     logger: Optional[Any] = None,
+    soft_block: bool = False,
 ) -> None:
     log = logger or _LOG
     nc = notification_config if isinstance(notification_config, dict) else {}
@@ -259,6 +277,7 @@ def dispatch_insufficient_user_alert_after_block(
         current_positions=current_positions,
         current_price=float(price or 0.0),
         strategy_name=strategy_name,
+        soft_block=soft_block,
     )
     try:
         results = notifier.notify_signal(

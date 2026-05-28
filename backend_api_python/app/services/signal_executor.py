@@ -22,6 +22,8 @@ from app.services.data_sufficiency_logging import (
 )
 from app.services.data_sufficiency_types import DataSufficiencyReasonCode
 from app.config.sufficiency_rollout import (
+    SufficiencyGuardMode,
+    get_ibkr_sufficiency_guard_mode,
     is_ibkr_sufficiency_guard_enabled,
     maybe_log_ibkr_sufficiency_guard_disabled,
 )
@@ -500,7 +502,8 @@ class SignalExecutor:
             )
 
             if self._should_run_ibkr_open_sufficiency_gate(strategy_ctx, effective_intent):
-                if not is_ibkr_sufficiency_guard_enabled():
+                _guard_mode = get_ibkr_sufficiency_guard_mode()
+                if _guard_mode == SufficiencyGuardMode.DISABLED:
                     maybe_log_ibkr_sufficiency_guard_disabled(
                         logger,
                         strategy_id=strategy_id if strategy_id else None,
@@ -624,6 +627,7 @@ class SignalExecutor:
                                 strategy_ctx=strategy_ctx,
                                 current_positions=current_positions,
                                 logger=logger,
+                                soft_block=(_guard_mode == SufficiencyGuardMode.SOFT_BLOCK),
                             )
                         except Exception as e:
                             logger.warning(
@@ -631,7 +635,16 @@ class SignalExecutor:
                                 strategy_id,
                                 e,
                             )
-                        return False
+                        if _guard_mode == SufficiencyGuardMode.SOFT_BLOCK:
+                            logger.warning(
+                                "ibkr_sufficiency_soft_block: proceeding despite insufficient data "
+                                "strategy_id=%s symbol=%s reason=%s",
+                                strategy_id,
+                                symbol,
+                                suff_result.reason_code,
+                            )
+                        else:
+                            return False
 
             if not self._check_ai_filter(strategy_ctx, symbol, sig, signal_ts):
                 return False
