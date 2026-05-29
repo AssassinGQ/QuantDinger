@@ -1370,13 +1370,21 @@ class IBKRClient(BaseStatefulClient):
 
         try:
             return self._submit(_task(), timeout=30.0)
+        except TimeoutError:
+            logger.error(
+                "[RTH] is_market_open timed out for %s (%s) after 30s, "
+                "blocking order as safety measure (fail-closed)",
+                symbol, market_type,
+            )
+            return False, f"RTH check timed out after 30s for {symbol}"
         except Exception as e:
+            msg = str(e) or type(e).__name__
             logger.error(
                 "[RTH] is_market_open failed for %s (%s): %s, "
                 "blocking order as safety measure (fail-closed)",
-                symbol, market_type, e,
+                symbol, market_type, msg,
             )
-            return False, f"RTH check failed: {e}"
+            return False, f"RTH check failed: {msg}"
 
     # ── order execution ────────────────────────────────────────────
 
@@ -1466,9 +1474,13 @@ class IBKRClient(BaseStatefulClient):
 
         try:
             return self._submit(_do(), timeout=15.0)
+        except TimeoutError:
+            logger.error("Market order timed out for %s after 15s", symbol)
+            return LiveOrderResult(success=False, message=f"Market order timed out after 15s for {symbol}", exchange_id=self.engine_id)
         except Exception as e:
-            logger.error("Order failed: %s", e)
-            return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
+            msg = str(e) or type(e).__name__
+            logger.error("Order failed for %s: %s", symbol, msg)
+            return LiveOrderResult(success=False, message=msg, exchange_id=self.engine_id)
 
     def place_limit_order(
         self, symbol: str, side: str, quantity: float, price: float,
@@ -1595,9 +1607,13 @@ class IBKRClient(BaseStatefulClient):
 
         try:
             return self._submit(_do(), timeout=15.0)
+        except TimeoutError:
+            logger.error("Limit order timed out for %s after 15s", symbol)
+            return LiveOrderResult(success=False, message=f"Limit order timed out after 15s for {symbol}", exchange_id=self.engine_id)
         except Exception as e:
-            logger.error("Limit order failed: %s", e)
-            return LiveOrderResult(success=False, message=str(e), exchange_id=self.engine_id)
+            msg = str(e) or type(e).__name__
+            logger.error("Limit order failed for %s: %s", symbol, msg)
+            return LiveOrderResult(success=False, message=msg, exchange_id=self.engine_id)
 
     def cancel_order(self, order_id: int) -> bool:
         async def _do():
