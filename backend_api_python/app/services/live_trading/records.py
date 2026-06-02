@@ -635,6 +635,21 @@ def apply_fill_to_local_position(
                 profit = (cur_entry - px) * close_qty
 
         new_size = cur_size - filled_qty
+
+        # ── Position drift detection ──
+        # If fill exceeds local position (oversold), log a warning.
+        # This happens when IBKR fill callbacks arrive late and the
+        # local position was stale (e.g. close_long sent multiple times
+        # because fill didn't update qd_strategy_positions promptly).
+        if new_size < 0:
+            drift = filled_qty - cur_size
+            logger.warning(
+                "[PositionDrift] strategy=%s symbol=%s side=%s "
+                "local_size=%.2f filled=%.2f drift=%.2f "
+                "(position oversold — fill exceeded local snapshot)",
+                strategy_id, symbol, side, cur_size, filled_qty, drift,
+            )
+
         if new_size <= 0:
             _delete_position(strategy_id, symbol, side)
             return profit, None

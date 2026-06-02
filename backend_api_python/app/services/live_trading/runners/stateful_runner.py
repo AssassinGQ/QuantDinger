@@ -13,6 +13,12 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _is_close_or_reduce_signal(signal_type: str) -> bool:
+    """Check if signal is a close or reduce signal (close_long, close_short, reduce_long, reduce_short)."""
+    sig = (signal_type or "").strip().lower()
+    return sig.startswith("close_") or sig.startswith("reduce_")
+
+
 def _is_close_signal(signal_type: str) -> bool:
     """Check if signal is a close signal (close_long, close_short)."""
     return signal_type in ("close_long", "close_short")
@@ -22,10 +28,42 @@ class StatefulClientRunner(OrderRunner):
     def pre_check(self, *, client: BaseStatefulClient, order_context: OrderContext) -> PreCheckResult:
         ctx = order_context
 
-        if _is_close_signal(ctx.signal_type):
+        if _is_close_or_reduce_signal(ctx.signal_type):
+            # ── Position guard: verify local DB position exists before close/reduce ──
+            from app.services.live_trading import records
+
+            side = "long" if "long" in ctx.signal_type else "short"
+            pos = records._fetch_position(ctx.strategy_id, ctx.symbol, side)
+            local_size = float(pos.get("size") or 0.0)
+
+            if local_size <= 0:
+                logger.warning(
+                    "[PositionGuard] close/reduce rejected: strategy=%s symbol=%s "
+                    "side=%s signal=%s local_size=%.2f (no position to close)",
+                    ctx.strategy_id, ctx.symbol, side, ctx.signal_type, local_size,
+                )
+                return PreCheckResult(
+                    ok=False,
+                    reason=f"position_guard:no_position_for_{ctx.signal_type}",
+                )
+
+            if ctx.amount > local_size:
+                logger.warning(
+                    "[PositionGuard] close/reduce rejected: strategy=%s symbol=%s "
+                    "side=%s signal=%s order_amount=%.2f > local_size=%.2f "
+                    "(would oversell / create short)",
+                    ctx.strategy_id, ctx.symbol, side, ctx.signal_type, ctx.amount, local_size,
+                )
+                return PreCheckResult(
+                    ok=False,
+                    reason=f"position_guard:amount_{ctx.amount}_exceeds_position_{local_size}",
+                )
+
+            # Position guard passed; RTH check still skipped for close/reduce signals.
             logger.info(
-                "[RTH] close signal %s for %s, skipping RTH check",
-                ctx.signal_type, ctx.symbol,
+                "[PositionGuard] close/reduce allowed: strategy=%s symbol=%s "
+                "side=%s local_size=%.2f order_amount=%.2f, skipping RTH check",
+                ctx.strategy_id, ctx.symbol, side, local_size, ctx.amount,
             )
             return PreCheckResult(ok=True)
 

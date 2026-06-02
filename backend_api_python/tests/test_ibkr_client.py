@@ -118,6 +118,7 @@ def _make_client_with_mock_ib():
     """
     client = IBKRClient.__new__(IBKRClient)
     client.config = IBKRConfig()
+    client._config = client.config  # _config alias used by order_timeout
     client.mode = "paper"
     client._ib = MagicMock()
     client._account = "DU123456"
