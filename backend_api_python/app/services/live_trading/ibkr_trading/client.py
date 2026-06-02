@@ -109,6 +109,8 @@ class IBKRConfig:
     # without paid subscription still get usable quotes (paper accounts
     # never have built-in subscriptions and would otherwise return all-nan).
     market_data_type: int = 3
+    # Order placement timeout (seconds). Gateway 盘后/高负载时 15s 不够用。
+    order_timeout: float = 30.0
 
     @classmethod
     def from_env(cls, mode: str = "paper") -> "IBKRConfig":
@@ -1472,11 +1474,12 @@ class IBKRClient(BaseStatefulClient):
                 message="Order submitted (fire-and-forget)",
             )
 
+        order_timeout = self._config.order_timeout if self._config else 30.0
         try:
-            return self._submit(_do(), timeout=15.0)
+            return self._submit(_do(), timeout=order_timeout)
         except TimeoutError:
-            logger.error("Market order timed out for %s after 15s", symbol)
-            return LiveOrderResult(success=False, message=f"Market order timed out after 15s for {symbol}", exchange_id=self.engine_id)
+            logger.error("Market order timed out for %s after %.0fs", symbol, order_timeout)
+            return LiveOrderResult(success=False, message=f"Market order timed out after {order_timeout:.0f}s for {symbol}", exchange_id=self.engine_id)
         except Exception as e:
             msg = str(e) or type(e).__name__
             logger.error("Order failed for %s: %s", symbol, msg)
@@ -1606,10 +1609,12 @@ class IBKRClient(BaseStatefulClient):
             )
 
         try:
-            return self._submit(_do(), timeout=15.0)
+            order_timeout = self._config.order_timeout if self._config else 30.0
+            return self._submit(_do(), timeout=order_timeout)
         except TimeoutError:
-            logger.error("Limit order timed out for %s after 15s", symbol)
-            return LiveOrderResult(success=False, message=f"Limit order timed out after 15s for {symbol}", exchange_id=self.engine_id)
+            order_timeout = self._config.order_timeout if self._config else 30.0
+            logger.error("Limit order timed out for %s after %.0fs", symbol, order_timeout)
+            return LiveOrderResult(success=False, message=f"Limit order timed out after {order_timeout:.0f}s for {symbol}", exchange_id=self.engine_id)
         except Exception as e:
             msg = str(e) or type(e).__name__
             logger.error("Limit order failed for %s: %s", symbol, msg)
