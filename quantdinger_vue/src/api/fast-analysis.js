@@ -2,7 +2,7 @@
  * Fast Analysis API
  * New high-performance AI analysis endpoints
  */
-import request from '@/utils/request'
+import request, { ANALYSIS_TIMEOUT } from '@/utils/request'
 
 const BASE_URL = '/api/fast-analysis'
 
@@ -15,7 +15,7 @@ export function fastAnalyze (params) {
     url: `${BASE_URL}/analyze`,
     method: 'post',
     data: params,
-    timeout: 60000 // 60s timeout for analysis
+    timeout: ANALYSIS_TIMEOUT // 180s — analysis can take 60-90s total
   })
 }
 
@@ -28,7 +28,7 @@ export function fastAnalyzeLegacy (params) {
     url: `${BASE_URL}/analyze-legacy`,
     method: 'post',
     data: params,
-    timeout: 60000
+    timeout: ANALYSIS_TIMEOUT
   })
 }
 
