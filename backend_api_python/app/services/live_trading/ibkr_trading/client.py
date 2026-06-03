@@ -1474,7 +1474,7 @@ class IBKRClient(BaseStatefulClient):
                 message="Order submitted (fire-and-forget)",
             )
 
-        order_timeout = self._config.order_timeout if self._config else 30.0
+        order_timeout = self.config.order_timeout if self.config else 30.0
         try:
             return self._submit(_do(), timeout=order_timeout)
         except TimeoutError:
@@ -1609,10 +1609,10 @@ class IBKRClient(BaseStatefulClient):
             )
 
         try:
-            order_timeout = self._config.order_timeout if self._config else 30.0
+            order_timeout = self.config.order_timeout if self.config else 30.0
             return self._submit(_do(), timeout=order_timeout)
         except TimeoutError:
-            order_timeout = self._config.order_timeout if self._config else 30.0
+            order_timeout = self.config.order_timeout if self.config else 30.0
             logger.error("Limit order timed out for %s after %.0fs", symbol, order_timeout)
             return LiveOrderResult(success=False, message=f"Limit order timed out after {order_timeout:.0f}s for {symbol}", exchange_id=self.engine_id)
         except Exception as e:
